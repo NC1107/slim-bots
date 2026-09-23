@@ -9,7 +9,7 @@ should post into:
     SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... \\
         SLIMM_LOG_CHANNEL=<channel-uuid> python3 bot.py
 
-`examples/bot-ping/`, `examples/bot-reminders/` and `examples/bot-roles/` all
+`bot-ping/`, `bot-reminders/` and `bot-roles/` all
 watch message traffic. This one watches five events none of them touch:
 `member.timeout`, `member.removed`, `member.restored`, `member.role_changed`
 and `role.changed` (`crates/slimm-server/src/hub/event.rs`'s
@@ -59,7 +59,7 @@ What the wire frames do not say, and what this bot has to work around:
   rather than silently doing nothing either way. If it is down when a kick
   happens, that kick is not in the log when it comes back, and nothing about
   the reconnect says so - no gap marker, no missed-events count, nothing.
-  Contrast this with `examples/bot-reminders/`, where a dropped socket is
+  Contrast this with `bot-reminders/`, where a dropped socket is
   invisible to the *feature* precisely because `seq` and `/sync` make it
   invisible to the *bot*. Here it is invisible to the bot too, which is the
   finding: for this event family, "eventually consistent" is not the

@@ -10,7 +10,7 @@ Run it with a bot token from Space settings -> Bots, holding `SEND_MESSAGES`,
     SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... \\
         SLIMM_CHANNEL=<channel-uuid> python3 bot.py
 
-`examples/bot-reminders/` and `examples/bot-roles/` both only ever call
+`bot-reminders/` and `bot-roles/` both only ever call
 `POST /channels/{id}/messages`. This bot exercises the other write surface a
 bot's default grant already reaches: `POST .../canvas/objects` (place),
 `POST .../canvas/ops` (move, remove) and `GET .../canvas/objects` (the

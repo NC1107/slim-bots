@@ -9,7 +9,7 @@ channels it should watch:
     SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... \\
         SLIMM_CHANNELS=<channel-uuid>,<channel-uuid> python3 bot.py
 
-`examples/bot-ping/` proves a bot can connect and answer, and says so in its
+`bot-ping/` proves a bot can connect and answer, and says so in its
 own docstring while listing three corners it deliberately cuts: no cursor, a
 flat reconnect delay, and it answers everywhere it can see. This bot turns
 all three:

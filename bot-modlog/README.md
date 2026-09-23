@@ -69,7 +69,7 @@ the first event after the restart - not a gap marker, not a "you may have
 missed something," nothing. The one route that could answer "what happened
 while I was gone" is `GET /reports/history`, gated behind `MANAGE_MESSAGES`.
 
-This is different from `examples/bot-reminders/`'s reconnect story. There, a
+This is different from `bot-reminders/`'s reconnect story. There, a
 dropped socket is invisible to the *bot* precisely because `seq` and
 `/sync` make it invisible - the feature never notices. Here it is invisible
 to the bot too, but there is no later event that could ever fill the hole
@@ -127,4 +127,4 @@ decision 0028, not something to route around here.
   in memory only and start cold again; see the module docstring.
 - **Watch more than these five events.** Reactions, threads, polls, pins,
   and canvas activity all have their own event types and are out of scope
-  here - see the other `examples/` bots and `docs/bots/building-bots.md`.
+  here - see the other bots here and slim-m's `docs/bots/building-bots.md`.

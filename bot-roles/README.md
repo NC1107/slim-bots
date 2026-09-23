@@ -65,7 +65,7 @@ skipping that check would have it react to its own listing message forever.
   instead. This was checked twice already, once statically against the
   frame types and once live against a running deployment - it is a platform
   property, not a missing feature waiting on this example.
-- **Durable state.** Unlike `examples/bot-reminders/`, there is no sqlite
+- **Durable state.** Unlike `bot-reminders/`, there is no sqlite
   file here. A reminder is a promise to act later and must survive a
   restart, or it silently never fires. A role command is acted on
   immediately: if the bot is offline when it arrives, the member's cost is

@@ -28,11 +28,11 @@ not already hold. A role bot hands out permissions, so it must itself hold
 at least what it hands out, or every grant comes back 403 - see the README's
 "the no-escalation rule" section before assuming the bot is just broken.
 
-Like `examples/bot-ping/`, a frame type this does not recognise is ignored
+Like `bot-ping/`, a frame type this does not recognise is ignored
 rather than treated as an error, and the author is checked against `GET /me`
 before ever answering - this bot posts in the very channel it listens to.
 
-Unlike `examples/bot-reminders/`, there is no sqlite file. A reminder is a
+Unlike `bot-reminders/`, there is no sqlite file. A reminder is a
 promise to act in the future and must survive a restart or it silently never
 fires; a role command is acted on immediately and, if lost, costs the member
 nothing worse than typing it again. So the only state worth keeping is a
