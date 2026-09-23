@@ -168,6 +168,19 @@ def try_consume_request(conn, request_id):
     return cur.rowcount == 1
 
 
+def begin_idempotent(conn, request_id):
+    """Opens the transaction every money-moving command starts with, and
+    consumes `request_id` inside it. Returns False, with the transaction
+    already rolled back, if this exact request was already handled - the
+    caller should just return in that case, same as a fresh command that
+    turned out to be a no-op."""
+    begin(conn)
+    if try_consume_request(conn, request_id):
+        return True
+    conn.execute("ROLLBACK")
+    return False
+
+
 def ensure_account(conn, user_id):
     conn.execute(
         "INSERT OR IGNORE INTO accounts (user_id, balance, last_daily) VALUES (?, 0, 0)",
@@ -202,6 +215,16 @@ def try_debit(conn, user_id, amount):
         (amount, user_id, amount),
     )
     return cur.rowcount == 1
+
+
+def debit_or_refuse(client, conn, channel_id, author_id, request_id, amount):
+    """Tries `try_debit` inside the open transaction; on failure, rolls back
+    and tells the caller they are short - the refusal every bet shares."""
+    if try_debit(conn, author_id, amount):
+        return True
+    conn.execute("ROLLBACK")
+    client.send(channel_id, "you don't have that many chips", reply_to_id=request_id)
+    return False
 
 
 def credit(conn, user_id, amount):
@@ -315,9 +338,7 @@ def handle_balance(client, conn, channel_id, author_id, request_id):
 
 
 def handle_daily(client, conn, channel_id, author_id, request_id):
-    begin(conn)
-    if not try_consume_request(conn, request_id):
-        conn.execute("ROLLBACK")
+    if not begin_idempotent(conn, request_id):
         return
     ensure_account(conn, author_id)
     balance, last_daily = conn.execute(
@@ -381,14 +402,10 @@ def handle_give(client, conn, channel_id, author_id, request_id, amount, target_
     if target_id == author_id:
         client.send(channel_id, "you can't send chips to yourself", reply_to_id=request_id)
         return
-    begin(conn)
-    if not try_consume_request(conn, request_id):
-        conn.execute("ROLLBACK")
+    if not begin_idempotent(conn, request_id):
         return
     ensure_account(conn, target_id)
-    if not try_debit(conn, author_id, amount):
-        conn.execute("ROLLBACK")
-        client.send(channel_id, "you don't have that many chips", reply_to_id=request_id)
+    if not debit_or_refuse(client, conn, channel_id, author_id, request_id, amount):
         return
     credit(conn, target_id, amount)
     conn.execute("COMMIT")
@@ -400,18 +417,14 @@ def handle_give(client, conn, channel_id, author_id, request_id, amount, target_
 
 
 def handle_flip(client, conn, channel_id, author_id, request_id, amount_spec, guess):
-    begin(conn)
-    if not try_consume_request(conn, request_id):
-        conn.execute("ROLLBACK")
+    if not begin_idempotent(conn, request_id):
         return
     amount = resolve_amount(conn, author_id, amount_spec)
     if amount < 1:
         conn.execute("ROLLBACK")
         client.send(channel_id, "you have no chips to flip - `!daily` first", reply_to_id=request_id)
         return
-    if not try_debit(conn, author_id, amount):
-        conn.execute("ROLLBACK")
-        client.send(channel_id, "you don't have that many chips", reply_to_id=request_id)
+    if not debit_or_refuse(client, conn, channel_id, author_id, request_id, amount):
         return
     landed = secrets.choice(("heads", "tails"))
     payout = (amount * FLIP_PAYOUT_NUM) // FLIP_PAYOUT_DEN if landed == guess else 0
@@ -437,9 +450,7 @@ def _resolve_natural(player_natural, dealer_natural, amount):
 
 
 def handle_blackjack_start(client, conn, channel_id, author_id, request_id, amount_spec):
-    begin(conn)
-    if not try_consume_request(conn, request_id):
-        conn.execute("ROLLBACK")
+    if not begin_idempotent(conn, request_id):
         return
     if has_hand(conn, channel_id, author_id):
         conn.execute("ROLLBACK")
@@ -450,9 +461,7 @@ def handle_blackjack_start(client, conn, channel_id, author_id, request_id, amou
         conn.execute("ROLLBACK")
         client.send(channel_id, "you have no chips to bet - `!daily` first", reply_to_id=request_id)
         return
-    if not try_debit(conn, author_id, amount):
-        conn.execute("ROLLBACK")
-        client.send(channel_id, "you don't have that many chips", reply_to_id=request_id)
+    if not debit_or_refuse(client, conn, channel_id, author_id, request_id, amount):
         return
     player = [draw_card(), draw_card()]
     dealer = [draw_card(), draw_card()]
@@ -481,9 +490,7 @@ def handle_blackjack_start(client, conn, channel_id, author_id, request_id, amou
 
 
 def handle_hit(client, conn, channel_id, author_id, request_id):
-    begin(conn)
-    if not try_consume_request(conn, request_id):
-        conn.execute("ROLLBACK")
+    if not begin_idempotent(conn, request_id):
         return
     row = conn.execute(
         "SELECT player_cards, dealer_cards FROM hands WHERE channel_id = ? AND user_id = ?",
@@ -514,9 +521,7 @@ def handle_hit(client, conn, channel_id, author_id, request_id):
 
 
 def handle_stand(client, conn, channel_id, author_id, request_id):
-    begin(conn)
-    if not try_consume_request(conn, request_id):
-        conn.execute("ROLLBACK")
+    if not begin_idempotent(conn, request_id):
         return
     row = conn.execute(
         "SELECT stake, player_cards, dealer_cards FROM hands WHERE channel_id = ? AND user_id = ?",
