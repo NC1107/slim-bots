@@ -1,0 +1,5 @@
+# The Jellyfin side is plain HTTP/JSON with no dependency. The slim-m side
+# uses slimbots for auth, the REST call and the attachment upload.
+# Needs the raw-body Client.call added after 0.1.0 - pin to git until a
+# release carries it, then switch to slim-m>=0.2.0 like the other templates.
+slim-m @ git+https://github.com/NC1107/slim-bots.git@main#subdirectory=slimbots

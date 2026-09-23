@@ -1,11 +1,12 @@
 # slim-bots
 
-Bot templates for [slim-m](https://github.com/NC1107/slim-m), plus a small
-shared library, `slimbots/`, for the plumbing every template but one repeats.
+Bot templates for [slim-m](https://github.com/NC1107/slim-m).
 
-A bot is an ordinary program holding a token, and the whole surface it needs
-is documented in slim-m's
+Each directory is a working bot in one file, meant to be copied rather than
+imported. There is no library here on purpose: a bot is an ordinary program
+holding a token, and the whole surface it needs is documented in slim-m's
 [`docs/bots/building-bots.md`](https://github.com/NC1107/slim-m/blob/main/docs/bots/building-bots.md).
+
 Read that first. Then pick the template closest to what you want.
 
 ## The library
@@ -24,28 +25,27 @@ the whole protocol in a single file with nothing hidden behind an import.
 Every other template here is built on it. If a future template looks
 inconsistent with that split, the split is deliberate; see `bot-ping`'s own
 README before "fixing" it.
-
 ## The templates
 
 | Directory | What it is for |
 | --- | --- |
-| [`bot-ping`](bot-ping/) | The smallest thing that connects and answers. Start here. Library-free on purpose. |
+| [`bot-ping`](bot-ping/) | The smallest thing that connects and answers. Start here. |
 | [`bot-reminders`](bot-reminders/) | Durable state, a sync cursor, and exponential backoff. |
 | [`bot-roles`](bot-roles/) | Self-service roles driven by a command, because reactor identity never reaches the wire. |
 | [`bot-canvas-board`](bot-canvas-board/) | Driving the Voice Canvas from outside the app. |
 | [`bot-modlog`](bot-modlog/) | Watching moderation events, and what is missing when one is dropped. |
+| [`bot-jellyfin`](bot-jellyfin/) | Polling an outside service (Jellyfin) instead of slim-m's own events, and batching a library scan into one message instead of forty. |
 
 Every template's README says what it deliberately does not do. That section is
 usually the more useful half.
 
 ## Running one
 
-Each directory has its own `requirements.txt` and its own README. Every
-template but `bot-ping` depends on `slimbots`, installed straight from this
-repo:
+Each directory has its own `requirements.txt` and its own README, but the shape
+is the same:
 
 ```bash
-cd bot-reminders
+cd bot-ping
 pip install -r requirements.txt
 SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... python3 bot.py
 ```

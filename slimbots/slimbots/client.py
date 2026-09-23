@@ -51,15 +51,22 @@ class Client:
         self.token = token
         self.user_agent = user_agent
 
-    def call(self, method, path, body=None):
-        """One authenticated REST call, returning parsed JSON or None for 204."""
-        data = json.dumps(body).encode() if body is not None else None
+    def call(self, method, path, body=None, *, raw_body=None, headers=None):
+        """One authenticated REST call, returning parsed JSON or None for 204.
+
+        `raw_body` sends bytes as-is instead of JSON-encoding `body` - what an
+        attachment upload needs. `headers` adds to, and never replaces, the
+        authorization/user-agent/content-type headers this method already sends.
+        """
+        data = raw_body if raw_body is not None else (json.dumps(body).encode() if body is not None else None)
         request = urllib.request.Request(f"{self.base}{path}", data=data, method=method)
         request.add_header("authorization", f"Bearer {self.token}")
         # A CDN can reject urllib's default UA; see docs/bots/building-bots.md.
         request.add_header("user-agent", self.user_agent)
-        if data is not None:
+        if body is not None and raw_body is None:
             request.add_header("content-type", "application/json")
+        for key, value in (headers or {}).items():
+            request.add_header(key, value)
         with urllib.request.urlopen(request, timeout=15) as response:
             raw = response.read()
             return json.loads(raw) if raw else None
@@ -73,7 +80,17 @@ class Client:
     def socket_url(self):
         return socket_url(self.base)
 
-    def send(self, channel_id, content, *, message_id=None, reply_to_id=None, retries=5, sleep=time.sleep):
+    def send(
+        self,
+        channel_id,
+        content,
+        *,
+        message_id=None,
+        reply_to_id=None,
+        attachment_ids=None,
+        retries=5,
+        sleep=time.sleep,
+    ):
         """Posts a message, retrying only a genuinely uncertain failure.
 
         `message_id` is generated once, before any retry, and never
@@ -87,6 +104,8 @@ class Client:
         body = {"id": message_id or str(uuid.uuid4()), "content": content}
         if reply_to_id:
             body["reply_to_id"] = reply_to_id
+        if attachment_ids:
+            body["attachment_ids"] = attachment_ids
         return call_with_retry(
             lambda: self.call("POST", f"/channels/{channel_id}/messages", body),
             retries=retries,
