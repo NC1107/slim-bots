@@ -38,19 +38,31 @@ on both the server and the client for the same reason. If somebody wants a
 fully typed route client later, generating one from `openapi.yaml` is a
 reasonable project - it just is not this one.
 
-## Not on PyPI
+## Installing
 
-slim-m's own name is temporary; the final product name is chosen before
-1.0 (see the root `CLAUDE.md`). Publishing `slimm` (or anything close) to
-PyPI now would squat a name this project might not keep, and would need a
-rename later after people had already `pip install`ed it. So this package
-is installable from git only:
+The distribution is named `slim-m` on PyPI; the import stays `slimbots`.
 
 ```
-pip install "slimbots @ git+https://github.com/NC1107/slim-bots.git@main#subdirectory=slimbots"
+pip install slim-m
 ```
 
-Each template's `requirements.txt` pins that same line.
+To run against unreleased changes, install from git instead:
+
+```
+pip install "slim-m @ git+https://github.com/NC1107/slim-bots.git@main#subdirectory=slimbots"
+```
+
+Each template's `requirements.txt` pins one of those two lines.
+
+## Releasing
+
+`.github/workflows/publish.yml` builds and uploads on a published GitHub
+release, using PyPI trusted publishing - it exchanges the workflow's own
+OIDC identity for an upload token, so there is no API token stored in this
+repo. The publisher on PyPI must name this repository, `publish.yml`, and
+the `pypi` environment, or the exchange is refused.
+
+Bump `version` in `pyproject.toml`, then publish a release.
 
 ## Tests
 

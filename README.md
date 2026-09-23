@@ -15,8 +15,7 @@ with retries, the websocket handshake, the reconnect loop with backoff, and
 the `seq`-cursor/`/sync` helpers. It is not a typed model of slim-m's API -
 no `Channel` or `Message` objects, no cache - because slim-m's bot surface is
 small enough that this is the whole plumbing layer needed. See its own
-README for what it covers, why it is hand-written rather than generated, and
-why it is installable from git rather than published to PyPI.
+README for what it covers and why it is hand-written rather than generated.
 
 `bot-ping` stays free of it on purpose: it is the one template that shows
 the whole protocol in a single file with nothing hidden behind an import.

@@ -1,2 +1,2 @@
 websockets>=12
-slimbots @ git+https://github.com/NC1107/slim-bots.git@main#subdirectory=slimbots
+slim-m>=0.1.0
