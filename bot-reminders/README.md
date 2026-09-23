@@ -1,7 +1,12 @@
 # bot-reminders
 
-A slim-m bot in one file: `!remind me in 2h <text>`, `!remind me at 15:30 <text>`,
+A slim-m bot: `!remind me in 2h <text>`, `!remind me at 15:30 <text>`,
 and `!reminders` to list or cancel your own.
+
+Unlike `bot-ping`, this template is built on the `slimbots` package in
+`../slimbots/`, which covers the plumbing every template but `bot-ping`
+shares - auth, the REST call, retries, the websocket handshake, and the
+reconnect loop. `bot-ping` stays free of it on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt
