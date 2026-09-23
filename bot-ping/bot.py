@@ -44,6 +44,8 @@ TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
 PROTOCOL = 1
 TRIGGER = "!ping"
 REPLY = "pong"
+# urllib's default UA is blocked by a CDN before it ever reaches slim-m.
+USER_AGENT = "slimm-bot-ping/1.0"
 
 
 def call(method, path, body=None):
@@ -51,6 +53,7 @@ def call(method, path, body=None):
     data = json.dumps(body).encode() if body is not None else None
     request = urllib.request.Request(f"{BASE}{path}", data=data, method=method)
     request.add_header("authorization", f"Bearer {TOKEN}")
+    request.add_header("user-agent", USER_AGENT)
     if data is not None:
         request.add_header("content-type", "application/json")
     with urllib.request.urlopen(request, timeout=15) as response:
@@ -110,7 +113,9 @@ async def listen():
     ticket = call("POST", "/auth/ws-ticket")["ticket"]
     ws_url = socket_url(BASE)
 
-    async with websockets.connect(ws_url) as socket:
+    async with websockets.connect(
+        ws_url, user_agent_header=USER_AGENT
+    ) as socket:
         await socket.send(
             json.dumps({"type": "hello", "ticket": ticket, "protocol": PROTOCOL})
         )
