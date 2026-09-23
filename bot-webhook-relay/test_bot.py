@@ -51,7 +51,9 @@ def test_message_id_changes_with_the_body_even_for_the_same_key():
 
 def test_message_id_is_fresh_every_time_without_a_key():
     body = b'{"content": "x"}'
-    assert bot.message_id_for(None, body) != bot.message_id_for(None, body)
+    first = bot.message_id_for(None, body)
+    second = bot.message_id_for(None, body)
+    assert first != second
 
 
 class _RunningRelay:
@@ -148,7 +150,8 @@ def test_a_retried_request_with_the_same_idempotency_key_sends_once():
         first_status, _ = relay.post({"content": "disk at 95%"}, headers=headers)
         second_status, _ = relay.post({"content": "disk at 95%"}, headers=headers)
 
-        assert first_status == 204 and second_status == 204
+        assert first_status == 204
+        assert second_status == 204
         # FakeClient answers every send, but the underlying id is the same both times.
         assert relay.client.sent[0]["id"] == relay.client.sent[1]["id"]
     finally:

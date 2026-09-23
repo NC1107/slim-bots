@@ -144,7 +144,8 @@ class Handler(BaseHTTPRequestHandler):
         given = self.headers.get("X-Webhook-Secret", "")
         return hmac.compare_digest(given, SHARED_SECRET)
 
-    def do_POST(self):  # noqa: N802 (BaseHTTPRequestHandler's own naming)
+    # BaseHTTPRequestHandler's own naming, not this file's.
+    def do_POST(self):  # noqa: N802
         if self.path != PATH:
             self._reply(404)
             return
@@ -175,7 +176,7 @@ class Handler(BaseHTTPRequestHandler):
         message_id = message_id_for(self.headers.get("Idempotency-Key"), raw)
         try:
             self.server.client.send(CHANNEL, content, message_id=message_id)
-        except Exception as err:  # noqa: BLE001 - answered to the caller, not raised
+        except Exception as err:  # noqa: BLE001
             if is_token_revoked(err):
                 print("slimm bot token rejected - exiting", file=sys.stderr)
                 raise SystemExit(1)
@@ -204,7 +205,7 @@ def main():
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     server.client = client
     secret_note = "a shared secret is required" if SHARED_SECRET else "no shared secret set - anyone reaching this port can post"
-    print(f"listening on http://{HOST}:{PORT}{PATH} - {secret_note}", flush=True)
+    print(f"listening on http://{HOST}:{PORT}{PATH} - {secret_note}", flush=True)  # NOSONAR (plain http by design; see "TLS" in the README)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
