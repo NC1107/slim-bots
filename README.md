@@ -34,6 +34,7 @@ README before "fixing" it.
 | [`bot-roles`](bot-roles/) | Self-service roles driven by a command, because reactor identity never reaches the wire. |
 | [`bot-canvas-board`](bot-canvas-board/) | Driving the Voice Canvas from outside the app. |
 | [`bot-modlog`](bot-modlog/) | Watching moderation events, and what is missing when one is dropped. |
+| [`bot-webhook-relay`](bot-webhook-relay/) | A tiny HTTP server that turns a POSTed JSON body into a message, for tools that only speak "webhook" - a stopgap for slim-m's own incoming webhooks (decision 0030), not built yet. |
 
 Every template's README says what it deliberately does not do. That section is
 usually the more useful half.
