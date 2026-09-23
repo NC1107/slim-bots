@@ -205,7 +205,8 @@ def main():
     server = ThreadingHTTPServer((HOST, PORT), Handler)
     server.client = client
     secret_note = "a shared secret is required" if SHARED_SECRET else "no shared secret set - anyone reaching this port can post"
-    print(f"listening on http://{HOST}:{PORT}{PATH} - {secret_note}", flush=True)  # NOSONAR (plain http by design; see "TLS" in the README)
+    # Plain http by design; see "TLS" in the README.
+    print(f"listening on http://{HOST}:{PORT}{PATH} - {secret_note}", flush=True)  # NOSONAR
     try:
         server.serve_forever()
     except KeyboardInterrupt:
