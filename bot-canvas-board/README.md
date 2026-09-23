@@ -1,9 +1,15 @@
 # bot-canvas-board
 
-A slim-m bot in one file that keeps a todo board on a channel's Voice Canvas:
+A slim-m bot that keeps a todo board on a channel's Voice Canvas:
 `!board add <text>` places a sticky note, `!board done <n>` removes it,
 `!board move <n> <slot>` repositions it, and `!board` (or `!board list`)
 shows what is up.
+
+Unlike `bot-ping`, this template is built on the `slimbots` package in
+`../slimbots/`, which covers the plumbing every template but `bot-ping`
+shares - auth, the REST call, retries, the websocket handshake, the
+reconnect loop, and the sqlite `seq`-cursor helpers used for the channel's
+message traffic. `bot-ping` stays free of it on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt

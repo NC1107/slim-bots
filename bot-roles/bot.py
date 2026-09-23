@@ -7,7 +7,7 @@ affordance even though nothing here is reaction-driven.
 Run it with a bot token from Space settings -> Bots, the channel it should
 watch, and a name-to-role-id map:
 
-    pip install websockets
+    pip install -r requirements.txt
     SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... \\
         SLIMM_CHANNEL=<channel-uuid> \\
         SLIMM_ROLES=member:<role-uuid>,helper:<role-uuid> python3 bot.py
@@ -38,27 +38,27 @@ fires; a role command is acted on immediately and, if lost, costs the member
 nothing worse than typing it again. So the only state worth keeping is a
 `seq` cursor to avoid re-reading old history, and that only needs to survive
 a dropped websocket within one run, not a process restart - kept in memory
-below. The README explains this tradeoff further.
+below rather than reaching for `slimbots.cursor`'s sqlite storage, which
+would be the wrong tool for state this bot is fine losing. The README
+explains this tradeoff further.
+
+Auth, the REST call, the websocket handshake and the reconnect loop with
+backoff come from the `slimbots` package (`../slimbots/`) - the same
+plumbing every template but `bot-ping` shares.
 """
 
 import asyncio
-import json
 import os
 import re
 import sys
 import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
 
-import websockets
+from slimbots import Client, Connection, is_not_found, run_forever
 
 BASE = os.environ.get("SLIMM_URL", "").rstrip("/")
 TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
 CHANNEL = os.environ.get("SLIMM_CHANNEL", "")
-PROTOCOL = 1
-MAX_BACKOFF_SECONDS = 60
-# urllib's default UA is blocked by a CDN before it ever reaches slim-m.
 USER_AGENT = "slimm-bot-roles/1.0"
 
 TRIGGER_REMOVE = re.compile(r"^!role\s+remove\s+(\S+)\s*$", re.IGNORECASE)
@@ -86,43 +86,6 @@ def parse_roles(spec):
 ROLES = parse_roles(os.environ.get("SLIMM_ROLES", ""))
 
 
-def call(method, path, body=None):
-    """One authenticated REST call, returning parsed JSON or None for 204."""
-    data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(f"{BASE}{path}", data=data, method=method)
-    request.add_header("authorization", f"Bearer {TOKEN}")
-    request.add_header("user-agent", USER_AGENT)
-    if data is not None:
-        request.add_header("content-type", "application/json")
-    with urllib.request.urlopen(request, timeout=15) as response:
-        raw = response.read()
-        return json.loads(raw) if raw else None
-
-
-def send(content, message_id=None, reply_to_id=None):
-    """Post a message in the configured channel, idempotent on `message_id`
-    so a retry after an uncertain send cannot double-post."""
-    body = {"id": message_id or str(uuid.uuid4()), "content": content}
-    if reply_to_id:
-        body["reply_to_id"] = reply_to_id
-    return call("POST", f"/channels/{CHANNEL}/messages", body)
-
-
-def socket_url(base):
-    """The WebSocket URL for `base`; see bot-ping's identical helper for why
-    plaintext ws is refused off loopback."""
-    parts = urllib.parse.urlsplit(base)
-    if parts.scheme == "https":
-        return urllib.parse.urlunsplit(("wss", parts.netloc, "/ws", "", ""))
-    if parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1", "::1"):
-        print("warning: plaintext ws, loopback only", file=sys.stderr)
-        return urllib.parse.urlunsplit(("ws", parts.netloc, "/ws", "", ""))
-    raise RuntimeError(
-        f"refusing to send a bot token over {parts.scheme or 'no'} scheme to "
-        f"{parts.hostname or base}; use https"
-    )
-
-
 def listing_message_id():
     return str(uuid.uuid5(LISTING_NAMESPACE, CHANNEL))
 
@@ -134,17 +97,17 @@ def listing_text():
     return "\n".join(lines)
 
 
-def post_listing():
+def post_listing(client):
     """Publishes the role listing at startup, editing the previous one in
     place when it already exists rather than posting a new copy every run."""
     message_id = listing_message_id()
     try:
-        call("PATCH", f"/channels/{CHANNEL}/messages/{message_id}", {"content": listing_text()})
+        client.call("PATCH", f"/channels/{CHANNEL}/messages/{message_id}", {"content": listing_text()})
         print("updated the role listing", flush=True)
     except urllib.error.HTTPError as err:
-        if err.code != 404:
+        if not is_not_found(err):
             raise
-        send(listing_text(), message_id=message_id)
+        client.send(CHANNEL, listing_text(), message_id=message_id)
         print("posted the role listing", flush=True)
 
 
@@ -156,40 +119,42 @@ def escalation_explanation():
     )
 
 
-def grant(role_name, actor_id, reply_to_id):
+def grant(client, role_name, actor_id, reply_to_id):
     role_id = ROLES.get(role_name)
     if role_id is None:
-        send(f"no role called `{role_name}` is offered here - try `!roles`.", reply_to_id=reply_to_id)
+        client.send(CHANNEL, f"no role called `{role_name}` is offered here - try `!roles`.", reply_to_id=reply_to_id)
         return
     try:
-        call("PUT", f"/members/{actor_id}/roles/{role_id}")
+        client.call("PUT", f"/members/{actor_id}/roles/{role_id}")
     except urllib.error.HTTPError as err:
         if err.code == 403:
-            send(escalation_explanation(), reply_to_id=reply_to_id)
+            client.send(CHANNEL, escalation_explanation(), reply_to_id=reply_to_id)
             return
         if err.code == 404:
-            send(f"`{role_name}` is misconfigured on my end - ask an admin to check it.", reply_to_id=reply_to_id)
+            client.send(
+                CHANNEL, f"`{role_name}` is misconfigured on my end - ask an admin to check it.", reply_to_id=reply_to_id
+            )
             return
         raise
-    send(f"done - you have `{role_name}` now.", reply_to_id=reply_to_id)
+    client.send(CHANNEL, f"done - you have `{role_name}` now.", reply_to_id=reply_to_id)
 
 
-def revoke(role_name, actor_id, reply_to_id):
+def revoke(client, role_name, actor_id, reply_to_id):
     role_id = ROLES.get(role_name)
     if role_id is None:
-        send(f"no role called `{role_name}` is offered here - try `!roles`.", reply_to_id=reply_to_id)
+        client.send(CHANNEL, f"no role called `{role_name}` is offered here - try `!roles`.", reply_to_id=reply_to_id)
         return
     try:
-        call("DELETE", f"/members/{actor_id}/roles/{role_id}")
+        client.call("DELETE", f"/members/{actor_id}/roles/{role_id}")
     except urllib.error.HTTPError as err:
         if err.code == 403:
-            send(escalation_explanation(), reply_to_id=reply_to_id)
+            client.send(CHANNEL, escalation_explanation(), reply_to_id=reply_to_id)
             return
         raise
-    send(f"removed `{role_name}`.", reply_to_id=reply_to_id)
+    client.send(CHANNEL, f"removed `{role_name}`.", reply_to_id=reply_to_id)
 
 
-def handle_message(me, message):
+def handle_message(client, me, message):
     """The author check is what stops the bot answering itself forever, and
     matters more here than in bot-ping: this bot posts its own listing in
     the very channel it listens to."""
@@ -200,69 +165,60 @@ def handle_message(me, message):
     request_message_id = message.get("id")
 
     if match := TRIGGER_REMOVE.match(content):
-        revoke(match.group(1), author_id, request_message_id)
+        revoke(client, match.group(1), author_id, request_message_id)
         return
     if match := TRIGGER_GRANT.match(content):
-        grant(match.group(1), author_id, request_message_id)
+        grant(client, match.group(1), author_id, request_message_id)
         return
     if TRIGGER_LIST.match(content):
-        send(listing_text(), reply_to_id=request_message_id)
+        client.send(CHANNEL, listing_text(), reply_to_id=request_message_id)
 
 
-def resync(cursor):
+def resync(client, cursor):
     """Catches up on the configured channel over `/sync` when reconnecting
     mid-run, so a command sent during a dropped socket is not lost. `cursor`
     of `None` means this is the first connection this process has made, so
     there is nothing to replay - see the module docstring on why that gap is
     acceptable here but was not for bot-reminders."""
-    me = call("GET", "/me")["id"]
+    me = client.me()["id"]
     if cursor is None:
-        latest = call("GET", f"/channels/{CHANNEL}/messages?limit=1")
+        latest = client.call("GET", f"/channels/{CHANNEL}/messages?limit=1")
         return latest[0]["seq"] if latest else 0
 
-    response = call("POST", "/sync", {"scopes": [{"channel_id": CHANNEL, "after_seq": cursor}]})
+    response = client.call("POST", "/sync", {"scopes": [{"channel_id": CHANNEL, "after_seq": cursor}]})
     scope = response["scopes"][0]
     for message in scope["messages"]:
-        handle_message(me, message)
+        handle_message(client, me, message)
     if scope["messages"]:
         return scope["messages"][-1]["seq"]
     if scope["reset"]:
-        latest = call("GET", f"/channels/{CHANNEL}/messages?limit=1")
+        latest = client.call("GET", f"/channels/{CHANNEL}/messages?limit=1")
         return latest[0]["seq"] if latest else 0
     return cursor
 
 
-async def listen(cursor, on_connected):
-    me = call("GET", "/me")["id"]
+async def attempt(client, state, reset_delay):
+    me = client.me()["id"]
     print(f"connected as {me}", flush=True)
 
-    cursor = resync(cursor)
-    post_listing()
+    state["cursor"] = resync(client, state["cursor"])
+    post_listing(client)
 
-    ticket = call("POST", "/auth/ws-ticket")["ticket"]
-    ws_url = socket_url(BASE)
-
-    async with websockets.connect(ws_url, user_agent_header=USER_AGENT) as socket:
-        await socket.send(json.dumps({"type": "hello", "ticket": ticket, "protocol": PROTOCOL}))
-        hello = json.loads(await socket.recv())
-        if hello.get("type") != "hello":
-            raise RuntimeError(f"expected a hello back, got {hello}")
+    async with await Connection.open(client) as socket:
         print("listening", flush=True)
-        on_connected()
+        reset_delay()
 
-        async for raw in socket:
-            frame = json.loads(raw)
+        async for frame in socket.frames():
             # Ignore a frame type we do not know; see bot-ping's docstring.
             if frame.get("type") != "message.created":
                 continue
             if frame.get("channel_id") != CHANNEL:
                 continue
             message = frame.get("message") or {}
-            handle_message(me, message)
+            handle_message(client, me, message)
             seq = message.get("seq")
             if seq is not None:
-                cursor = seq
-    return cursor
+                state["cursor"] = seq
 
 
 async def main():
@@ -270,26 +226,10 @@ async def main():
         print("set SLIMM_URL, SLIMM_BOT_TOKEN, SLIMM_CHANNEL and SLIMM_ROLES", file=sys.stderr)
         return 2
 
-    cursor = None
-    delay = 1
+    client = Client(BASE, TOKEN, USER_AGENT)
+    state = {"cursor": None}
 
-    def reset_delay():
-        nonlocal delay
-        delay = 1
-
-    while True:
-        try:
-            cursor = await listen(cursor, reset_delay)
-        except urllib.error.HTTPError as err:
-            # 401 means the token was revoked; there is nothing to retry.
-            if err.code == 401:
-                print("token rejected - revoked?", file=sys.stderr)
-                return 1
-            print(f"http {err.code}, retrying in {delay}s", file=sys.stderr)
-        except Exception as err:
-            print(f"{type(err).__name__}: {err}, retrying in {delay}s", file=sys.stderr)
-        await asyncio.sleep(delay)
-        delay = min(delay * 2, MAX_BACKOFF_SECONDS)
+    return await run_forever(lambda reset_delay: attempt(client, state, reset_delay))
 
 
 if __name__ == "__main__":

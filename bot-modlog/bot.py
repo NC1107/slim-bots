@@ -5,7 +5,7 @@ audit trail: timeouts, kicks, restores, and role grants/revokes.
 Run it with a bot token from Space settings -> Bots and the channel it
 should post into:
 
-    pip install websockets
+    pip install -r requirements.txt
     SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... \\
         SLIMM_LOG_CHANNEL=<channel-uuid> python3 bot.py
 
@@ -22,6 +22,11 @@ all. This bot only holds `VIEW_CHANNEL` and `SEND_MESSAGES` on the one
 channel it posts into, and that turns out to be enough to see every
 moderation action in the whole deployment - proven live against a bot token
 holding none of those four bits.
+
+Auth, the REST call, the websocket handshake and the reconnect loop with
+backoff come from the `slimbots` package (`../slimbots/`) - the same
+plumbing every template but `bot-ping` shares. Everything below this point
+is this bot's own event-handling logic, which the library has no opinion on.
 
 What the wire frames do not say, and what this bot has to work around:
 
@@ -53,7 +58,9 @@ What the wire frames do not say, and what this bot has to work around:
   bot's log says who and when, never why.
 - **There is no catching up.** None of these five events carry a `seq`, so
   there is nothing to persist as a cursor and no `/sync` scope that could
-  ever replay one. The one route that could serve as a catch-up feed,
+  ever replay one - this bot does not reach for `slimbots.cursor` at all,
+  because there is nothing it could store that `/sync` would ever answer for
+  these event types. The one route that could serve as a catch-up feed,
   `GET /reports/history`, needs `MANAGE_MESSAGES`; this bot calls it once at
   startup anyway and logs plainly whether it got a real page back or a 403,
   rather than silently doing nothing either way. If it is down when a kick
@@ -80,25 +87,25 @@ reporting "you were timed out" can itself land inside the timeout window and
 come back `403`. `listen()` catches that per-frame rather than letting it
 kill the socket - a reconnect here is strictly worse, since it risks the
 one thing this bot cannot recover from: missing whatever else happens during
-the gap that follows.
+the gap that follows. This bot also deliberately does not use `Client.send`'s
+built-in retry for its own log posts: retrying a log line under one fixed id
+is right for a reply to a specific command, but there is nothing here worth
+deduplicating against, since two genuinely different events could produce
+identical text.
 """
 
 import asyncio
-import json
 import os
 import sys
 import urllib.error
-import urllib.parse
-import urllib.request
 import uuid
 
-import websockets
+from slimbots import Client, Connection, run_forever
 
 BASE = os.environ.get("SLIMM_URL", "").rstrip("/")
 TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
 LOG_CHANNEL = os.environ.get("SLIMM_LOG_CHANNEL", "")
-PROTOCOL = 1
-MAX_BACKOFF_SECONDS = 60
+USER_AGENT = "slimm-bot-modlog/1.0"
 WATCHED_TYPES = {
     "member.timeout",
     "member.removed",
@@ -106,8 +113,6 @@ WATCHED_TYPES = {
     "member.role_changed",
     "role.changed",
 }
-# urllib's default UA is blocked by a CDN before it ever reaches slim-m.
-USER_AGENT = "slimm-bot-modlog/1.0"
 
 # user_id -> display_name, filled lazily and never invalidated (a mid-run rename keeps the old name).
 _names = {}
@@ -117,49 +122,19 @@ _last_roles = {}
 _role_names = {}
 
 
-def call(method, path, body=None):
-    """One authenticated REST call, returning parsed JSON or None for 204."""
-    data = json.dumps(body).encode() if body is not None else None
-    request = urllib.request.Request(f"{BASE}{path}", data=data, method=method)
-    request.add_header("authorization", f"Bearer {TOKEN}")
-    request.add_header("user-agent", USER_AGENT)
-    if data is not None:
-        request.add_header("content-type", "application/json")
-    with urllib.request.urlopen(request, timeout=15) as response:
-        raw = response.read()
-        return json.loads(raw) if raw else None
+def post(client, text):
+    """Posts a log line with a fresh id every call; see the module docstring
+    on why this bypasses `Client.send`'s idempotency."""
+    client.call("POST", f"/channels/{LOG_CHANNEL}/messages", {"id": str(uuid.uuid4()), "content": text})
 
 
-def socket_url(base):
-    """See bot-ping's identical helper for why plaintext ws is refused off
-    loopback."""
-    parts = urllib.parse.urlsplit(base)
-    if parts.scheme == "https":
-        return urllib.parse.urlunsplit(("wss", parts.netloc, "/ws", "", ""))
-    if parts.scheme == "http" and parts.hostname in ("localhost", "127.0.0.1", "::1"):
-        print("warning: plaintext ws, loopback only", file=sys.stderr)
-        return urllib.parse.urlunsplit(("ws", parts.netloc, "/ws", "", ""))
-    raise RuntimeError(
-        f"refusing to send a bot token over {parts.scheme or 'no'} scheme to "
-        f"{parts.hostname or base}; use https"
-    )
-
-
-def post(text):
-    """Posts a log line. `id` is a fresh UUID each call: unlike a reply to a
-    specific command, there is nothing here worth deduplicating a retry
-    against, so idempotency on a stable id would only risk swallowing two
-    genuinely different events that happened to produce the same text."""
-    call("POST", f"/channels/{LOG_CHANNEL}/messages", {"id": str(uuid.uuid4()), "content": text})
-
-
-def resolve_member(user_id):
+def resolve_member(client, user_id):
     """Fetches a member's current display name and roles, seeding both the
     name cache and the role-name map as a side effect. `None` if the account
     is gone outright (never true for a mere removal from the Space, only for
     an actually deleted account)."""
     try:
-        user = call("GET", f"/users/{user_id}")
+        user = client.call("GET", f"/users/{user_id}")
     except urllib.error.HTTPError as err:
         if err.code == 404:
             return None
@@ -178,10 +153,10 @@ def role_name_of(role_id):
     return _role_names.get(role_id)
 
 
-def handle_role_change(user_id, role_id):
+def handle_role_change(client, user_id, role_id):
     """`member.role_changed` never says grant or revoke; infer it from the
     member's current role set against what was last observed for them."""
-    user = resolve_member(user_id)
+    user = resolve_member(client, user_id)
     current = set(user["role_ids"]) if user else set()
     previous = _last_roles.get(user_id)
     _last_roles[user_id] = current
@@ -196,49 +171,50 @@ def handle_role_change(user_id, role_id):
     else:
         # Two changes to this role collapsed between our two reads.
         verb = "role membership changed for"
-    post(f"{name_of(user_id)} {verb} {label}")
+    post(client, f"{name_of(user_id)} {verb} {label}")
 
 
-def handle_role_definition_change(role_id):
+def handle_role_definition_change(client, role_id):
     name = role_name_of(role_id)
     if name is not None:
-        post(f"role '{name}' ({role_id}) changed - created, renamed, re-permissioned, or deleted")
+        post(client, f"role '{name}' ({role_id}) changed - created, renamed, re-permissioned, or deleted")
     else:
         post(
+            client,
             f"role {role_id} changed, but its name cannot be resolved here - "
-            "GET /roles needs MANAGE_ROLES, which this bot does not hold"
+            "GET /roles needs MANAGE_ROLES, which this bot does not hold",
         )
 
 
-def handle_frame(frame):
+def handle_frame(client, frame):
     kind = frame.get("type")
     if kind == "member.timeout":
         user_id = frame["user_id"]
-        resolve_member(user_id)
+        resolve_member(client, user_id)
         until = frame.get("until")
         if until is None:
-            post(f"{name_of(user_id)}'s timeout was lifted")
+            post(client, f"{name_of(user_id)}'s timeout was lifted")
         else:
-            post(f"{name_of(user_id)} was timed out")
+            post(client, f"{name_of(user_id)} was timed out")
     elif kind == "member.removed":
         user_id = frame["user_id"]
-        resolve_member(user_id)
-        post(f"{name_of(user_id)} was removed from the Space")
+        resolve_member(client, user_id)
+        post(client, f"{name_of(user_id)} was removed from the Space")
     elif kind == "member.restored":
         user_id = frame["user_id"]
-        resolve_member(user_id)
-        post(f"{name_of(user_id)} was let back into the Space")
+        resolve_member(client, user_id)
+        post(client, f"{name_of(user_id)} was let back into the Space")
     elif kind == "member.role_changed":
-        handle_role_change(frame["user_id"], frame["role_id"])
+        handle_role_change(client, frame["user_id"], frame["role_id"])
     elif kind == "role.changed":
-        handle_role_definition_change(frame["role_id"])
+        handle_role_definition_change(client, frame["role_id"])
 
 
-def announce_catchup_capability():
+def announce_catchup_capability(client):
     """Proves, out loud, whether this bot could ever backfill a reconnect
     gap - rather than silently having no opinion either way."""
     try:
-        call("GET", "/reports/history?limit=1")
+        client.call("GET", "/reports/history?limit=1")
         print("catch-up available: /reports/history is readable", flush=True)
     except urllib.error.HTTPError as err:
         if err.code == 403:
@@ -252,29 +228,21 @@ def announce_catchup_capability():
             raise
 
 
-async def listen(on_connected):
-    me = call("GET", "/me")["id"]
+async def attempt(client, reset_delay):
+    me = client.me()["id"]
     print(f"connected as {me}", flush=True)
-    announce_catchup_capability()
+    announce_catchup_capability(client)
 
-    ticket = call("POST", "/auth/ws-ticket")["ticket"]
-    ws_url = socket_url(BASE)
-
-    async with websockets.connect(ws_url, user_agent_header=USER_AGENT) as socket:
-        await socket.send(json.dumps({"type": "hello", "ticket": ticket, "protocol": PROTOCOL}))
-        hello = json.loads(await socket.recv())
-        if hello.get("type") != "hello":
-            raise RuntimeError(f"expected a hello back, got {hello}")
+    async with await Connection.open(client) as socket:
         print("listening", flush=True)
-        on_connected()
+        reset_delay()
 
-        async for raw in socket:
-            frame = json.loads(raw)
+        async for frame in socket.frames():
             # Ignore a frame type we do not know; see bot-ping's docstring.
             if frame.get("type") not in WATCHED_TYPES:
                 continue
             try:
-                handle_frame(frame)
+                handle_frame(client, frame)
             except urllib.error.HTTPError as err:
                 # See the module docstring's note on this bot's own timeout.
                 print(f"could not log {frame.get('type')}: http {err.code}", file=sys.stderr)
@@ -285,25 +253,9 @@ async def main():
         print("set SLIMM_URL, SLIMM_BOT_TOKEN and SLIMM_LOG_CHANNEL", file=sys.stderr)
         return 2
 
-    delay = 1
+    client = Client(BASE, TOKEN, USER_AGENT)
 
-    def reset_delay():
-        nonlocal delay
-        delay = 1
-
-    while True:
-        try:
-            await listen(reset_delay)
-        except urllib.error.HTTPError as err:
-            # 401 means the token was revoked; there is nothing to retry.
-            if err.code == 401:
-                print("token rejected - revoked?", file=sys.stderr)
-                return 1
-            print(f"http {err.code}, retrying in {delay}s", file=sys.stderr)
-        except Exception as err:
-            print(f"{type(err).__name__}: {err}, retrying in {delay}s", file=sys.stderr)
-        await asyncio.sleep(delay)
-        delay = min(delay * 2, MAX_BACKOFF_SECONDS)
+    return await run_forever(lambda reset_delay: attempt(client, reset_delay))
 
 
 if __name__ == "__main__":

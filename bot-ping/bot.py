@@ -26,6 +26,11 @@ it only sees what arrives while it is connected rather than catching up on
 restart; a bot that must not miss anything reads `seq` and calls /sync. It
 reconnects with a flat delay rather than backing off. It answers every channel
 it can see rather than being told which.
+
+Every other template in this repo builds on the `slimbots` package
+(`../slimbots/`) for this same plumbing. This one deliberately does not, so
+there is always one file that shows the whole protocol with nothing hidden
+behind an import - see `README.md` for why that stays true on purpose.
 """
 
 import asyncio

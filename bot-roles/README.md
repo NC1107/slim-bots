@@ -1,8 +1,13 @@
 # bot-roles
 
-A slim-m bot in one file: `!role <name>` to grab a self-service role,
-`!role remove <name>` to drop it, `!roles` to see what is on offer. At
-startup it also posts (or updates) that same listing in its channel.
+A slim-m bot: `!role <name>` to grab a self-service role, `!role remove
+<name>` to drop it, `!roles` to see what is on offer. At startup it also
+posts (or updates) that same listing in its channel.
+
+Unlike `bot-ping`, this template is built on the `slimbots` package in
+`../slimbots/`, which covers the plumbing every template but `bot-ping`
+shares - auth, the REST call, retries, the websocket handshake, and the
+reconnect loop. `bot-ping` stays free of it on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt

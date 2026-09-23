@@ -1,19 +1,34 @@
 # slim-bots
 
-Bot templates for [slim-m](https://github.com/NC1107/slim-m).
+Bot templates for [slim-m](https://github.com/NC1107/slim-m), plus a small
+shared library, `slimbots/`, for the plumbing every template but one repeats.
 
-Each directory is a working bot in one file, meant to be copied rather than
-imported. There is no library here on purpose: a bot is an ordinary program
-holding a token, and the whole surface it needs is documented in slim-m's
+A bot is an ordinary program holding a token, and the whole surface it needs
+is documented in slim-m's
 [`docs/bots/building-bots.md`](https://github.com/NC1107/slim-m/blob/main/docs/bots/building-bots.md).
-
 Read that first. Then pick the template closest to what you want.
+
+## The library
+
+[`slimbots/`](slimbots/) covers auth, the REST call, an idempotent `send`
+with retries, the websocket handshake, the reconnect loop with backoff, and
+the `seq`-cursor/`/sync` helpers. It is not a typed model of slim-m's API -
+no `Channel` or `Message` objects, no cache - because slim-m's bot surface is
+small enough that this is the whole plumbing layer needed. See its own
+README for what it covers, why it is hand-written rather than generated, and
+why it is installable from git rather than published to PyPI.
+
+`bot-ping` stays free of it on purpose: it is the one template that shows
+the whole protocol in a single file with nothing hidden behind an import.
+Every other template here is built on it. If a future template looks
+inconsistent with that split, the split is deliberate; see `bot-ping`'s own
+README before "fixing" it.
 
 ## The templates
 
 | Directory | What it is for |
 | --- | --- |
-| [`bot-ping`](bot-ping/) | The smallest thing that connects and answers. Start here. |
+| [`bot-ping`](bot-ping/) | The smallest thing that connects and answers. Start here. Library-free on purpose. |
 | [`bot-reminders`](bot-reminders/) | Durable state, a sync cursor, and exponential backoff. |
 | [`bot-roles`](bot-roles/) | Self-service roles driven by a command, because reactor identity never reaches the wire. |
 | [`bot-canvas-board`](bot-canvas-board/) | Driving the Voice Canvas from outside the app. |
@@ -24,11 +39,12 @@ usually the more useful half.
 
 ## Running one
 
-Each directory has its own `requirements.txt` and its own README, but the shape
-is the same:
+Each directory has its own `requirements.txt` and its own README. Every
+template but `bot-ping` depends on `slimbots`, installed straight from this
+repo:
 
 ```bash
-cd bot-ping
+cd bot-reminders
 pip install -r requirements.txt
 SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... python3 bot.py
 ```

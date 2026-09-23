@@ -1,8 +1,12 @@
 # bot-modlog
 
-A slim-m bot in one file that mirrors moderation actions into a channel:
-timeouts, kicks, restores, role grants, role revokes, and role definition
-changes.
+A slim-m bot that mirrors moderation actions into a channel: timeouts,
+kicks, restores, role grants, role revokes, and role definition changes.
+
+Unlike `bot-ping`, this template is built on the `slimbots` package in
+`../slimbots/`, which covers the plumbing every template but `bot-ping`
+shares - auth, the REST call, the websocket handshake, and the reconnect
+loop. `bot-ping` stays free of it on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt
