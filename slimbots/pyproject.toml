@@ -2,8 +2,16 @@
 name = "slim-m"
 version = "0.1.0"
 description = "Shared plumbing for slim-m bots: auth, REST, retries, websocket reconnect, seq cursors"
+readme = "README.md"
 requires-python = ">=3.9"
+license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+keywords = ["slim-m", "bots", "chat"]
+
 dependencies = ["websockets>=12"]
+
+[project.urls]
+Homepage = "https://github.com/NC1107/slim-m"
+Source = "https://github.com/NC1107/slim-bots"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
