@@ -81,7 +81,8 @@ def test_reminders_cancel_removes_the_right_one():
 
     assert "cancelled reminder 1" in client.sent[0]["content"]
     remaining = bot.pending_for_user(conn, CHANNEL, USER)
-    assert len(remaining) == 1 and remaining[0][2] == "second"
+    assert len(remaining) == 1
+    assert remaining[0][2] == "second"
 
 
 def test_reminders_cancel_out_of_range_says_so():
