@@ -25,6 +25,12 @@ State (pending reminders and each channel's sync cursor) lives in a sqlite
 file next to the script, `reminders.db` by default (`SLIMM_DB_PATH` to move
 it). Restarting the bot does not lose a reminder that has not fired yet.
 
+`test_bot.py` exercises `!remind`, `!reminders` and its `cancel` form
+against `slimbots.testing.FakeClient`, with no live deployment and no
+socket - `python3 test_bot.py` runs it directly. It is the worked example
+for that helper; see its own docstring, and `slimbots/README.md`'s "Testing
+a bot built on this".
+
 ## What this deliberately does not do
 
 - **Recurring reminders** (`every monday`). Left out of this example on

@@ -26,6 +26,31 @@ protocol this wraps, and `bot-ping/` in this repo for the same protocol
 written out with nothing hidden - it stays free of this package on purpose,
 so there is always one template that shows the whole thing in one file.
 
+## Testing a bot built on this
+
+`slimbots.testing.FakeClient` is a `Client` that never touches the network,
+for unit-testing a bot's command handlers - the thing every template but
+this package's own tests had no way to do without a live deployment. It
+records every call in `.calls`, auto-answers a message send and records it
+separately in `.sent` (the one route every template calls on every command),
+and raises immediately on anything else the bot under test calls that was
+not stubbed with `respond(method, path, response)`, so a forgotten stub
+fails the test loudly instead of hanging.
+
+```python
+from slimbots.testing import FakeClient
+
+client = FakeClient(me_id="bot-1")
+handle_message(client, conn, "bot-1", "chan-1", {"author_id": "u1", "content": "!ping", "id": "m1"})
+assert client.sent[0]["content"] == "pong"
+```
+
+It is not imported by `slimbots/__init__.py`, so it costs nothing for a
+template that never writes a test. `bot-reminders/test_bot.py` is a worked
+example against a real template's handlers. It is not a mock of slim-m's
+API - concurrency and money-safety still need a real sqlite connection and
+real threads racing it, the way `bot-casino/test_concurrency.py` does.
+
 ## Hand-written, not generated
 
 slim-m's wire contract is `schema/openapi.yaml`, and
