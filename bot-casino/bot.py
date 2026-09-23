@@ -257,7 +257,7 @@ def card_value(card):
 
 def hand_total(cards):
     total = sum(card_value(c) for c in cards)
-    aces = sum(1 for c in cards if c[:-1] == "A")
+    aces = sum(1 for c in cards if c.startswith("A"))
     while total > 21 and aces:
         total -= 10
         aces -= 1
