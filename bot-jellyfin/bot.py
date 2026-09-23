@@ -308,6 +308,30 @@ def newest_item():
     return newest
 
 
+def _items_since_in_library(library_id, cursor):
+    """One library's page-by-page walk backward from its newest item, until
+    an item's `DateCreated` falls below `cursor` or `MAX_ITEMS_PER_POLL` is
+    reached. Split out of `items_since` so that function's own job - merging
+    this across every configured library - reads as one loop, not two nested
+    ones plus the page-crossing logic in between."""
+    collected = {}
+    start_index = 0
+    while len(collected) < MAX_ITEMS_PER_POLL:
+        page = fetch_page(library_id, start_index, PAGE_SIZE)
+        if not page:
+            return collected
+        crossed_cursor = False
+        for item in page:
+            if item["DateCreated"] < cursor:
+                crossed_cursor = True
+                break
+            collected[item["Id"]] = item
+        if crossed_cursor or len(page) < PAGE_SIZE:
+            return collected
+        start_index += PAGE_SIZE
+    return collected
+
+
 def items_since(cursor):
     """Pages backward from the newest item in each configured library until
     an item's `DateCreated` falls below `cursor`, merging across libraries
@@ -315,22 +339,7 @@ def items_since(cursor):
     why this walks pages instead of filtering on `minDateLastSaved`."""
     by_id = {}
     for library_id in JELLYFIN_LIBRARY_IDS or [None]:
-        start_index = 0
-        collected = 0
-        while collected < MAX_ITEMS_PER_POLL:
-            page = fetch_page(library_id, start_index, PAGE_SIZE)
-            if not page:
-                break
-            crossed_cursor = False
-            for item in page:
-                if item["DateCreated"] < cursor:
-                    crossed_cursor = True
-                    break
-                by_id[item["Id"]] = item
-                collected += 1
-            if crossed_cursor or len(page) < PAGE_SIZE:
-                break
-            start_index += PAGE_SIZE
+        by_id.update(_items_since_in_library(library_id, cursor))
     return sorted(by_id.values(), key=lambda item: item["DateCreated"])
 
 

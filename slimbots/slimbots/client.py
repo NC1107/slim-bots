@@ -58,7 +58,12 @@ class Client:
         attachment upload needs. `headers` adds to, and never replaces, the
         authorization/user-agent/content-type headers this method already sends.
         """
-        data = raw_body if raw_body is not None else (json.dumps(body).encode() if body is not None else None)
+        if raw_body is not None:
+            data = raw_body
+        elif body is not None:
+            data = json.dumps(body).encode()
+        else:
+            data = None
         request = urllib.request.Request(f"{self.base}{path}", data=data, method=method)
         request.add_header("authorization", f"Bearer {self.token}")
         # A CDN can reject urllib's default UA; see docs/bots/building-bots.md.
