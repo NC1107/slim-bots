@@ -1,19 +1,16 @@
 #!/usr/bin/env python3
-"""bot-reminders: `!remind me in/at/every ...`, `!reminders`, `!timezone`; see README.md."""
+"""bot-reminders: `!remind in/at/every ...`, `!reminders`, `!timezone`; see README.md."""
 
 import asyncio
-import os
-import re
 import sqlite3
 import time
 import uuid
 
-from slimbots import Bot, Embed, RateLimiter
+from slimbots import Bot, Duration, Embed, RateLimiter, TimeOfDay
 from slimbots.limits import ValidationError, require_len, require_range
 
 import recurrence
 
-DB_PATH = os.environ.get("SLIMM_DB_PATH", "reminders.db")
 DUE_CHECK_SECONDS = 5
 
 COMMANDS_PER_WINDOW = 12
@@ -24,15 +21,6 @@ MAX_TEXT_LEN = 500
 REMINDER_RETENTION_SECONDS = 30 * 24 * 3600  # a resolved reminder is pruned once this old; a pending one never is
 PRUNE_INTERVAL_SECONDS = 3600
 DEFAULT_RECUR_HOUR = 9
-
-TRIGGER_IN = re.compile(r"^me\s+in\s+(\S+)\s+(\S[\s\S]*)$", re.IGNORECASE)
-TRIGGER_AT = re.compile(r"^me\s+at\s+(\d{1,2}:\d{2})\s+(\S[\s\S]*)$", re.IGNORECASE)
-TRIGGER_EVERY = re.compile(r"^me\s+every\s+(\S+)(?:\s+at\s+(\d{1,2}:\d{2}))?\s+(\S[\s\S]*)$", re.IGNORECASE)
-TRIGGER_CANCEL = re.compile(r"^cancel\s+(\d+)\s*$", re.IGNORECASE)
-TRIGGER_EDIT = re.compile(r"^edit\s+(\d+)\s+(\S[\s\S]*)$", re.IGNORECASE)
-TRIGGER_SNOOZE = re.compile(r"^snooze\s+(\d+)\s+(\S+)\s*$", re.IGNORECASE)
-DURATION_PART = re.compile(r"(\d{1,6})([smhd])")
-DURATION_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
 # --- durable state ---
@@ -186,35 +174,7 @@ def snooze_nth(conn, channel_id, user_id, n, extra_seconds):
     return new_due
 
 
-# --- parsing ---
-
-
-def parse_duration(spec):
-    """`2h`, `90s`, `1h30m` -> seconds, or None if `spec` is not one."""
-    parts = DURATION_PART.findall(spec)
-    if not parts or "".join(f"{n}{u}" for n, u in parts) != spec:
-        return None
-    return sum(int(n) * DURATION_SECONDS[u] for n, u in parts)
-
-
-def parse_every(rest):
-    """`me every <spec> [at HH:MM] <text>` -> a recurrence dict (without `tz`) plus the text, or None."""
-    match = TRIGGER_EVERY.match(rest)
-    if not match:
-        return None
-    spec, clock, text = match.groups()
-    weekday = recurrence.normalize_weekday(spec)
-    if weekday is not None:
-        hour, minute = (DEFAULT_RECUR_HOUR, 0)
-        if clock:
-            hour, minute = (int(part) for part in clock.split(":"))
-        return {"kind": "weekly", "weekday": weekday, "hour": hour, "minute": minute}, text
-    if clock:
-        return None  # "at HH:MM" is only meaningful with a weekday
-    seconds = parse_duration(spec)
-    if seconds is None:
-        return None
-    return {"kind": "interval", "interval_seconds": seconds}, text
+# --- formatting ---
 
 
 def render_reminder_text(text):
@@ -246,7 +206,7 @@ def format_duration_short(seconds):
     return f"{seconds}s"
 
 
-bot = Bot(prefix="!", require_channels=True, cursor_path=DB_PATH)
+bot = Bot(prefix="!", require_channels=True, default_data_path="reminders.db")
 _command_limiter = RateLimiter(COMMANDS_PER_WINDOW, COMMAND_WINDOW_SECONDS)
 
 
@@ -268,59 +228,84 @@ async def _create_and_ack(ctx, due_at, text, recur=None):
         return
     reminder_id = str(uuid.uuid4())
     add_reminder(conn, reminder_id, ctx.channel_id, ctx.author.id, ctx.message["id"], due_at, text, recur=recur)
-    tz_name = (recur or {}).get("tz") or get_timezone(conn, ctx.author.id)
     recur = recur or {}
+    tz_name = recur.get("tz") or get_timezone(conn, ctx.author.id)
     note = format_recurrence(recur.get("kind"), recur.get("interval_seconds"), recur.get("weekday"), recur.get("hour"), recur.get("minute"))
     await ctx.reply(f"will remind you at {recurrence.format_local(due_at, tz_name)}{note}")
 
 
-@bot.command(help="`me in <duration> <text>`, `me at <HH:MM> <text>`, or `me every <spec> [at HH:MM] <text>`", usage="me in|at|every ...")
-async def remind(ctx, rest: str):
+@bot.group(name="remind", help="`in <duration> <text>`, `at <HH:MM> <text>`, or `every <spec> [at HH:MM] <text>`")
+async def remind(ctx, rest: str = ""):
+    await ctx.reply("try `!remind in 2h <text>`, `!remind at 15:30 <text>`, or `!remind every monday <text>`")
+
+
+@remind.command(name="in", help="Remind you after a duration", usage="<duration> <text>")
+async def remind_in(ctx, duration: Duration, text: str):
+    await _create_and_ack(ctx, int(time.time()) + int(duration), text)
+
+
+@remind.command(name="at", help="Remind you at a time of day, in your own timezone", usage="<HH:MM> <text>")
+async def remind_at(ctx, when: TimeOfDay, text: str):
+    tz_name = get_timezone(bot.db, ctx.author.id)
+    due_at = recurrence.local_clock_time(int(time.time()), when.hour, when.minute, tz_name)
+    await _create_and_ack(ctx, due_at, text)
+
+
+@remind.command(
+    name="every", usage="<duration|weekday> [at <HH:MM>] <text>",
+    help="A recurring reminder: a duration, or a weekday with an optional `at HH:MM`",
+)
+async def remind_every(ctx, spec: str, rest: str):
+    """`spec` is a duration or a weekday name; `at HH:MM` inside `rest` only applies to a weekday."""
     conn = bot.db
-    if match := TRIGGER_IN.match(rest):
-        spec, text = match.groups()
-        seconds = parse_duration(spec)
-        if seconds is None or seconds <= 0:
-            await ctx.reply(f"not a duration I understand: `{spec}`")
+    weekday = recurrence.normalize_weekday(spec)
+    interval_seconds = None
+    if weekday is None:
+        duration = Duration.parse(spec)
+        if duration is None:
+            await ctx.reply(f"not a duration or weekday I understand: `{spec}`")
             return
-        await _create_and_ack(ctx, int(time.time()) + seconds, text)
-        return
+        interval_seconds = int(duration)
 
-    if match := TRIGGER_AT.match(rest):
-        spec, text = match.groups()
-        hour, minute = (int(part) for part in spec.split(":"))
-        if not (0 <= hour < 24 and 0 <= minute < 60):
-            await ctx.reply(f"not a time I understand: `{spec}`")
+    hour, minute, text = DEFAULT_RECUR_HOUR, 0, rest
+    first, _, remainder = rest.partition(" ")
+    if first.lower() == "at":
+        clock_token, _, remaining_text = remainder.partition(" ")
+        clock = TimeOfDay.parse(clock_token)
+        if clock is None:
+            await ctx.reply(f"not a time I understand: `{clock_token}`")
             return
-        tz_name = get_timezone(conn, ctx.author.id)
-        due_at = recurrence.local_clock_time(int(time.time()), hour, minute, tz_name)
-        await _create_and_ack(ctx, due_at, text)
+        if weekday is None:
+            await ctx.reply("`at HH:MM` only makes sense with a weekday, not a plain interval")
+            return
+        hour, minute, text = clock.hour, clock.minute, remaining_text
+
+    if not text:
+        await ctx.reply("missing a value for `text`")
         return
 
-    if parsed := parse_every(rest):
-        recur, text = parsed
-        if recur["kind"] == "interval":
-            try:
-                require_range(recur["interval_seconds"], min_value=MIN_RECUR_SECONDS, field="a recurring interval")
-            except ValidationError as err:
-                await ctx.reply(str(err))
-                return
-        recur["tz"] = get_timezone(conn, ctx.author.id)
-        if recur["kind"] == "weekly":
-            due_at = recurrence.next_weekly(int(time.time()), recur["weekday"], recur["hour"], recur["minute"], recur["tz"])
-        else:
-            due_at = int(time.time()) + recur["interval_seconds"]
-        await _create_and_ack(ctx, due_at, text, recur=recur)
-        return
+    if weekday is not None:
+        recur = {"kind": "weekly", "weekday": weekday, "hour": hour, "minute": minute}
+    else:
+        try:
+            require_range(interval_seconds, min_value=MIN_RECUR_SECONDS, field="a recurring interval")
+        except ValidationError as err:
+            await ctx.reply(str(err))
+            return
+        recur = {"kind": "interval", "interval_seconds": interval_seconds}
 
-    await ctx.reply("try `!remind me in 2h <text>`, `!remind me at 15:30 <text>`, or `!remind me every monday <text>`")
+    recur["tz"] = get_timezone(conn, ctx.author.id)
+    if recur["kind"] == "weekly":
+        due_at = recurrence.next_weekly(int(time.time()), recur["weekday"], recur["hour"], recur["minute"], recur["tz"])
+    else:
+        due_at = int(time.time()) + recur["interval_seconds"]
+    await _create_and_ack(ctx, due_at, text, recur=recur)
 
 
-@bot.command(name="reminders", help="List, `cancel <n>`, `edit <n> <text>`, or `snooze <n> <duration>`", usage="[cancel|edit|snooze <n> ...]")
-async def reminders_cmd(ctx, rest: str = ""):
+@bot.group(name="reminders", help="List your pending reminders, or manage one by its listed number")
+async def reminders_group(ctx, rest: str = ""):
     conn = bot.db
     rest = rest.strip()
-
     if not rest:
         rows = pending_for_user(conn, ctx.channel_id, ctx.author.id)
         if not rows:
@@ -333,39 +318,34 @@ async def reminders_cmd(ctx, rest: str = ""):
             lines.append(f"{i}. {recurrence.format_local(due_at, tz_name)}{note} - {text}")
         await ctx.reply("\n".join(lines))
         return
-
-    if match := TRIGGER_CANCEL.match(rest):
-        n = int(match.group(1))
-        ok = cancel_nth(conn, ctx.channel_id, ctx.author.id, n)
-        await ctx.reply(f"cancelled reminder {n}" if ok else f"no reminder {n}")
-        return
-
-    if match := TRIGGER_EDIT.match(rest):
-        n, new_text = int(match.group(1)), match.group(2)
-        try:
-            new_text = require_len(new_text, max_len=MAX_TEXT_LEN, field="a reminder")
-        except ValidationError as err:
-            await ctx.reply(str(err))
-            return
-        ok = edit_nth_text(conn, ctx.channel_id, ctx.author.id, n, new_text)
-        await ctx.reply(f"updated reminder {n}" if ok else f"no reminder {n}")
-        return
-
-    if match := TRIGGER_SNOOZE.match(rest):
-        n, spec = int(match.group(1)), match.group(2)
-        seconds = parse_duration(spec)
-        if seconds is None or seconds <= 0:
-            await ctx.reply(f"not a duration I understand: `{spec}`")
-            return
-        new_due = snooze_nth(conn, ctx.channel_id, ctx.author.id, n, seconds)
-        if new_due is None:
-            await ctx.reply(f"no reminder {n}")
-            return
-        tz_name = get_timezone(conn, ctx.author.id)
-        await ctx.reply(f"reminder {n} pushed to {recurrence.format_local(new_due, tz_name)}")
-        return
-
     await ctx.reply("try `!reminders`, `!reminders cancel <n>`, `!reminders edit <n> <text>`, or `!reminders snooze <n> <duration>`")
+
+
+@reminders_group.command(name="cancel", help="Cancel one by its listed number", usage="<n>")
+async def reminders_cancel(ctx, n: int):
+    ok = cancel_nth(bot.db, ctx.channel_id, ctx.author.id, n)
+    await ctx.reply(f"cancelled reminder {n}" if ok else f"no reminder {n}")
+
+
+@reminders_group.command(name="edit", help="Change one's text by its listed number", usage="<n> <text>")
+async def reminders_edit(ctx, n: int, text: str):
+    try:
+        text = require_len(text, max_len=MAX_TEXT_LEN, field="a reminder")
+    except ValidationError as err:
+        await ctx.reply(str(err))
+        return
+    ok = edit_nth_text(bot.db, ctx.channel_id, ctx.author.id, n, text)
+    await ctx.reply(f"updated reminder {n}" if ok else f"no reminder {n}")
+
+
+@reminders_group.command(name="snooze", help="Push one back by a duration", usage="<n> <duration>")
+async def reminders_snooze(ctx, n: int, duration: Duration):
+    new_due = snooze_nth(bot.db, ctx.channel_id, ctx.author.id, n, int(duration))
+    if new_due is None:
+        await ctx.reply(f"no reminder {n}")
+        return
+    tz_name = get_timezone(bot.db, ctx.author.id)
+    await ctx.reply(f"reminder {n} pushed to {recurrence.format_local(new_due, tz_name)}")
 
 
 @bot.command(name="timezone", help="Show or set the timezone `at`/`every ... at` and the listing are shown in", usage="[IANA name]")
@@ -421,7 +401,7 @@ async def on_ready():
 
 
 def main():
-    bot.db = sqlite3.connect(DB_PATH)
+    bot.db = sqlite3.connect(bot.data_path)
     init_db(bot.db)
     try:
         raise SystemExit(bot.run() or 0)

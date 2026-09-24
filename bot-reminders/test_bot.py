@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Command-layer tests against slimbots.testing.FakeAsyncClient.
-
-Run it directly, no test framework needed: python3 test_bot.py
-"""
+"""Command-layer tests against FakeAsyncClient; run directly: python3 test_bot.py."""
 
 import asyncio
 import os
@@ -48,7 +45,7 @@ def process(client, *messages):
 
 def test_remind_in_creates_a_reminder_and_acks():
     client = setup()
-    process(client, message("!remind me in 2h water the plants"))
+    process(client, message("!remind in 2h water the plants"))
     assert "will remind you" in client.sent[-1]["content"]
     rows = reminders.pending_for_user(reminders.bot.db, "c1", "u1")
     assert len(rows) == 1
@@ -57,33 +54,71 @@ def test_remind_in_creates_a_reminder_and_acks():
 
 def test_remind_in_bad_duration_is_refused_without_creating_one():
     client = setup()
-    process(client, message("!remind me in banana water the plants"))
-    assert "not a duration" in client.sent[-1]["content"]
+    process(client, message("!remind in banana water the plants"))
+    assert "duration" in client.sent[-1]["content"]
+    assert reminders.pending_for_user(reminders.bot.db, "c1", "u1") == []
+
+
+def test_remind_at_creates_a_reminder():
+    client = setup()
+    process(client, message("!remind at 09:00 standup"))
+    assert "will remind you" in client.sent[-1]["content"]
+
+
+def test_remind_at_bad_time_is_refused():
+    client = setup()
+    process(client, message("!remind at 25:99 standup"))
+    assert "time" in client.sent[-1]["content"]
     assert reminders.pending_for_user(reminders.bot.db, "c1", "u1") == []
 
 
 def test_remind_every_weekday_recurs():
     client = setup()
-    process(client, message("!remind me every monday at 09:00 standup"))
+    process(client, message("!remind every monday at 09:00 standup"))
     assert "every monday at 09:00" in client.sent[-1]["content"]
+
+
+def test_remind_every_weekday_defaults_to_the_default_hour():
+    client = setup()
+    process(client, message("!remind every monday standup"))
+    assert f"every monday at {reminders.DEFAULT_RECUR_HOUR:02d}:00" in client.sent[-1]["content"]
 
 
 def test_remind_every_interval_below_the_floor_is_refused():
     client = setup()
-    process(client, message("!remind me every 10s spam"))
+    process(client, message("!remind every 10s spam"))
     assert "at least" in client.sent[-1]["content"]
+
+
+def test_remind_every_at_clock_on_a_plain_interval_is_refused():
+    client = setup()
+    process(client, message("!remind every 1d at 09:00 spam"))
+    assert "only makes sense with a weekday" in client.sent[-1]["content"]
+    assert reminders.pending_for_user(reminders.bot.db, "c1", "u1") == []
+
+
+def test_remind_every_unrecognised_spec_is_refused():
+    client = setup()
+    process(client, message("!remind every someday spam"))
+    assert "not a duration or weekday" in client.sent[-1]["content"]
+
+
+def test_remind_bare_shows_the_usage_hint():
+    client = setup()
+    process(client, message("!remind"))
+    assert "try `!remind" in client.sent[-1]["content"]
 
 
 def test_reminders_lists_pending():
     client = setup()
-    process(client, message("!remind me in 1h water the plants", "m1"))
+    process(client, message("!remind in 1h water the plants", "m1"))
     process(client, message("!reminders", "m2"))
     assert "water the plants" in client.sent[-1]["content"]
 
 
 def test_reminders_cancel_removes_it():
     client = setup()
-    process(client, message("!remind me in 1h water the plants", "m1"))
+    process(client, message("!remind in 1h water the plants", "m1"))
     process(client, message("!reminders cancel 1", "m2"))
     assert "cancelled reminder 1" in client.sent[-1]["content"]
     assert reminders.pending_for_user(reminders.bot.db, "c1", "u1") == []
@@ -97,7 +132,7 @@ def test_reminders_cancel_out_of_range_says_so():
 
 def test_reminders_edit_changes_the_text():
     client = setup()
-    process(client, message("!remind me in 1h old text", "m1"))
+    process(client, message("!remind in 1h old text", "m1"))
     process(client, message("!reminders edit 1 new text", "m2"))
     assert "updated reminder 1" in client.sent[-1]["content"]
     rows = reminders.pending_for_user(reminders.bot.db, "c1", "u1")
@@ -106,11 +141,17 @@ def test_reminders_edit_changes_the_text():
 
 def test_reminders_snooze_pushes_the_due_time():
     client = setup()
-    process(client, message("!remind me in 1h water the plants", "m1"))
+    process(client, message("!remind in 1h water the plants", "m1"))
     before = reminders.pending_for_user(reminders.bot.db, "c1", "u1")[0][1]
     process(client, message("!reminders snooze 1 30m", "m2"))
     after = reminders.pending_for_user(reminders.bot.db, "c1", "u1")[0][1]
     assert after == before + 1800
+
+
+def test_reminders_unrecognised_subcommand_shows_the_usage_hint():
+    client = setup()
+    process(client, message("!reminders bogus"))
+    assert "try `!reminders`" in client.sent[-1]["content"]
 
 
 def test_timezone_set_and_show():
@@ -131,7 +172,7 @@ def test_pending_cap_refuses_a_new_reminder():
     client = setup()
     for i in range(reminders.MAX_PENDING_PER_USER):
         reminders.add_reminder(reminders.bot.db, f"r{i}", "c1", "u1", "m0", int(time.time()) + 3600, "x")
-    process(client, message("!remind me in 1h one more"))
+    process(client, message("!remind in 1h one more"))
     assert "cancel one first" in client.sent[-1]["content"]
 
 
@@ -160,7 +201,7 @@ def test_another_bot_is_ignored_by_default():
         MEMBERS + [{"id": "bot-2", "username": "otherbot", "display_name": "OtherBot", "is_bot": True, "is_webhook": False, "role_ids": []}],
     )
     asyncio.run(reminders.bot.space.refresh_members())
-    process(client, {"id": "m1", "author_id": "bot-2", "channel_id": "c1", "content": "!remind me in 1h daily"})
+    process(client, {"id": "m1", "author_id": "bot-2", "channel_id": "c1", "content": "!remind in 1h daily"})
     assert client.sent == []
 
 

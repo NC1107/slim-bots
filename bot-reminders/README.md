@@ -1,18 +1,20 @@
 # bot-reminders
 
-A slim-m bot: `!remind me in 2h <text>`, `!remind me at 15:30 <text>`,
-`!remind me every monday [at 09:00] <text>` or `!remind me every 2h <text>`
-for a recurring one, and `!reminders` to list, `cancel`, `edit` or `snooze`
-your own. `!timezone <IANA name>` sets the zone `at`/`every ... at` and the
-listing are shown in.
+A slim-m bot: `!remind in 2h <text>`, `!remind at 15:30 <text>`,
+`!remind every monday [at 09:00] <text>` or `!remind every 2h <text>`
+for a recurring one, and `!reminders` to list, or `cancel`/`edit`/`snooze`
+your own by its listed number. `!timezone <IANA name>` sets the zone
+`at`/`every ... at` and the listing are shown in.
 
 Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
-`Bot` itself owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS` and the
-seq cursor; this script only reads `SLIMM_DB_PATH`, its own business
-config. `!remind` and `!reminders` are each one `@bot.command` with their
-own small internal grammar (`in`/`at`/`every`, `cancel`/`edit`/`snooze`)
-rather than a trigger regex per shape. `bot-ping` stays free of the
-library on purpose; see its own README.
+`Bot` owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS`, the seq cursor,
+and `bot.data_path` (from `SLIMM_DB_PATH`, defaulting to `reminders.db`);
+this script only opens its own tables there. `!remind` and `!reminders`
+are each a `@bot.group()` with `in`/`at`/`every` and `cancel`/`edit`/`snooze`
+as real `@group.command()` subcommands, using the framework's own
+`Duration` (`10m`, `2h30m`) and `TimeOfDay` (`14:30`) argument types rather
+than a trigger regex per shape. `bot-ping` stays free of the library on
+purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt
