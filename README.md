@@ -24,8 +24,7 @@ README for what it covers and why it is hand-written rather than generated.
 the whole protocol in a single file with nothing hidden behind an import.
 Every other template here is built on it. If a future template looks
 inconsistent with that split, the split is deliberate; see `bot-ping`'s own
-README before "fixing" it.
-## The templates
+README before "fixing" it.## The templates
 
 | Directory | What it is for |
 | --- | --- |
@@ -34,7 +33,11 @@ README before "fixing" it.
 | [`bot-roles`](bot-roles/) | Self-service roles driven by a command, because reactor identity never reaches the wire. |
 | [`bot-canvas-board`](bot-canvas-board/) | Driving the Voice Canvas from outside the app. |
 | [`bot-modlog`](bot-modlog/) | Watching moderation events, and what is missing when one is dropped. |
+<<<<<<< HEAD
 | [`bot-jellyfin`](bot-jellyfin/) | Polling an outside service (Jellyfin) instead of slim-m's own events, and batching a library scan into one message instead of forty. |
+=======
+| [`bot-casino`](bot-casino/) | A currency bot: daily chips, coinflip and blackjack, transfers, a leaderboard, and money kept safe under real concurrency. |
+>>>>>>> a17bd09 (refactor(bot-casino): rebase onto the slimbots library)
 
 Every template's README says what it deliberately does not do. That section is
 usually the more useful half.
