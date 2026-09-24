@@ -3,7 +3,7 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
-## 0.3.1
+## 0.4.0
 
 A 0.2.0 database carried over into 0.3.0 could crash on a column that only 0.3.0's schema added - `bot-canvas-board`'s `items.added_by` was the one that actually broke in production (`OperationalError: no such column: added_by`).
 
@@ -14,6 +14,9 @@ A 0.2.0 database carried over into 0.3.0 could crash on a column that only 0.3.0
 - Audited every other bot's schema against what 0.2.0 created; `bot-jellyfin` and `bot-modlog` had no drift to migrate.
 - `bot.canvas(channel_id)`: a `Canvas` wired with the bot's own client and gateway, for a bot that draws on a channel other than the one a command came from.
 - `bot-canvas-board` takes `!board` commands from an ordinary text channel and draws on a separately configured voice channel's canvas, via a new `CANVAS_CHANNEL` setting - backward compatible with the old single-channel setup, which now logs a startup warning instead of silently staying implicit.
+- `bot.voice.join(channel_id)`: joins a voice call over LiveKit, keeping a heartbeat running in the background so the server's 40s heartbeat timeout doesn't evict it; `VoiceSession.publish_screen_share()` publishes a video+audio pair tagged as a screen share, rendered by a client with no bot-specific code on that end. `livekit.rtc` loads through `importlib` rather than a normal import, so a bot that never touches voice - and CI - never needs the package installed.
+- `bot-jellyfin` gets a watch party: `!watch <title>`, `!pause`, `!resume`, `!seek <h:mm:ss>`, `!np`, `!subs <lang|off>`, `!stop` - jellyfin transcodes server-side, a local ffmpeg decodes that into raw frames pushed into the source `bot.voice` hands back.
+- `slimbots.testing.FakeVoice`/`FakeVoiceSession` stand in for the real LiveKit connection so a bot's voice-touching tests never need `livekit`/`ffmpeg` installed.
 
 ## 0.3.0
 
