@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """bot-modlog: mirrors timeouts, kicks, restores, and role changes into a channel; see README.md."""
 
-import os
 import sqlite3
 import time
 import uuid
@@ -10,13 +9,11 @@ from datetime import datetime, timezone
 from slimbots import ApiError, Bot, Embed
 from slimbots.http import is_forbidden
 
-DB_PATH = os.environ.get("SLIMM_DB_PATH", "modlog.db")
-
 # A reconnect faster than this is not worth a channel post - most drops are a blip that missed nothing worth naming.
 GAP_NOTICE_THRESHOLD_SECONDS = 5
 MAX_GAPS_SHOWN = 10
 
-bot = Bot(prefix="!", require_channels=True, cursor_path=DB_PATH)
+bot = Bot(prefix="!", require_channels=True, default_data_path="modlog.db")
 bot.db = None
 
 # user_id -> set of role_ids last observed, used to infer a member.role_changed event's direction.
@@ -268,7 +265,7 @@ async def on_connect():
 
 
 def main():
-    bot.db = sqlite3.connect(DB_PATH)
+    bot.db = sqlite3.connect(bot.data_path)
     init_db(bot.db)
     try:
         raise SystemExit(bot.run() or 0)

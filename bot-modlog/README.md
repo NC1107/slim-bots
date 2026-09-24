@@ -9,8 +9,9 @@ five moderation events map onto `@bot.event` handlers (`on_member_timeout`,
 `on_role_changed`) instead of a manual frame-type dispatch, `!modlog` is
 one `@bot.command` instead of a trigger regex per subcommand, and `Bot`
 itself owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS` and the seq
-cursor - this script only reads `SLIMM_DB_PATH`, its own business config.
-`bot-ping` stays free of the library on purpose; see its own README.
+cursor - this script only opens its own tables at `bot.data_path` (from
+`SLIMM_DB_PATH`), never importing `os` itself. `bot-ping` stays free of
+the library on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt
