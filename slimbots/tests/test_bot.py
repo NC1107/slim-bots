@@ -210,6 +210,57 @@ async def test_member_conversion_falls_back_to_a_live_fetch_by_id(bot, client):
     assert client.sent[-1]["content"] == "found Fresh"
 
 
+async def test_channel_scoping_ignores_frames_outside_the_set(client):
+    from slimbots.authors import AuthorFilter
+    from slimbots.space import Space
+
+    bot = Bot(prefix="!", channels={"c1"})
+    bot.client = client
+    bot.space = Space(client)
+    bot.authors = AuthorFilter(client, space=bot.space, ignore_bots=True)
+    bot.me_id = "bot-1"
+    client.respond(
+        "GET",
+        "/members",
+        [{"id": "u1", "username": "nick", "display_name": "Nick", "is_bot": False, "is_webhook": False, "role_ids": []}],
+    )
+    await bot.space.refresh_members()
+
+    @bot.command()
+    async def ping(ctx):
+        await ctx.reply("pong")
+
+    await bot._handle_frame(
+        {"type": "message.created", "channel_id": "other", "message": {"id": "m1", "author_id": "u1", "channel_id": "other", "content": "!ping"}}
+    )
+    assert client.sent == []
+
+    await bot._handle_frame(
+        {"type": "message.created", "channel_id": "c1", "message": {"id": "m2", "author_id": "u1", "channel_id": "c1", "content": "!ping"}}
+    )
+    assert client.sent[-1]["content"] == "pong"
+
+
+async def test_on_raw_message_fires_for_every_in_scope_message(bot, client):
+    seen = []
+
+    @bot.event
+    async def on_raw_message(message):
+        seen.append(message["id"])
+
+    @bot.command()
+    async def ping(ctx):
+        await ctx.reply("pong")
+
+    await bot._handle_frame(
+        {"type": "message.created", "channel_id": "c1", "message": {"id": "m1", "author_id": "u1", "channel_id": "c1", "content": "just chatting"}}
+    )
+    await bot._handle_frame(
+        {"type": "message.created", "channel_id": "c1", "message": {"id": "m2", "author_id": "u1", "channel_id": "c1", "content": "!ping"}}
+    )
+    assert seen == ["m1", "m2"]
+
+
 async def test_a_token_revocation_propagates_instead_of_being_swallowed(bot, client):
     @bot.command()
     async def whoami(ctx):

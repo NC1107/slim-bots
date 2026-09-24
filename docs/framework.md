@@ -72,6 +72,13 @@ There is deliberately no `on_member_join` in this framework.
 slim-m's wire protocol has no such event: `crates/slimm-server/src/http/ws/frames.rs` carries `member.removed`, `member.restored`, `member.timeout`, `member.role_changed` and `role.changed`, and nothing for a join.
 Faking one from roster diffs would be a lie about what the wire actually says, so `on_member_removed`, `on_member_restored`, `on_member_timeout`, `on_member_role_changed` and `on_role_changed` are the real, honest set.
 
+## Channel scoping and durable cursors
+
+`Bot(channels={...})` restricts `message.created` dispatch to that set of channel ids; omitted, a bot answers wherever its role can see, same as before.
+`on_raw_message(message)` fires for every in-scope message, command or not, before `on_message`/command dispatch - the hook a bot uses to persist a `seq` cursor, since `on_message` only fires for a non-command message.
+`slimbots.catchup.bootstrap`/`sync` are async equivalents of the existing sync `cursor.bootstrap`/`sync`, for replaying a reconnect gap through `bot.process_message` before the gateway opens (`bot-casino/bot.py` is the worked example).
+`cursor.get`/`cursor.set`/`cursor.init_table` are plain sqlite and need no async equivalent.
+
 ## Async HTTP
 
 `slimbots.http.AsyncClient` is built on `httpx.AsyncClient` rather than `asyncio.to_thread` over `urllib`.

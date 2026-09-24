@@ -1,6 +1,6 @@
 """A discord.py-shaped bot framework for slim-m; see docs/framework.md."""
 
-from . import cursor
+from . import catchup, cursor
 from .bot import Bot
 from .client import Client, is_not_found, is_token_revoked, socket_url
 from .commands import Command
@@ -53,6 +53,7 @@ __all__ = [
     "Space",
     "ValidationError",
     "call_with_retry",
+    "catchup",
     "cursor",
     "is_not_found",
     "is_token_revoked",

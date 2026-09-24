@@ -32,7 +32,7 @@ class Bot:
     """Owns everything a bot script would otherwise wire up by hand."""
 
     def __init__(self, prefix="!", *, url=None, token=None, user_agent=DEFAULT_USER_AGENT,
-                 ignore_bots=True, base_delay=1.0, max_delay=60.0, help_command=True):
+                 ignore_bots=True, base_delay=1.0, max_delay=60.0, help_command=True, channels=None):
         self.prefix = prefix
         self._url = url
         self._token = token
@@ -40,6 +40,7 @@ class Bot:
         self.ignore_bots = ignore_bots
         self.base_delay = base_delay
         self.max_delay = max_delay
+        self.channels = set(channels) if channels else None
         self.commands = {}
         self._unique_commands = []
         self._listeners = {}
@@ -155,7 +156,11 @@ class Bot:
     async def _handle_frame(self, frame):
         kind = frame.get("type")
         if kind == "message.created":
-            await guard_dispatch(self.process_message, frame.get("message") or {})
+            if self.channels is not None and frame.get("channel_id") not in self.channels:
+                return
+            message = frame.get("message") or {}
+            await guard_dispatch(self._dispatch_event, "on_raw_message", message)
+            await guard_dispatch(self.process_message, message)
             return
         event_name = _EVENT_FRAMES.get(kind)
         if event_name:

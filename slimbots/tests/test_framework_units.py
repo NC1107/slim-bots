@@ -120,6 +120,23 @@ def test_registration_body_includes_aliases_and_permission():
     assert body["prefix"] == "!"
 
 
+async def test_catchup_bootstrap_and_sync(tmp_path):
+    import sqlite3
+
+    from slimbots import catchup, cursor
+
+    conn = sqlite3.connect(":memory:")
+    cursor.init_table(conn)
+    client = FakeAsyncClient()
+    client.respond("GET", "/channels/c1/messages?limit=1", [{"seq": 42}])
+    await catchup.bootstrap(client, conn, "c1")
+    assert cursor.get(conn, "c1") == 42
+
+    client.respond("POST", "/sync", {"scopes": [{"channel_id": "c1", "messages": [], "reset": False}]})
+    scopes = await catchup.sync(client, [{"channel_id": "c1", "after_seq": 42}])
+    assert scopes[0]["channel_id"] == "c1"
+
+
 async def test_bad_argument_message_names_the_field():
     from slimbots.commands import Command
 
