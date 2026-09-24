@@ -1,6 +1,7 @@
 """A discord.py-shaped bot framework for slim-m; see docs/framework.md."""
 
 from . import catchup, cursor
+from . import events
 from .bot import Bot
 from .canvas import Canvas
 from .client import socket_url
@@ -55,6 +56,7 @@ __all__ = [
     "ValidationError",
     "catchup",
     "cursor",
+    "events",
     "require_int",
     "require_len",
     "require_range",

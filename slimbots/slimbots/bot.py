@@ -8,6 +8,7 @@ import sqlite3
 import sys
 
 from . import catchup, cursor
+from . import events as ev
 from .authors import AuthorFilter
 from .commands import Command, Group, build_help_text
 from .context import Context
@@ -21,20 +22,47 @@ from .space import Space
 DEFAULT_USER_AGENT = "slimbots/0.3"
 DEFAULT_CURSOR_DB = "slimbots-cursor.db"
 
-# Deployment-wide frame types dispatched as events; see docs/framework.md on why there is no on_member_join.
+# Deployment-wide (or DM/user-scoped) frame types: (handler name, payload class or None for the raw frame).
+# See docs/framework.md on why there is no on_member_join.
 _GLOBAL_EVENT_FRAMES = {
-    "member.removed": "on_member_removed",
-    "member.restored": "on_member_restored",
-    "member.role_changed": "on_member_role_changed",
-    "role.changed": "on_role_changed",
-    "member.timeout": "on_member_timeout",
+    "member.removed": ("on_member_removed", None),
+    "member.restored": ("on_member_restored", None),
+    "member.role_changed": ("on_member_role_changed", None),
+    "role.changed": ("on_role_changed", None),
+    "member.timeout": ("on_member_timeout", None),
+    "presence.changed": ("on_presence_changed", ev.PresenceChanged),
+    "profile.changed": ("on_profile_changed", ev.ProfileChanged),
+    "channel.created": ("on_channel_created", ev.ChannelCreated),
+    "channel.updated": ("on_channel_updated", ev.ChannelUpdated),
+    "channel.deleted": ("on_channel_deleted", ev.ChannelDeleted),
+    "category.changed": ("on_category_changed", ev.CategoryChanged),
+    "call.ringing": ("on_call_ringing", ev.CallRinging),
+    "call.ring_ended": ("on_call_ring_ended", ev.CallRingEnded),
+    "reports.changed": ("on_reports_changed", ev.ReportsChanged),
 }
 
 # Channel-scoped frame types - dispatched only for a channel in `channels`, the same gate message.created gets.
 _CHANNEL_EVENT_FRAMES = {
-    "canvas.object.placed": "on_canvas_object_placed",
-    "canvas.objects.removed": "on_canvas_objects_removed",
-    "canvas.cleared": "on_canvas_cleared",
+    "canvas.object.placed": ("on_canvas_object_placed", None),
+    "canvas.objects.removed": ("on_canvas_objects_removed", None),
+    "canvas.cleared": ("on_canvas_cleared", None),
+    "message.edited": ("on_message_edited", ev.MessageEdited),
+    "message.deleted": ("on_message_deleted", ev.MessageDeleted),
+    "reactions.changed": ("on_reactions_changed", ev.ReactionsChanged),
+    "thread.updated": ("on_thread_updated", ev.ThreadUpdated),
+    "message.pinned": ("on_message_pinned", ev.MessagePinned),
+    "message.unpinned": ("on_message_unpinned", ev.MessageUnpinned),
+    "poll.voted": ("on_poll_voted", ev.PollVoted),
+    "typing.started": ("on_typing_started", ev.TypingStarted),
+    "typing.stopped": ("on_typing_stopped", ev.TypingStopped),
+    "overwrite.changed": ("on_overwrite_changed", ev.OverwriteChanged),
+    "voice.activity": ("on_voice_activity", ev.VoiceActivityChanged),
+    "canvas.objects.restored": ("on_canvas_objects_restored", ev.CanvasObjectsRestored),
+    "canvas.cursor.moved": ("on_canvas_cursor_moved", ev.CanvasCursorMoved),
+    "canvas.stroke_preview.updated": ("on_canvas_stroke_preview_updated", ev.CanvasStrokePreviewUpdated),
+    "canvas.object.moved": ("on_canvas_object_moved", ev.CanvasObjectMoved),
+    "canvas.object.reordered": ("on_canvas_object_reordered", ev.CanvasObjectReordered),
+    "canvas.media_slot.changed": ("on_canvas_media_slot_changed", ev.CanvasMediaSlotChanged),
 }
 
 
@@ -242,13 +270,18 @@ class Bot:
             return
         global_event = _GLOBAL_EVENT_FRAMES.get(kind)
         if global_event:
-            await guard_dispatch(self._dispatch_event, global_event, frame)
+            await self._dispatch_typed(*global_event, frame)
             return
         channel_event = _CHANNEL_EVENT_FRAMES.get(kind)
         if channel_event:
             if self.channels is not None and frame.get("channel_id") not in self.channels:
                 return
-            await guard_dispatch(self._dispatch_event, channel_event, frame)
+            await self._dispatch_typed(*channel_event, frame)
+
+    async def _dispatch_typed(self, name, payload_cls, frame):
+        """Wraps `frame` in `payload_cls` unless it is `None` (the pre-typed events keep the raw frame dict)."""
+        payload = payload_cls(frame) if payload_cls else frame
+        await guard_dispatch(self._dispatch_event, name, payload)
 
     def _note_seq(self, channel_id, seq):
         if self._cursor_conn is not None and seq is not None:

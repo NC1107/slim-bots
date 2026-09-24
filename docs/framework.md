@@ -79,6 +79,15 @@ There is deliberately no `on_member_join` in this framework.
 slim-m's wire protocol has no such event: `crates/slimm-server/src/http/ws/frames.rs` carries `member.removed`, `member.restored`, `member.timeout`, `member.role_changed` and `role.changed`, and nothing for a join.
 Faking one from roster diffs would be a lie about what the wire actually says, so `on_member_removed`, `on_member_restored`, `on_member_timeout`, `on_member_role_changed` and `on_role_changed` are the real, honest set.
 
+## Typed events
+
+Every frame kind `frames.rs` defines gets an `@bot.event` handler now, not just the eight the framework already dispatched - `on_message_edited`, `on_message_deleted`, `on_reactions_changed`, `on_thread_updated`, `on_message_pinned`/`on_message_unpinned`, `on_poll_voted`, `on_presence_changed`, `on_profile_changed`, `on_typing_started`/`on_typing_stopped`, `on_channel_created`/`on_channel_updated`/`on_channel_deleted`, `on_category_changed`, `on_overwrite_changed`, `on_voice_activity`, `on_call_ringing`/`on_call_ring_ended`, the remaining canvas events (`on_canvas_objects_restored`, `on_canvas_cursor_moved`, `on_canvas_stroke_preview_updated`, `on_canvas_object_moved`, `on_canvas_object_reordered`, `on_canvas_media_slot_changed`), and `on_reports_changed`.
+Each of these hands the handler a small typed object from `slimbots/events.py` (`event.channel_id`, `event.message`, and so on) instead of the raw frame dict - the eight pre-existing handlers keep getting the raw frame, unchanged, so a bot that reads `frame["user_id"]` today does not break.
+`bot._handle_frame`'s own dispatch tables (`_GLOBAL_EVENT_FRAMES`/`_CHANNEL_EVENT_FRAMES`) now map a frame kind to `(handler_name, payload_class)`; `payload_class` of `None` means "pass the raw frame", which is how the eight originals stay backward compatible.
+
+Global versus channel-scoped follows the same test as before: an event about a channel's own activity (a message edit, a reaction, typing, canvas ops) is channel-scoped, gated the same way `message.created` is; an event about something that is not naturally inside one of a bot's watched channels - a member's presence, a channel being created in the first place, a DM call ring - is global, ungated by `channels`.
+`Message.fetch()` (a single-message GET) and `on_voice_*` join/leave/screen-share events are deliberately not here yet: slim-m has neither route nor frame for them at the time of writing. Add them once those land server-side rather than guessing the shape now.
+
 ## The Canvas model
 
 `Canvas(bot.client, channel_id)` wraps one channel's Voice Canvas: `await canvas.place(kind, x=, y=, w=, h=, props=)`, `move(object_id, x=, y=)`, `remove(object_ids)`, and `viewport(min_x=, min_y=, max_x=, max_y=)` for a bounded-rectangle read - `bot-canvas-board` is the worked example (a fixed-size sticky-note board).
