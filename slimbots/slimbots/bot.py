@@ -144,20 +144,23 @@ class Bot:
             return [item.strip() for item in raw.split(",") if item.strip()]
         return raw
 
-    def command(self, name=None, *, aliases=(), help=None, usage=None, cooldown=None, requires=None, check=None):
+    def command(
+        self, name=None, *, aliases=(), help=None, usage=None,
+        cooldown=None, cooldown_bucket="user", requires=None, check=None,
+    ):
         def decorator(func):
             self.add_command(Command(
-                func, name=name or func.__name__, aliases=aliases, help=help,
-                usage=usage, cooldown=cooldown, requires=requires, check=check,
+                func, name=name or func.__name__, aliases=aliases, help=help, usage=usage,
+                cooldown=cooldown, cooldown_bucket=cooldown_bucket, requires=requires, check=check,
             ))
             return func
         return decorator
 
-    def group(self, name=None, *, aliases=(), help=None, cooldown=None, requires=None, check=None):
+    def group(self, name=None, *, aliases=(), help=None, cooldown=None, cooldown_bucket="user", requires=None, check=None):
         def decorator(func):
             grp = Group(
                 func, name=name or func.__name__, aliases=aliases, help=help,
-                cooldown=cooldown, requires=requires, check=check,
+                cooldown=cooldown, cooldown_bucket=cooldown_bucket, requires=requires, check=check,
             )
             self.add_command(grp)
             return grp

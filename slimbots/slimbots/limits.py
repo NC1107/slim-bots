@@ -30,7 +30,7 @@ def require_int(text, *, min_value=None, max_value=None, field="that"):
 
 
 class Cooldown:
-    """A per-user fixed cooldown: one use allowed, then a flat wait."""
+    """A fixed cooldown keyed by whatever bucket key `check` is given: a user id, a channel id, or a fixed constant."""
 
     def __init__(self, seconds, *, clock=time.monotonic, format_remaining=None):
         self.seconds = seconds
@@ -38,19 +38,19 @@ class Cooldown:
         self._format = format_remaining or (lambda remaining: f"slow down - try again in {remaining}s")
         self._last = {}
 
-    def check(self, user_id):
-        """Returns a reply string if `user_id` is on cooldown, else None and records this use."""
+    def check(self, key):
+        """Returns a reply string if `key` is on cooldown, else None and records this use."""
         now = self._clock()
-        last = self._last.get(user_id)
+        last = self._last.get(key)
         if last is not None:
             remaining = self.seconds - (now - last)
             if remaining > 0:
                 return self._format(round(remaining, 1))
-        self._last[user_id] = now
+        self._last[key] = now
         return None
 
-    def reset(self, user_id):
-        self._last.pop(user_id, None)
+    def reset(self, key):
+        self._last.pop(key, None)
 
 
 class RateLimiter:
