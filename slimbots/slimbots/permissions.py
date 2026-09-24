@@ -25,14 +25,14 @@ class Permissions:
     RUN_CODE = 1 << 17
 
     @classmethod
-    def contains(cls, bits, permission):
+    def contains(cls, bits: int, permission: int) -> bool:
         """Whether `bits` grants `permission`, with ADMINISTRATOR bypassing all."""
         if bits & cls.ADMINISTRATOR:
             return True
         return (bits & permission) == permission
 
     @classmethod
-    def names(cls, bits):
+    def names(cls, bits: int) -> list[str]:
         """Sorted names of every bit set in `bits` - for a "you're missing X" reply, never a route."""
         return sorted(
             name for name, value in vars(cls).items()

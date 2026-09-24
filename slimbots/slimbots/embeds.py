@@ -1,5 +1,9 @@
 """A message embed (decision 0030): the real `RequestEmbed` wire shape, with a text fallback for an older server."""
 
+from __future__ import annotations
+
+from typing import Any
+
 MAX_TITLE = 256
 MAX_DESCRIPTION = 4096
 MAX_FIELDS = 25
@@ -12,42 +16,45 @@ MAX_AUTHOR_NAME = 256
 class Embed:
     """One embed; `to_wire()` is what a bot sends, `render_fallback()` is what an older server sees instead."""
 
-    def __init__(self, *, title=None, description=None, color=None, footer=None, url=None, timestamp=None):
+    def __init__(
+        self, *, title: str | None = None, description: str | None = None, color: int | None = None,
+        footer: str | None = None, url: str | None = None, timestamp: str | None = None,
+    ) -> None:
         self.title = title
         self.description = description
         self.color = color
         self.footer_text = footer
         self.url = url
         self.timestamp = timestamp
-        self.author = None
-        self.image_url = None
-        self.thumbnail_url = None
-        self.fields = []
+        self.author: dict[str, str] | None = None
+        self.image_url: str | None = None
+        self.thumbnail_url: str | None = None
+        self.fields: list[dict[str, Any]] = []
 
-    def set_author(self, name, *, url=None):
+    def set_author(self, name: str, *, url: str | None = None) -> Embed:
         self.author = {"name": name[:MAX_AUTHOR_NAME], **({"url": url} if url else {})}
         return self
 
-    def set_footer(self, text):
+    def set_footer(self, text: str) -> Embed:
         self.footer_text = text
         return self
 
-    def set_image(self, url):
+    def set_image(self, url: str) -> Embed:
         self.image_url = url
         return self
 
-    def set_thumbnail(self, url):
+    def set_thumbnail(self, url: str) -> Embed:
         self.thumbnail_url = url
         return self
 
-    def add_field(self, name, value, *, inline=False):
+    def add_field(self, name: str, value: str, *, inline: bool = False) -> Embed:
         if len(self.fields) < MAX_FIELDS:
             self.fields.append({"name": name[:MAX_FIELD_NAME], "value": value[:MAX_FIELD_VALUE], "inline": inline})
         return self
 
-    def to_wire(self):
+    def to_wire(self) -> dict[str, Any]:
         """The `RequestEmbed` JSON body decision 0030 defines."""
-        body = {}
+        body: dict[str, Any] = {}
         if self.title:
             body["title"] = self.title[:MAX_TITLE]
         if self.description:
@@ -70,7 +77,7 @@ class Embed:
             body["thumbnail"] = {"url": self.thumbnail_url}
         return body
 
-    def render_fallback(self):
+    def render_fallback(self) -> str:
         """A markdown rendering, used as the message's own `content` (never blank) and as the whole reply if the server rejects `embeds`."""
         lines = []
         if self.title:

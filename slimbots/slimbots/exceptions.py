@@ -12,7 +12,7 @@ class CommandError(SlimBotsError):
 class CommandNotFound(CommandError):
     """No registered command matches the invoked name or alias; dispatched to on_command_not_found, silent by default."""
 
-    def __init__(self, invoked_with):
+    def __init__(self, invoked_with: str) -> None:
         super().__init__(f"no command called `{invoked_with}`")
         self.invoked_with = invoked_with
 
@@ -24,7 +24,7 @@ class BadArgument(CommandError):
 class MissingRequiredArgument(BadArgument):
     """A command was invoked without enough words to fill its signature."""
 
-    def __init__(self, name):
+    def __init__(self, name: str) -> None:
         super().__init__(f"missing a value for `{name}`")
         self.name = name
 
@@ -32,14 +32,14 @@ class MissingRequiredArgument(BadArgument):
 class CommandOnCooldown(CommandError):
     """A cooldown or rate limit rejected this invocation."""
 
-    def __init__(self, retry_message):
+    def __init__(self, retry_message: str) -> None:
         super().__init__(retry_message)
 
 
 class MissingPermissions(CommandError):
     """The invoking member lacks a permission the command requires."""
 
-    def __init__(self, permission):
+    def __init__(self, permission: str) -> None:
         super().__init__("you do not have permission to use that command")
         self.permission = permission
 

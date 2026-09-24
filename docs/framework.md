@@ -220,6 +220,12 @@ If the server rejects the request with `embeds` present (an older deployment), `
 Drive a `Bot` directly with `await bot.process_message({...})` to exercise argument conversion, cooldowns, permission gating, and the bot-ignore default with no deployment; `await bot._handle_frame({...})` reaches an `@bot.event` handler the same way.
 It is not a mock of slim-m's own validation or concurrency - `bot-casino/test_concurrency.py` is what proves money-safety, with a real sqlite connection and real threads.
 
+## Types
+
+`slimbots` ships `py.typed` - an editor or a type checker on a bot script sees real signatures, not `Any` everywhere.
+Coverage is real but not exhaustive: `Bot`, `Context`, `Command`/`Group`, `Space`, `Member`/`Channel`/`Role`/`Message`, `Embed`, `Canvas`, `Store`, and every typed event payload are fully annotated; a handful of internal helpers still lean on inference.
+`pyright` (config in `pyproject.toml`, `basic` mode) runs in CI over the whole package and is the gate for this - a signature that quietly goes wrong (an `Optional` nobody narrowed, a param that no longer matches its caller) fails the same PR that introduced it, instead of surfacing as a runtime `AttributeError` in whoever's bot happens to hit that path first.
+
 ## Removed in 0.3.0
 
 Every template in this repo is on `Bot`.

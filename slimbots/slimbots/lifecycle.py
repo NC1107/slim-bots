@@ -1,17 +1,20 @@
 """Clean shutdown on SIGTERM/SIGINT (docker sends it on every redeploy), and containing one bad handler's crash."""
 
+from __future__ import annotations
+
 import asyncio
 import signal
 import sys
+from typing import Any, Awaitable, Callable
 
 from .http import is_token_revoked
 
 
-async def run_with_shutdown(task):
+async def run_with_shutdown(task: asyncio.Task[Any]) -> Any:
     """Awaits `task`; SIGTERM/SIGINT cancel it. The CancelledError always propagates - the caller decides what it means."""
     loop = asyncio.get_running_loop()
 
-    def cancel():
+    def cancel() -> None:
         print("shutting down", file=sys.stderr)
         task.cancel()
 
@@ -30,7 +33,10 @@ async def run_with_shutdown(task):
             loop.remove_signal_handler(sig)
 
 
-async def guard_dispatch(func, *args, on_error=None, **kwargs):
+async def guard_dispatch(
+    func: Callable[..., Awaitable[Any]], *args: Any,
+    on_error: Callable[[Exception], Awaitable[None]] | None = None, **kwargs: Any,
+) -> Any:
     """Runs one dispatched handler, swallowing anything but a revoked token (401 must stop the loop)."""
     try:
         return await func(*args, **kwargs)

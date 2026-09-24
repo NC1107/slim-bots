@@ -1,6 +1,9 @@
 """A registered `@bot.command`: argument conversion, cooldowns, and permission gating."""
 
+from __future__ import annotations
+
 import inspect
+from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from .converters import Duration, TimeOfDay
 from .exceptions import BadArgument, CheckFailure, CommandOnCooldown, MissingPermissions, MissingRequiredArgument
@@ -8,27 +11,31 @@ from .http import ApiError
 from .limits import Cooldown
 from .models import Member
 
+if TYPE_CHECKING:
+    from .bot import Bot
+    from .context import Context
+
 _NO_DEFAULT = inspect.Parameter.empty
 _COOLDOWN_BUCKETS = ("user", "channel", "deployment")
 _DEPLOYMENT_COOLDOWN_KEY = "*"
 
 
-def _cooldown_key(bucket, ctx):
+def _cooldown_key(bucket: str, ctx: Context) -> str:
     """The bucket a cooldown is tracked under: one deployment is one bot process, so `deployment` is a single key."""
     if bucket == "channel":
-        return ctx.channel_id
+        return ctx.channel_id or _DEPLOYMENT_COOLDOWN_KEY
     if bucket == "deployment":
         return _DEPLOYMENT_COOLDOWN_KEY
     return ctx.author.id
 
 
-def _validate_cooldown_bucket(bucket):
+def _validate_cooldown_bucket(bucket: str) -> str:
     if bucket not in _COOLDOWN_BUCKETS:
         raise ValueError(f"cooldown_bucket must be one of {_COOLDOWN_BUCKETS}, got {bucket!r}")
     return bucket
 
 
-def _usage_token(param):
+def _usage_token(param: inspect.Parameter) -> str:
     is_rest = param.annotation is str
     name = param.name
     if param.default is not _NO_DEFAULT:
@@ -36,35 +43,36 @@ def _usage_token(param):
     return f"<{name}...>" if is_rest else f"<{name}>"
 
 
-def _convert_int(token, name):
+def _convert_int(token: str, name: str) -> int:
     try:
         return int(token)
     except ValueError as err:
         raise BadArgument(f"`{name}` must be a whole number, got `{token}`") from err
 
 
-def _convert_float(token, name):
+def _convert_float(token: str, name: str) -> float:
     try:
         return float(token)
     except ValueError as err:
         raise BadArgument(f"`{name}` must be a number, got `{token}`") from err
 
 
-def _convert_duration(token, name):
+def _convert_duration(token: str, name: str) -> int:
     parsed = Duration.parse(token)
     if parsed is None:
         raise BadArgument(f"`{name}` must be a duration like `10m` or `2h30m`, got `{token}`")
     return parsed
 
 
-def _convert_time_of_day(token, name):
+def _convert_time_of_day(token: str, name: str) -> TimeOfDay:
     parsed = TimeOfDay.parse(token)
     if parsed is None:
         raise BadArgument(f"`{name}` must be a time like `14:30`, got `{token}`")
     return parsed
 
 
-async def _convert_member(ctx, token):
+async def _convert_member(ctx: Context, token: str) -> Member:
+    assert ctx.bot.space is not None
     needle = token.lstrip("@")
     member = await ctx.bot.space.get_member(needle)
     if member is None:
@@ -78,16 +86,19 @@ async def _convert_member(ctx, token):
 
 
 # Every annotation `_convert` recognizes that doesn't need `ctx` - Member is the one exception, handled directly.
-_SIMPLE_CONVERTERS = {int: _convert_int, float: _convert_float, Duration: _convert_duration, TimeOfDay: _convert_time_of_day}
+_SIMPLE_CONVERTERS: dict[Any, Callable[[str, str], Any]] = {
+    int: _convert_int, float: _convert_float, Duration: _convert_duration, TimeOfDay: _convert_time_of_day,
+}
 
 
 class Command:
     """One `@bot.command`-decorated handler, plus everything it was declared with."""
 
     def __init__(
-        self, func, *, name, aliases=(), help=None, usage=None,
-        cooldown=None, cooldown_bucket="user", requires=None, check=None,
-    ):
+        self, func: Callable[..., Awaitable[Any]], *, name: str, aliases: tuple[str, ...] = (),
+        help: str | None = None, usage: str | None = None, cooldown: float | None = None,
+        cooldown_bucket: str = "user", requires: str | None = None, check: Callable[[Context], Any] | None = None,
+    ) -> None:
         self.func = func
         self.name = name
         self.aliases = list(aliases)
@@ -100,21 +111,21 @@ class Command:
         self.usage = usage or " ".join(_usage_token(p) for p in self.params)
 
     @property
-    def names(self):
+    def names(self) -> list[str]:
         return [self.name, *self.aliases]
 
-    def check_permission(self, member):
-        if self.requires is not None and not member.has_permission(self.requires):
+    def check_permission(self, member: Member) -> None:
+        if self.requires is not None and not member.has_permission(self.requires):  # type: ignore[arg-type]
             raise MissingPermissions(self.requires)
 
-    def check_cooldown(self, ctx):
+    def check_cooldown(self, ctx: Context) -> None:
         if self.cooldown is None:
             return
         message = self.cooldown.check(_cooldown_key(self.cooldown_bucket, ctx))
         if message:
             raise CommandOnCooldown(message)
 
-    async def _convert(self, ctx, annotation, token, name):
+    async def _convert(self, ctx: Context, annotation: Any, token: str, name: str) -> Any:
         if annotation is Member:
             return await _convert_member(ctx, token)
         converter = _SIMPLE_CONVERTERS.get(annotation)
@@ -122,7 +133,7 @@ class Command:
             return converter(token, name)
         return token
 
-    def _rest_value(self, tokens, i, param):
+    def _rest_value(self, tokens: list[str], i: int, param: inspect.Parameter) -> str:
         """The rest-of-message value for the last, str-annotated param; `param`'s default if nothing is left."""
         rest = " ".join(tokens[i:])
         if rest:
@@ -131,10 +142,10 @@ class Command:
             return param.default
         raise MissingRequiredArgument(param.name)
 
-    async def convert_args(self, ctx, raw_args):
+    async def convert_args(self, ctx: Context, raw_args: str) -> list[Any]:
         """Converts each whitespace-split token per the signature; see docs/framework.md."""
         tokens = raw_args.split()
-        values = []
+        values: list[Any] = []
         i = 0
         for idx, param in enumerate(self.params):
             annotation = param.annotation if param.annotation is not _NO_DEFAULT else str
@@ -151,7 +162,7 @@ class Command:
             i += 1
         return values
 
-    async def invoke(self, ctx):
+    async def invoke(self, ctx: Context) -> Any:
         self.check_permission(ctx.author)
         self.check_cooldown(ctx)
         if self.check is not None and not await _maybe_await(self.check(ctx)):
@@ -160,7 +171,7 @@ class Command:
         return await self.func(ctx, *args)
 
 
-async def _maybe_await(value):
+async def _maybe_await(value: Any) -> Any:
     return await value if inspect.isawaitable(value) else value
 
 
@@ -168,9 +179,10 @@ class Group(Command):
     """A command that dispatches its first argument token to `@group.command()`-registered subcommands."""
 
     def __init__(
-        self, func, *, name, aliases=(), help=None,
-        cooldown=None, cooldown_bucket="user", requires=None, check=None,
-    ):
+        self, func: Callable[..., Awaitable[Any]], *, name: str, aliases: tuple[str, ...] = (),
+        help: str | None = None, cooldown: float | None = None, cooldown_bucket: str = "user",
+        requires: str | None = None, check: Callable[[Context], Any] | None = None,
+    ) -> None:
         self.func = func
         self.name = name
         self.aliases = list(aliases)
@@ -180,14 +192,15 @@ class Group(Command):
         self.cooldown = Cooldown(cooldown) if cooldown else None
         self.cooldown_bucket = _validate_cooldown_bucket(cooldown_bucket)
         self.params = list(inspect.signature(func).parameters.values())[1:]
-        self.subcommands = {}
-        self._unique_subcommands = []
+        self.subcommands: dict[str, Command] = {}
+        self._unique_subcommands: list[Command] = []
 
     def command(
-        self, name=None, *, aliases=(), help=None, usage=None,
-        cooldown=None, cooldown_bucket="user", requires=None, check=None,
-    ):
-        def decorator(func):
+        self, name: str | None = None, *, aliases: tuple[str, ...] = (), help: str | None = None,
+        usage: str | None = None, cooldown: float | None = None, cooldown_bucket: str = "user",
+        requires: str | None = None, check: Callable[[Context], Any] | None = None,
+    ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+        def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
             sub = Command(
                 func, name=name or func.__name__, aliases=aliases, help=help, usage=usage,
                 cooldown=cooldown, cooldown_bucket=cooldown_bucket, requires=requires, check=check,
@@ -200,16 +213,16 @@ class Group(Command):
             return func
         return decorator
 
-    def unique_subcommands(self):
+    def unique_subcommands(self) -> list[Command]:
         return list(self._unique_subcommands)
 
     @property
-    def usage(self):
+    def usage(self) -> str:
         if not self._unique_subcommands:
             return " ".join(_usage_token(p) for p in self.params)
         return "|".join(s.name for s in self._unique_subcommands) + " ..."
 
-    async def invoke(self, ctx):
+    async def invoke(self, ctx: Context) -> Any:
         """Dispatches by the first token of `ctx.raw_args`; anything else falls to the group's own handler."""
         self.check_permission(ctx.author)
         self.check_cooldown(ctx)
@@ -225,7 +238,7 @@ class Group(Command):
         return await subcommand.invoke(ctx)
 
 
-def build_help_text(bot, *, command_name=None):
+def build_help_text(bot: Bot, *, command_name: str | None = None) -> str:
     """The auto-generated `help` command's reply: one command or subcommand, or the full list."""
     if command_name:
         return _describe(bot, command_name)
@@ -237,7 +250,7 @@ def build_help_text(bot, *, command_name=None):
     return "\n".join(lines)
 
 
-def _describe(bot, command_name):
+def _describe(bot: Bot, command_name: str) -> str:
     """One command's help, descending into a subcommand when `command_name` names one."""
     head, _, sub_name = command_name.partition(" ")
     command = bot.get_command(head)
@@ -254,7 +267,7 @@ def _describe(bot, command_name):
     return "\n".join(lines)
 
 
-def _render(bot, display_name, command):
+def _render(bot: Bot, display_name: str, command: Command) -> str:
     usage = f" {command.usage}" if command.usage else ""
     lines = [f"`{bot.prefix}{display_name}{usage}`".rstrip()]
     if command.aliases:

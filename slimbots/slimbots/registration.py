@@ -1,13 +1,21 @@
 """Publishing a bot's prefix and commands (decision 0031); see docs/framework.md."""
 
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Any
+
 from .http import ApiError
+
+if TYPE_CHECKING:
+    from .commands import Command
+    from .http import AsyncClient
 
 MAX_REGISTERED_COMMANDS = 50
 MAX_DESCRIPTION_LEN = 100
 MAX_USAGE_LEN = 80
 
 
-def registration_body(prefix, commands):
+def registration_body(prefix: str, commands: list[Command]) -> dict[str, Any]:
     """Every registered name and alias as its own composer entry; a group still counts as just one."""
     entries = []
     for command in commands:
@@ -18,9 +26,9 @@ def registration_body(prefix, commands):
     return {"prefix": prefix, "commands": entries}
 
 
-def _entry(command, name):
+def _entry(command: Command, name: str) -> dict[str, Any]:
     description = (command.help or command.name)[:MAX_DESCRIPTION_LEN]
-    entry = {"name": name, "description": description}
+    entry: dict[str, Any] = {"name": name, "description": description}
     if command.usage:
         entry["usage"] = command.usage[:MAX_USAGE_LEN]
     if command.requires is not None:
@@ -28,7 +36,7 @@ def _entry(command, name):
     return entry
 
 
-async def register_commands(client, *, prefix, commands):
+async def register_commands(client: AsyncClient, *, prefix: str, commands: list[Command]) -> bool:
     """PUT /bots/commands with the bot's whole set; returns False, quietly, against a server too old to have the route."""
     try:
         await client.call("PUT", "/bots/commands", registration_body(prefix, commands))

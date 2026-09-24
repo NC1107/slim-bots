@@ -41,6 +41,8 @@ The pre-0.3 sync primitives every template used to hand-roll around are gone, no
 - A gateway send path: `ctx.typing()`, `canvas.send_cursor()`, `canvas.send_stroke_preview()`
 - `bot.wait_for(event, check=, timeout=)` and `ctx.confirm(prompt)`
 - `on_command_not_found(ctx, error)`, dispatched only when a bot actually listens for it
+- `bot.load_extension(module)` to split a bot across files
+- `py.typed` and real type hints on the public surface, checked by `pyright` in CI
 
 ## 0.2.0 and earlier
 
