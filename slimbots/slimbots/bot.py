@@ -155,6 +155,7 @@ class Bot:
 
     async def _handle_frame(self, frame):
         kind = frame.get("type")
+        await guard_dispatch(self._dispatch_event, "on_frame", frame)
         if kind == "message.created":
             if self.channels is not None and frame.get("channel_id") not in self.channels:
                 return

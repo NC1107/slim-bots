@@ -76,6 +76,7 @@ Faking one from roster diffs would be a lie about what the wire actually says, s
 
 `Bot(channels={...})` restricts `message.created` dispatch to that set of channel ids; omitted, a bot answers wherever its role can see, same as before.
 `on_raw_message(message)` fires for every in-scope message, command or not, before `on_message`/command dispatch - the hook a bot uses to persist a `seq` cursor, since `on_message` only fires for a non-command message.
+`on_frame(frame)` fires for every frame of any type, recognised or not, before any other dispatch - a liveness signal (a modlog-style bot marking itself "still connected") is the reason this exists; most bots have no reason to listen for it.
 `slimbots.catchup.bootstrap`/`sync` are async equivalents of the existing sync `cursor.bootstrap`/`sync`, for replaying a reconnect gap through `bot.process_message` before the gateway opens (`bot-casino/bot.py` is the worked example).
 `cursor.get`/`cursor.set`/`cursor.init_table` are plain sqlite and need no async equivalent.
 

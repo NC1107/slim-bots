@@ -261,6 +261,18 @@ async def test_on_raw_message_fires_for_every_in_scope_message(bot, client):
     assert seen == ["m1", "m2"]
 
 
+async def test_on_frame_fires_for_every_frame_including_unrecognised(bot, client):
+    seen = []
+
+    @bot.event
+    async def on_frame(frame):
+        seen.append(frame["type"])
+
+    await bot._handle_frame({"type": "message.created", "channel_id": "c1", "message": {"id": "m1", "author_id": "u1", "channel_id": "c1", "content": "hi"}})
+    await bot._handle_frame({"type": "some_future_event"})
+    assert seen == ["message.created", "some_future_event"]
+
+
 async def test_a_token_revocation_propagates_instead_of_being_swallowed(bot, client):
     @bot.command()
     async def whoami(ctx):
