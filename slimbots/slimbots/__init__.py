@@ -3,7 +3,7 @@
 from . import catchup, cursor
 from .bot import Bot
 from .canvas import Canvas
-from .client import socket_url
+from .client import Client, is_not_found, is_token_revoked, socket_url
 from .commands import Command, Group
 from .context import Context
 from .converters import Duration, TimeOfDay
@@ -23,7 +23,10 @@ from .http import AsyncClient
 from .limits import Cooldown, Quota, RateLimiter, ValidationError, require_int, require_len, require_range
 from .models import Channel, Member, Role
 from .permissions import Permissions
+from .retry import call_with_retry
+from .runner import run_forever
 from .space import Space
+from .ws import Connection
 
 __all__ = [
     "ApiError",
@@ -33,10 +36,12 @@ __all__ = [
     "Canvas",
     "Channel",
     "CheckFailure",
+    "Client",
     "Command",
     "CommandError",
     "CommandNotFound",
     "CommandOnCooldown",
+    "Connection",
     "Context",
     "Cooldown",
     "Duration",
@@ -53,10 +58,14 @@ __all__ = [
     "Space",
     "TimeOfDay",
     "ValidationError",
+    "call_with_retry",
     "catchup",
     "cursor",
+    "is_not_found",
+    "is_token_revoked",
     "require_int",
     "require_len",
     "require_range",
+    "run_forever",
     "socket_url",
 ]
