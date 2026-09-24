@@ -3,6 +3,7 @@
 import inspect
 
 from .exceptions import BadArgument, CheckFailure, CommandOnCooldown, MissingPermissions, MissingRequiredArgument
+from .http import ApiError
 from .limits import Cooldown
 from .models import Member
 
@@ -58,7 +59,13 @@ class Command:
             except ValueError as err:
                 raise BadArgument(f"`{name}` must be a number, got `{token}`") from err
         if annotation is Member:
-            member = await ctx.bot.space.get_member(token.lstrip("@"))
+            needle = token.lstrip("@")
+            member = await ctx.bot.space.get_member(needle)
+            if member is None:
+                try:
+                    member = await ctx.bot.space.fetch_member(needle)
+                except ApiError:
+                    member = None
             if member is None:
                 raise BadArgument(f"no member called `{token}` here")
             return member

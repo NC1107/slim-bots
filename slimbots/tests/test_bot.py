@@ -182,6 +182,34 @@ async def test_forbidden_from_the_bots_own_action_replies_clearly(bot, client):
     assert "cannot grant a permission" in client.sent[-1]["content"]
 
 
+async def test_global_check_can_refuse_before_any_command_runs(bot, client):
+    @bot.check
+    async def deny_everyone(ctx):
+        return "not right now"
+
+    @bot.command()
+    async def ping(ctx):
+        await ctx.reply("pong")
+
+    await bot.process_message({"id": "m1", "author_id": "u1", "channel_id": "c1", "content": "!ping"})
+    assert client.sent[-1]["content"] == "not right now"
+
+
+async def test_member_conversion_falls_back_to_a_live_fetch_by_id(bot, client):
+    client.respond(
+        "GET",
+        "/users/u9",
+        {"id": "u9", "username": "freshuser", "display_name": "Fresh", "is_bot": False, "is_webhook": False, "role_ids": []},
+    )
+
+    @bot.command()
+    async def whois(ctx, member: Member):
+        await ctx.reply(f"found {member.display_name}")
+
+    await bot.process_message({"id": "m1", "author_id": "u1", "channel_id": "c1", "content": "!whois u9"})
+    assert client.sent[-1]["content"] == "found Fresh"
+
+
 async def test_a_token_revocation_propagates_instead_of_being_swallowed(bot, client):
     @bot.command()
     async def whoami(ctx):

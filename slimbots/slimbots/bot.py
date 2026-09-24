@@ -43,12 +43,18 @@ class Bot:
         self.commands = {}
         self._unique_commands = []
         self._listeners = {}
+        self._global_checks = []
         self.client = None
         self.space = None
         self.authors = None
         self.me_id = None
         if help_command:
             self._register_default_help()
+
+    def check(self, func):
+        """Registers an async predicate run before every command; a truthy string return refuses with that reply."""
+        self._global_checks.append(func)
+        return func
 
     def command(self, name=None, *, aliases=(), help=None, usage=None, cooldown=None, requires=None, check=None):
         def decorator(func):
@@ -126,6 +132,11 @@ class Bot:
 
     async def _invoke(self, ctx, command):
         try:
+            for global_check in self._global_checks:
+                refusal = await global_check(ctx)
+                if refusal:
+                    await ctx.reply(refusal)
+                    return
             await command.invoke(ctx)
         except CommandError as err:
             await ctx.reply(str(err))

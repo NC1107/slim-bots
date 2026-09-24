@@ -49,6 +49,8 @@ Arguments convert from the function's own annotations (`slimbots/commands.py`):
 
 `help` is auto-generated from the registered set (name, aliases, usage, help text) unless a bot registers its own `help` command first.
 
+`@bot.check` registers an async predicate run before every command dispatch (a global cooldown/rate-limit rather than one command's own, for example): return a string to refuse with that reply, or `None`/falsy to let the command through.
+
 ## Identity
 
 Store your own data under `member.storage_key` (an alias for the stable slim-m user id, never `username`, which can change).
