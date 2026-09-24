@@ -1,12 +1,18 @@
 # bot-reminders
 
 A slim-m bot: `!remind me in 2h <text>`, `!remind me at 15:30 <text>`,
-and `!reminders` to list or cancel your own.
+`!remind me every monday [at 09:00] <text>` or `!remind me every 2h <text>`
+for a recurring one, and `!reminders` to list, `cancel`, `edit` or `snooze`
+your own. `!timezone <IANA name>` sets the zone `at`/`every ... at` and the
+listing are shown in.
 
-Unlike `bot-ping`, this template is built on the `slimbots` package in
-`../slimbots/`, which covers the plumbing every template but `bot-ping`
-shares - auth, the REST call, retries, the websocket handshake, and the
-reconnect loop. `bot-ping` stays free of it on purpose; see its own README.
+Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
+`Bot` itself owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS` and the
+seq cursor; this script only reads `SLIMM_DB_PATH`, its own business
+config. `!remind` and `!reminders` are each one `@bot.command` with their
+own small internal grammar (`in`/`at`/`every`, `cancel`/`edit`/`snooze`)
+rather than a trigger regex per shape. `bot-ping` stays free of the
+library on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt
@@ -16,38 +22,65 @@ SLIMM_CHANNELS=<channel-uuid>,<channel-uuid> \
 python3 bot.py
 ```
 
-`SLIMM_CHANNELS` is a comma-separated list of channel ids. The bot only
-watches and answers in those channels; see "Getting a token" and "What your
-bot may do" in `docs/bots/building-bots.md` for how to find channel ids and
-grant the bot `SEND_MESSAGES`/`VIEW_CHANNEL` there.
+`SLIMM_CHANNELS` is a comma-separated list of channel ids; see "Getting a
+token" and "What your bot may do" in `docs/bots/building-bots.md` for how
+to find channel ids and grant the bot `SEND_MESSAGES`/`VIEW_CHANNEL` there.
 
-State (pending reminders and each channel's sync cursor) lives in a sqlite
-file next to the script, `reminders.db` by default (`SLIMM_DB_PATH` to move
-it). Restarting the bot does not lose a reminder that has not fired yet.
+State (pending reminders, per-user timezones, and - shared with `Bot` -
+the seq cursor) lives in a sqlite file next to the script, `reminders.db`
+by default (`SLIMM_DB_PATH` to move it). Restarting the bot does not lose
+a reminder that has not fired yet, recurring or not.
 
-`test_bot.py` exercises `!remind`, `!reminders` and its `cancel` form
-against `slimbots.testing.FakeClient`, with no live deployment and no
-socket - `python3 test_bot.py` runs it directly. It is the worked example
-for that helper; see its own docstring, and `slimbots/README.md`'s "Testing
-a bot built on this".
+## Recurring reminders
+
+A recurring reminder's row is never re-created when it fires: its own
+`due_at` is recomputed in place and the row kept, which is what lets
+`!reminders`/`cancel`/`edit`/`snooze` keep working on it exactly like a
+one-off. Because the same row can now fire more than once, the delivered
+message's idempotency key is derived from `(reminder_id, due_at)` instead
+of the row's own id - a crash-and-retry of the *same* firing still cannot
+double-post, while the *next* occurrence gets a fresh id. See
+`recurrence.py` for the weekly/interval scheduling math, including the
+DST-safe weekly recomputation via `zoneinfo`.
+
+## Safeguards
+
+- **A per-user command rate limit** (a burst allowance, not a play-speed
+  cap) via `bot.check`.
+- **A pending-reminder cap per person per channel** (`MAX_PENDING_PER_USER`),
+  against a reminder storm.
+- **A floor on recurring intervals** (`MIN_RECUR_SECONDS`), against a typo
+  like `every 1s`.
+- **A length cap on reminder text** (`MAX_TEXT_LEN`).
+- **Delivered text is always backtick-quoted.** This is the fix for a real
+  misfire this repo hit: a reminder whose text was `!daily` used to make
+  bot-casino credit the *reminders bot's own account*, because balances
+  were keyed on whoever posted the message without checking whether that
+  "whoever" was a program. `Bot`'s own bot-ignore default now closes that
+  at the source; backtick-quoting is a second, independent layer, so even
+  a bot with looser matching sees literal quoted text, never something
+  that starts with `!`.
+- **Pruning.** A resolved (sent or cancelled) reminder is deleted after
+  `REMINDER_RETENTION_SECONDS`; a pending one never is.
+
+## Output
+
+A delivered reminder carries a small `Embed` (title "Reminder", a footer
+naming the recurrence if any) alongside its existing backtick-quoted plain
+text. See `../docs/framework.md`'s embeds section for the fallback an
+older server gets instead.
 
 ## What this deliberately does not do
 
-- **Recurring reminders** (`every monday`). Left out of this example on
-  purpose: it needs a real schedule grammar and a recompute-on-fire step, and
-  would roughly double the file for a feature the base cases do not need to
-  demonstrate. A fork wanting it should add a `recur_rule` column and, on
-  send, insert the next occurrence instead of leaving the row `sent`.
-- **Time zones.** `at HH:MM` is always UTC. A bot that must honor a member's
-  own local time needs to ask for one and store it per user.
-- **Editing a reminder.** Cancel it (`!reminders cancel <n>`) and set a new
-  one.
 - **Reconstructing exactly what happened during a very long outage.** The
-  cursor covers ordinary reconnects. If a channel's cursor falls outside what
-  `/sync` can answer (`reset: true`), this bot re-baselines at the channel's
-  current head rather than trying to recover the exact gap - the same
-  tradeoff slim-m's own reactions and pins accept (decision 0009). A
+  cursor covers ordinary reconnects. If a channel's cursor falls outside
+  what `/sync` can answer (`reset: true`), this bot re-baselines at the
+  channel's current head rather than trying to recover the exact gap - the
+  same tradeoff slim-m's own reactions and pins accept (decision 0009). A
   `!remind` sent inside that specific window is the one case this bot can
   miss.
+- **Sub-minute recurrence, or recurring more than once a day by weekday.**
+  `every <weekday>` fires once a week by design; a tighter cadence wants
+  `every <duration>` instead, bounded below by `MIN_RECUR_SECONDS`.
 - **Answering outside `SLIMM_CHANNELS`.** Every channel the bot's own role
   can see is not automatically one it answers in.
