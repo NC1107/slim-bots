@@ -5,16 +5,12 @@ import asyncio
 import os
 import secrets
 import sqlite3
-import sys
 import time
 
-from slimbots import BadArgument, Bot, Member, RateLimiter, catchup, cursor
+from slimbots import BadArgument, Bot, Embed, Member, RateLimiter
 
 import blackjack
 
-BASE = os.environ.get("SLIMM_URL", "")
-TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
-CHANNELS = {c for c in os.environ.get("SLIMM_CHANNELS", "").split(",") if c}
 DB_PATH = os.environ.get("SLIMM_DB_PATH", "casino.db")
 
 DAILY_AMOUNT = 500
@@ -57,7 +53,6 @@ def init_db(conn):
         """
     )
     blackjack.init_table(conn)
-    cursor.init_table(conn)
 
 
 def prune_processed_requests(conn, cutoff):
@@ -187,7 +182,7 @@ def _normalize_guess(raw):
     raise BadArgument("call `heads`/`h` or `tails`/`t`")
 
 
-bot = Bot(prefix="!", channels=CHANNELS or None)
+bot = Bot(prefix="!", require_channels=True, cursor_path=DB_PATH)
 _command_limiter = RateLimiter(COMMANDS_PER_WINDOW, COMMAND_WINDOW_SECONDS)
 
 
@@ -199,7 +194,8 @@ async def rate_limit(ctx):
 
 @bot.command(aliases=["bal"], help="See your balance")
 async def balance(ctx):
-    await ctx.reply(f"balance: {get_balance(bot.db, ctx.author.id)} chips")
+    embed = Embed(title=ctx.author.display_name).add_field("chips", str(get_balance(bot.db, ctx.author.id)))
+    await ctx.reply(embed=embed)
 
 
 @bot.command(help="Claim your daily chips")
@@ -337,7 +333,8 @@ async def deal_blackjack(ctx, amount_spec: str):
             credit(conn, ctx.author.id, payout)
         conn.execute("COMMIT")
         bal = get_balance(conn, ctx.author.id)
-        await ctx.reply(f"you: {render_hand(player)}\ndealer: {render_hand(dealer)}\n{outcome}\nbalance: {bal}")
+        embed = Embed(title="Blackjack", description=f"you: {render_hand(player)}\ndealer: {render_hand(dealer)}\n{outcome}", footer=f"balance: {bal}")
+        await ctx.reply(embed=embed)
         return
     blackjack.start_round(conn, ctx.channel_id, ctx.author.id, amount, player, dealer)
     conn.execute("COMMIT")
@@ -399,8 +396,8 @@ async def _finish_hand(ctx, conn):
         lines.append(f"dealer: {render_hand(dealer_cards)}")
     blackjack.clear_round(conn, ctx.channel_id, ctx.author.id)
     conn.execute("COMMIT")
-    lines.append(f"balance: {get_balance(conn, ctx.author.id)}")
-    await ctx.reply("\n".join(lines))
+    embed = Embed(title="Blackjack", description="\n".join(lines), footer=f"balance: {get_balance(conn, ctx.author.id)}")
+    await ctx.reply(embed=embed)
 
 
 @bot.command(help="Take another card")
@@ -507,35 +504,6 @@ async def surrender(ctx):
 # --- connection lifecycle ---
 
 
-async def _resync():
-    conn = bot.db
-    scopes = [{"channel_id": c, "after_seq": cursor.get(conn, c)} for c in CHANNELS]
-    for scope in await catchup.sync(bot.client, scopes):
-        channel_id = scope["channel_id"]
-        for message in scope["messages"]:
-            await bot.process_message(message)
-        if scope["messages"]:
-            cursor.set(conn, channel_id, scope["messages"][-1]["seq"])
-        elif scope["reset"]:
-            await catchup.bootstrap(bot.client, conn, channel_id)
-
-
-@bot.event
-async def on_connect():
-    for channel_id in CHANNELS:
-        await catchup.bootstrap(bot.client, bot.db, channel_id)
-    await _resync()
-
-
-@bot.event
-async def on_raw_message(message):
-    """Persists the seq cursor for every in-scope message, command or not."""
-    channel_id = message.get("channel_id")
-    seq = message.get("seq")
-    if channel_id in CHANNELS and seq is not None:
-        cursor.set(bot.db, channel_id, seq)
-
-
 _maintenance_started = False
 
 
@@ -556,11 +524,11 @@ async def _maintenance():
 
 
 def main():
-    if not BASE or not TOKEN or not CHANNELS:
-        print("set SLIMM_URL, SLIMM_BOT_TOKEN and SLIMM_CHANNELS", file=sys.stderr)
-        raise SystemExit(2)
     bot.db = open_db(DB_PATH)
-    raise SystemExit(bot.run() or 0)
+    try:
+        raise SystemExit(bot.run() or 0)
+    except RuntimeError as err:
+        raise SystemExit(str(err))
 
 
 if __name__ == "__main__":

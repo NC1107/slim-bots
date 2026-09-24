@@ -130,7 +130,8 @@ Every balance is keyed on `member.storage_key` (the stable slim-m user id), neve
 - **Answering outside `SLIMM_CHANNELS`.** Every other channel the bot's role can see is left alone (`Bot(channels=...)`).
 - **Resplitting, or splitting more than once per round.** `!split` is offered only on the original, untouched two-card hand.
 
-## Output and embeds
+## Output
 
-Every reply is still plain text, formatted with markdown (bold, monospace for cards and amounts, multi-line layout for a multi-hand round).
-`ctx.reply`/`ctx.send` already accept `embed=` - see `../docs/framework.md`'s embed seam - so adopting a real embed later means passing one at each call site, not restructuring the game logic or the framework's own dispatch.
+`!balance` and every blackjack round's final result (a natural, a bust, a stand, a settled multi-hand round) send a real `Embed` - title, description, and a footer with the running balance.
+Everything else (`!daily`, `!give`, `!flip`, `!leaderboard`, and the mid-hand `!hit`/`!stand`/`!double`/`!split` prompts) stays plain text, since those are short one-liners an embed would not improve.
+See `../docs/framework.md`'s embeds section for the fallback an older server gets instead.

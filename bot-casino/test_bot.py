@@ -65,7 +65,8 @@ def process(client, *messages):
 def test_balance_starts_at_zero():
     client = setup()
     process(client, message("u1", "!balance"))
-    assert client.sent[-1]["content"] == "balance: 0 chips"
+    sent = client.sent[-1]
+    assert sent["embeds"][0]["fields"] == [{"name": "chips", "value": "0", "inline": False}]
 
 
 def test_daily_credits_and_then_cools_down():
