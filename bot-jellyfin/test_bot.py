@@ -231,6 +231,30 @@ def test_on_connect_registers_poll_loop_as_a_supervised_background_task():
         jellyfin.bootstrap_cursor = original
 
 
+def test_upload_poster_returns_the_uploaded_attachments_id():
+    client = setup()
+    original = jellyfin.jf_get_bytes
+    jellyfin.jf_get_bytes = lambda path: b"\x89PNGdata"
+    client.respond("POST", "/attachments?filename=poster.jpg", {"id": "att-1", "content_type": "image/png"})
+    try:
+        attachment_id = asyncio.run(jellyfin.upload_poster("item-1"))
+    finally:
+        jellyfin.jf_get_bytes = original
+    assert attachment_id == "att-1"
+
+
+def test_upload_poster_returns_none_when_jellyfin_has_no_image():
+    client = setup()
+    original = jellyfin.jf_get_bytes
+    jellyfin.jf_get_bytes = lambda path: None
+    try:
+        attachment_id = asyncio.run(jellyfin.upload_poster("item-1"))
+    finally:
+        jellyfin.jf_get_bytes = original
+    assert attachment_id is None
+    assert not any(method == "POST" and path.startswith("/attachments") for method, path, _, _ in client.calls)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

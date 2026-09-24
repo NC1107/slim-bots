@@ -354,10 +354,8 @@ async def upload_poster(poster_item_id):
     if not image_bytes:
         return None
     try:
-        attachment = await bot.client.call(
-            "POST", "/attachments?filename=poster.jpg", raw_body=image_bytes, headers={"content-type": "application/octet-stream"}
-        )
-        return attachment["id"] if attachment else None
+        attachment = await bot.client.upload_attachment(image_bytes, filename="poster.jpg")
+        return attachment.id if attachment else None
     except ApiError as err:
         if is_token_revoked(err):
             raise

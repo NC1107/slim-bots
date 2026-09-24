@@ -22,13 +22,14 @@ from .exceptions import (
 from .http import ApiError
 from .http import AsyncClient
 from .limits import Cooldown, Quota, RateLimiter, ValidationError, require_int, require_len, require_range
-from .models import Channel, Member, Role
+from .models import Attachment, Channel, DmConversation, Member, Message, Role
 from .permissions import Permissions
 from .space import Space
 
 __all__ = [
     "ApiError",
     "AsyncClient",
+    "Attachment",
     "BadArgument",
     "Bot",
     "Canvas",
@@ -40,10 +41,12 @@ __all__ = [
     "CommandOnCooldown",
     "Context",
     "Cooldown",
+    "DmConversation",
     "Duration",
     "Embed",
     "Group",
     "Member",
+    "Message",
     "MissingPermissions",
     "MissingRequiredArgument",
     "Permissions",
