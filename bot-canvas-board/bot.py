@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 """bot-canvas-board: a todo board on a channel's Voice Canvas - `!board add/done/move/clear/list`; see README.md."""
 
-import sqlite3
-
 from slimbots import ApiError, Bot, Canvas
 
 # A note's box is 220x140, the app's own quick-placement default, so a note this bot places renders identically to a hand-drawn one.
@@ -23,10 +21,6 @@ HELP_TEXT = (
 # user_id -> display_name, resolved once per author and reused; a later rename keeps the old name.
 _names = {}
 
-bot = Bot(prefix="!", require_channels=True, default_data_path="board.db")
-canvas = None  # set once bot.channel is known, in on_connect
-
-
 def init_db(conn):
     conn.executescript(
         """
@@ -41,6 +35,10 @@ def init_db(conn):
         """
     )
     conn.commit()
+
+
+bot = Bot(prefix="!", require_channels=True, default_data_path="board.db", store_migrate=init_db)
+canvas = None  # set once bot.channel is known, in on_connect
 
 
 async def name_of(author_id):
@@ -74,13 +72,10 @@ def free_slot(conn):
     return None
 
 
-async def reconcile():
-    """Re-reads the board's rectangle and makes it ground truth; see README.md."""
-    conn = bot.db
-    viewport = await canvas.viewport(min_x=BOARD_X - 1, min_y=BOARD_Y - 1, max_x=BOARD_X + NOTE_W + 1, max_y=slot_y(MAX_SLOTS) + 1, limit=MAX_SLOTS + 5)
+def _txn_reconcile(conn, objects, me_id):
     seen_ids = set()
-    for obj in viewport["objects"]:
-        if obj["kind"] != "note" or obj.get("author_id") != bot.me_id:
+    for obj in objects:
+        if obj["kind"] != "note" or obj.get("author_id") != me_id:
             continue
         slot = round((obj["y"] - BOARD_Y) / (NOTE_H + GAP))
         text = obj["props"].get("text", "")
@@ -96,40 +91,56 @@ async def reconcile():
     conn.commit()
 
 
+async def reconcile():
+    """Re-reads the board's rectangle and makes it ground truth; see README.md."""
+    viewport = await canvas.viewport(min_x=BOARD_X - 1, min_y=BOARD_Y - 1, max_x=BOARD_X + NOTE_W + 1, max_y=slot_y(MAX_SLOTS) + 1, limit=MAX_SLOTS + 5)
+    await bot.store.run(_txn_reconcile, viewport["objects"], bot.me_id)
+
+
+def _insert_item(conn, item_id, slot, text, seq, added_by):
+    conn.execute(
+        "INSERT INTO items (id, slot, text, seq, active, added_by) VALUES (?, ?, ?, ?, 1, ?)",
+        (item_id, slot, text, seq, added_by),
+    )
+    conn.commit()
+
+
 async def add_item(ctx, text):
-    conn = bot.db
     if len(text) > MAX_TEXT_LENGTH:
         await ctx.reply(f"that's {len(text)} characters, {MAX_TEXT_LENGTH} max - a note is a fixed-size box.")
         return
-    slot = free_slot(conn)
+    slot = await bot.store.run(free_slot)
     if slot is None:
         await ctx.reply(f"board is full ({MAX_SLOTS} items)")
         return
     placed = await canvas.place("note", x=BOARD_X, y=slot_y(slot), w=NOTE_W, h=NOTE_H, props={"text": text})
-    conn.execute(
-        "INSERT INTO items (id, slot, text, seq, active, added_by) VALUES (?, ?, ?, ?, 1, ?)",
-        (placed["id"], slot, text, placed["seq"], ctx.author.id),
-    )
-    conn.commit()
+    await bot.store.run(_insert_item, placed["id"], slot, text, placed["seq"], ctx.author.id)
     await ctx.reply(f"added as #{slot + 1}: {text}")
 
 
+def _deactivate_item(conn, item_id):
+    conn.execute("UPDATE items SET active = 0 WHERE id = ?", (item_id,))
+    conn.commit()
+
+
 async def done_item(ctx, n):
-    conn = bot.db
-    row = active_by_slot(conn, n - 1)
+    row = await bot.store.run(active_by_slot, n - 1)
     if row is None:
         await ctx.reply(f"no item #{n}")
         return
     item_id, text, _ = row
     await canvas.remove([item_id])
-    conn.execute("UPDATE items SET active = 0 WHERE id = ?", (item_id,))
-    conn.commit()
+    await bot.store.run(_deactivate_item, item_id)
     await ctx.reply(f"done: {text}")
 
 
+def _deactivate_items(conn, item_ids):
+    conn.executemany("UPDATE items SET active = 0 WHERE id = ?", [(item_id,) for item_id in item_ids])
+    conn.commit()
+
+
 async def clear_board(ctx):
-    conn = bot.db
-    rows = active_items(conn)
+    rows = await bot.store.run(active_items)
     if not rows:
         await ctx.reply("the board is already empty")
         return
@@ -138,32 +149,42 @@ async def clear_board(ctx):
         return
     item_ids = [row[0] for row in rows]
     await canvas.remove(item_ids)
-    conn.executemany("UPDATE items SET active = 0 WHERE id = ?", [(item_id,) for item_id in item_ids])
-    conn.commit()
+    await bot.store.run(_deactivate_items, item_ids)
     await ctx.reply(f"cleared {len(item_ids)} item(s).")
 
 
+def _check_move(conn, n, to):
+    """Both checks in one store call, so nothing else can slip in between "the target is free" and the move itself."""
+    row = active_by_slot(conn, n - 1)
+    if row is None:
+        return f"no item #{n}"
+    if active_by_slot(conn, to - 1) is not None:
+        return f"#{to} is already taken"
+    item_id, text, _ = row
+    return item_id, text
+
+
+def _set_slot(conn, item_id, slot):
+    conn.execute("UPDATE items SET slot = ? WHERE id = ?", (slot, item_id))
+    conn.commit()
+
+
 async def move_item(ctx, n, to):
-    conn = bot.db
     if not (1 <= to <= MAX_SLOTS):
         await ctx.reply(f"slot must be 1-{MAX_SLOTS}")
         return
-    row = active_by_slot(conn, n - 1)
-    if row is None:
-        await ctx.reply(f"no item #{n}")
+    result = await bot.store.run(_check_move, n, to)
+    if isinstance(result, str):
+        await ctx.reply(result)
         return
-    if active_by_slot(conn, to - 1) is not None:
-        await ctx.reply(f"#{to} is already taken")
-        return
-    item_id, text, _ = row
+    item_id, text = result
     await canvas.move(item_id, x=BOARD_X, y=slot_y(to - 1), w=NOTE_W, h=NOTE_H)
-    conn.execute("UPDATE items SET slot = ? WHERE id = ?", (to - 1, item_id))
-    conn.commit()
+    await bot.store.run(_set_slot, item_id, to - 1)
     await ctx.reply(f"moved #{n} to #{to}: {text}")
 
 
 async def list_items(ctx):
-    rows = active_items(bot.db)
+    rows = await bot.store.run(active_items)
     if not rows:
         await ctx.reply("the board is empty")
         return
@@ -195,10 +216,7 @@ async def board_cmd(ctx, sub: str = None, rest: str = None):
         await ctx.reply(HELP_TEXT)
 
 
-@bot.event
-async def on_canvas_objects_removed(frame):
-    ids = set(frame.get("object_ids") or [])
-    conn = bot.db
+def _txn_deactivate_matching(conn, ids):
     for item_id, _, _, _, _ in active_items(conn):
         if item_id in ids:
             conn.execute("UPDATE items SET active = 0 WHERE id = ?", (item_id,))
@@ -206,13 +224,20 @@ async def on_canvas_objects_removed(frame):
 
 
 @bot.event
-async def on_canvas_cleared(frame):
-    before_seq = frame.get("before_seq")
-    conn = bot.db
+async def on_canvas_objects_removed(frame):
+    await bot.store.run(_txn_deactivate_matching, set(frame.get("object_ids") or []))
+
+
+def _txn_deactivate_before_seq(conn, before_seq):
     for item_id, _, _, seq, _ in active_items(conn):
         if before_seq is not None and seq <= before_seq:
             conn.execute("UPDATE items SET active = 0 WHERE id = ?", (item_id,))
     conn.commit()
+
+
+@bot.event
+async def on_canvas_cleared(frame):
+    await bot.store.run(_txn_deactivate_before_seq, frame.get("before_seq"))
 
 
 @bot.event
@@ -223,8 +248,6 @@ async def on_connect():
 
 
 def main():
-    bot.db = sqlite3.connect(bot.data_path)
-    init_db(bot.db)
     try:
         raise SystemExit(bot.run() or 0)
     except RuntimeError as err:

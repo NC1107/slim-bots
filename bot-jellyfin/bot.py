@@ -3,7 +3,6 @@
 
 import asyncio
 import json
-import sqlite3
 import sys
 import time
 import urllib.error
@@ -51,7 +50,17 @@ def parse_library_routes(spec):
     return routes
 
 
-bot = Bot(prefix="!", require_channels=True, default_data_path="jellyfin_watch.db")
+def init_db(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS posted_items (item_id TEXT PRIMARY KEY, posted_at INTEGER NOT NULL);
+        """
+    )
+    conn.commit()
+
+
+bot = Bot(prefix="!", require_channels=True, default_data_path="jellyfin_watch.db", store_migrate=init_db)
 
 JELLYFIN_URL = (bot.setting("JELLYFIN_URL", required=True) or "").rstrip("/")
 JELLYFIN_API_KEY = bot.setting("JELLYFIN_API_KEY", required=True) or ""
@@ -109,16 +118,6 @@ def jf_get_bytes(path):
             return response.read()
     except Exception:
         return None
-
-
-def init_db(conn):
-    conn.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS posted_items (item_id TEXT PRIMARY KEY, posted_at INTEGER NOT NULL);
-        """
-    )
-    conn.commit()
 
 
 def get_cursor(conn):
@@ -375,14 +374,13 @@ async def send_post(entry):
 
 
 async def poll_once():
-    conn = bot.db
-    items = await asyncio.to_thread(fetch_new_items, conn)
+    items = await bot.store.run(fetch_new_items)
     if not items:
         return
     excluded = [item for item in items if is_excluded(item)]
     if excluded:
-        mark_posted(conn, [item["Id"] for item in excluded], quiet=True)
-        advance_cursor(conn, max(item["DateCreated"] for item in excluded))
+        await bot.store.run(mark_posted, [item["Id"] for item in excluded], quiet=True)
+        await bot.store.run(advance_cursor, max(item["DateCreated"] for item in excluded))
     postable = [item for item in items if not is_excluded(item)]
     for entry in build_posts(postable):
         try:
@@ -392,8 +390,8 @@ async def poll_once():
                 raise
             print(f"send failed, will retry next cycle: {err}", file=sys.stderr)
             break
-        mark_posted(conn, entry["item_ids"])
-        advance_cursor(conn, entry["max_created"])
+        await bot.store.run(mark_posted, entry["item_ids"])
+        await bot.store.run(advance_cursor, entry["max_created"])
 
 
 async def poll_loop():
@@ -492,7 +490,7 @@ _background_started = False
 @bot.event
 async def on_connect():
     global _background_started
-    await asyncio.to_thread(bootstrap_cursor, bot.db)
+    await bot.store.run(bootstrap_cursor)
     if _background_started:
         return
     _background_started = True
@@ -513,8 +511,6 @@ def main():
     problem = check_jellyfin_config()
     if problem:
         raise SystemExit(problem)
-    bot.db = sqlite3.connect(bot.data_path)
-    init_db(bot.db)
     try:
         raise SystemExit(bot.run() or 0)
     except RuntimeError as err:

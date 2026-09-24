@@ -3,6 +3,7 @@
 
 import asyncio
 import os
+import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -10,6 +11,7 @@ os.environ.setdefault("JELLYFIN_URL", "https://fake-jellyfin.invalid")
 os.environ.setdefault("JELLYFIN_API_KEY", "fake-key")
 
 import bot as jellyfin  # noqa: E402
+from slimbots import Store  # noqa: E402
 from slimbots.authors import AuthorFilter  # noqa: E402
 from slimbots.space import Space  # noqa: E402
 from slimbots.testing import FakeAsyncClient  # noqa: E402
@@ -56,7 +58,7 @@ def test_movies_under_the_batch_threshold_post_individually():
 
 
 def test_cursor_only_moves_forward():
-    conn = jellyfin.sqlite3.connect(":memory:")
+    conn = sqlite3.connect(":memory:")
     jellyfin.init_db(conn)
     jellyfin.advance_cursor(conn, "2024-06-01T00:00:00.0000000Z")
     jellyfin.advance_cursor(conn, "2024-01-01T00:00:00.0000000Z")
@@ -64,7 +66,7 @@ def test_cursor_only_moves_forward():
 
 
 def test_already_posted_items_are_filtered_before_grouping():
-    conn = jellyfin.sqlite3.connect(":memory:")
+    conn = sqlite3.connect(":memory:")
     jellyfin.init_db(conn)
     jellyfin.advance_cursor(conn, "2000-01-01T00:00:00.0000000Z")
     jellyfin.mark_posted(conn, ["m1"])
@@ -103,8 +105,8 @@ def message(content, msg_id="m1"):
 
 
 def setup():
-    jellyfin.bot.db = jellyfin.sqlite3.connect(":memory:")
-    jellyfin.init_db(jellyfin.bot.db)
+    jellyfin.bot.store = Store(":memory:", migrate=jellyfin.init_db)
+    asyncio.run(jellyfin.bot.store.open())
     jellyfin.bot.channels = {"c1"}
     jellyfin._command_cooldown._last.clear()
     client = FakeAsyncClient(me_id="bot-1")

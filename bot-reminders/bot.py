@@ -2,7 +2,6 @@
 """bot-reminders: `!remind in/at/every ...`, `!reminders`, `!timezone`; see README.md."""
 
 import asyncio
-import sqlite3
 import time
 import uuid
 
@@ -206,7 +205,7 @@ def format_duration_short(seconds):
     return f"{seconds}s"
 
 
-bot = Bot(prefix="!", require_channels=True, default_data_path="reminders.db")
+bot = Bot(prefix="!", require_channels=True, default_data_path="reminders.db", store_migrate=init_db)
 _command_limiter = RateLimiter(COMMANDS_PER_WINDOW, COMMAND_WINDOW_SECONDS)
 
 
@@ -216,22 +215,25 @@ async def rate_limit(ctx):
     return _command_limiter.check(ctx.author.id)
 
 
-async def _create_and_ack(ctx, due_at, text, recur=None):
-    conn = bot.db
-    if pending_count(conn, ctx.channel_id, ctx.author.id) >= MAX_PENDING_PER_USER:
-        await ctx.reply(f"you already have {MAX_PENDING_PER_USER} reminders pending here - cancel one first")
-        return
+def _txn_create_reminder(conn, channel_id, user_id, request_message_id, due_at, text, recur):
+    """The whole create - cap check, validation, insert - in one store call, so two racing creates can't both slip past the cap."""
+    if pending_count(conn, channel_id, user_id) >= MAX_PENDING_PER_USER:
+        return f"you already have {MAX_PENDING_PER_USER} reminders pending here - cancel one first"
     try:
         text = require_len(text, max_len=MAX_TEXT_LEN, field="a reminder")
     except ValidationError as err:
-        await ctx.reply(str(err))
-        return
+        return str(err)
     reminder_id = str(uuid.uuid4())
-    add_reminder(conn, reminder_id, ctx.channel_id, ctx.author.id, ctx.message["id"], due_at, text, recur=recur)
+    add_reminder(conn, reminder_id, channel_id, user_id, request_message_id, due_at, text, recur=recur)
     recur = recur or {}
-    tz_name = recur.get("tz") or get_timezone(conn, ctx.author.id)
+    tz_name = recur.get("tz") or get_timezone(conn, user_id)
     note = format_recurrence(recur.get("kind"), recur.get("interval_seconds"), recur.get("weekday"), recur.get("hour"), recur.get("minute"))
-    await ctx.reply(f"will remind you at {recurrence.format_local(due_at, tz_name)}{note}")
+    return f"will remind you at {recurrence.format_local(due_at, tz_name)}{note}"
+
+
+async def _create_and_ack(ctx, due_at, text, recur=None):
+    message = await bot.store.run(_txn_create_reminder, ctx.channel_id, ctx.author.id, ctx.message["id"], due_at, text, recur)
+    await ctx.reply(message)
 
 
 @bot.group(name="remind", help="`in <duration> <text>`, `at <HH:MM> <text>`, or `every <spec> [at HH:MM] <text>`")
@@ -246,7 +248,7 @@ async def remind_in(ctx, duration: Duration, text: str):
 
 @remind.command(name="at", help="Remind you at a time of day, in your own timezone", usage="<HH:MM> <text>")
 async def remind_at(ctx, when: TimeOfDay, text: str):
-    tz_name = get_timezone(bot.db, ctx.author.id)
+    tz_name = await bot.store.run(get_timezone, ctx.author.id)
     due_at = recurrence.local_clock_time(int(time.time()), when.hour, when.minute, tz_name)
     await _create_and_ack(ctx, due_at, text)
 
@@ -257,7 +259,6 @@ async def remind_at(ctx, when: TimeOfDay, text: str):
 )
 async def remind_every(ctx, spec: str, rest: str):
     """`spec` is a duration or a weekday name; `at HH:MM` inside `rest` only applies to a weekday."""
-    conn = bot.db
     weekday = recurrence.normalize_weekday(spec)
     interval_seconds = None
     if weekday is None:
@@ -294,7 +295,7 @@ async def remind_every(ctx, spec: str, rest: str):
             return
         recur = {"kind": "interval", "interval_seconds": interval_seconds}
 
-    recur["tz"] = get_timezone(conn, ctx.author.id)
+    recur["tz"] = await bot.store.run(get_timezone, ctx.author.id)
     if recur["kind"] == "weekly":
         due_at = recurrence.next_weekly(int(time.time()), recur["weekday"], recur["hour"], recur["minute"], recur["tz"])
     else:
@@ -302,16 +303,18 @@ async def remind_every(ctx, spec: str, rest: str):
     await _create_and_ack(ctx, due_at, text, recur=recur)
 
 
+def _txn_list_pending(conn, channel_id, user_id):
+    return pending_for_user(conn, channel_id, user_id), get_timezone(conn, user_id)
+
+
 @bot.group(name="reminders", help="List your pending reminders, or manage one by its listed number")
 async def reminders_group(ctx, rest: str = ""):
-    conn = bot.db
     rest = rest.strip()
     if not rest:
-        rows = pending_for_user(conn, ctx.channel_id, ctx.author.id)
+        rows, tz_name = await bot.store.run(_txn_list_pending, ctx.channel_id, ctx.author.id)
         if not rows:
             await ctx.reply("you have no pending reminders here")
             return
-        tz_name = get_timezone(conn, ctx.author.id)
         lines = []
         for i, (_, due_at, text, recur_kind, interval_seconds, weekday, hour, minute, _tz) in enumerate(rows, 1):
             note = format_recurrence(recur_kind, interval_seconds, weekday, hour, minute)
@@ -323,7 +326,7 @@ async def reminders_group(ctx, rest: str = ""):
 
 @reminders_group.command(name="cancel", help="Cancel one by its listed number", usage="<n>")
 async def reminders_cancel(ctx, n: int):
-    ok = cancel_nth(bot.db, ctx.channel_id, ctx.author.id, n)
+    ok = await bot.store.run(cancel_nth, ctx.channel_id, ctx.author.id, n)
     await ctx.reply(f"cancelled reminder {n}" if ok else f"no reminder {n}")
 
 
@@ -334,37 +337,37 @@ async def reminders_edit(ctx, n: int, text: str):
     except ValidationError as err:
         await ctx.reply(str(err))
         return
-    ok = edit_nth_text(bot.db, ctx.channel_id, ctx.author.id, n, text)
+    ok = await bot.store.run(edit_nth_text, ctx.channel_id, ctx.author.id, n, text)
     await ctx.reply(f"updated reminder {n}" if ok else f"no reminder {n}")
 
 
 @reminders_group.command(name="snooze", help="Push one back by a duration", usage="<n> <duration>")
 async def reminders_snooze(ctx, n: int, duration: Duration):
-    new_due = snooze_nth(bot.db, ctx.channel_id, ctx.author.id, n, int(duration))
+    new_due = await bot.store.run(snooze_nth, ctx.channel_id, ctx.author.id, n, int(duration))
     if new_due is None:
         await ctx.reply(f"no reminder {n}")
         return
-    tz_name = get_timezone(bot.db, ctx.author.id)
+    tz_name = await bot.store.run(get_timezone, ctx.author.id)
     await ctx.reply(f"reminder {n} pushed to {recurrence.format_local(new_due, tz_name)}")
 
 
 @bot.command(name="timezone", help="Show or set the timezone `at`/`every ... at` and the listing are shown in", usage="[IANA name]")
 async def timezone_cmd(ctx, tz_name: str = None):
-    conn = bot.db
     if tz_name is None:
-        await ctx.reply(f"your timezone is `{get_timezone(conn, ctx.author.id)}`")
+        current = await bot.store.run(get_timezone, ctx.author.id)
+        await ctx.reply(f"your timezone is `{current}`")
         return
     if not recurrence.is_valid_timezone(tz_name):
         await ctx.reply(f"`{tz_name}` isn't a timezone I recognise - use an IANA name like `America/New_York`")
         return
-    set_timezone(conn, ctx.author.id, tz_name)
+    await bot.store.run(set_timezone, ctx.author.id, tz_name)
     await ctx.reply(f"timezone set to `{tz_name}`")
 
 
 async def due_checker():
     while True:
         await asyncio.sleep(DUE_CHECK_SECONDS)
-        for row in due_reminders(bot.db, int(time.time())):
+        for row in await bot.store.run(due_reminders, int(time.time())):
             (reminder_id, channel_id, request_message_id, text, due_at,
              recur_kind, interval_seconds, weekday, hour, minute, tz_name) = row
             embed = Embed(title="Reminder", footer=format_recurrence(recur_kind, interval_seconds, weekday, hour, minute).strip() or None)
@@ -374,17 +377,17 @@ async def due_checker():
             )
             now = int(time.time())
             if recur_kind == "interval":
-                reschedule(bot.db, reminder_id, recurrence.next_interval(due_at, interval_seconds, now))
+                await bot.store.run(reschedule, reminder_id, recurrence.next_interval(due_at, interval_seconds, now))
             elif recur_kind == "weekly":
-                reschedule(bot.db, reminder_id, recurrence.next_weekly(due_at, weekday, hour, minute, tz_name))
+                await bot.store.run(reschedule, reminder_id, recurrence.next_weekly(due_at, weekday, hour, minute, tz_name))
             else:
-                mark_sent(bot.db, reminder_id)
+                await bot.store.run(mark_sent, reminder_id)
 
 
 async def _maintenance():
     while True:
         await asyncio.sleep(PRUNE_INTERVAL_SECONDS)
-        prune_old_reminders(bot.db, int(time.time()) - REMINDER_RETENTION_SECONDS)
+        await bot.store.run(prune_old_reminders, int(time.time()) - REMINDER_RETENTION_SECONDS)
 
 
 _background_started = False
@@ -401,8 +404,6 @@ async def on_ready():
 
 
 def main():
-    bot.db = sqlite3.connect(bot.data_path)
-    init_db(bot.db)
     try:
         raise SystemExit(bot.run() or 0)
     except RuntimeError as err:
