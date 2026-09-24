@@ -4,11 +4,12 @@ import uuid
 
 
 class Canvas:
-    """Thin wrapper over one channel's `canvas/objects` and `canvas/ops` routes."""
+    """Thin wrapper over one channel's `canvas/objects`/`canvas/ops` REST routes and its two live gateway signals."""
 
-    def __init__(self, client, channel_id):
+    def __init__(self, client, channel_id, *, bot=None):
         self._client = client
         self.channel_id = channel_id
+        self._bot = bot
 
     async def place(self, kind, *, x, y, w, h, props=None, object_id=None):
         body = {"id": object_id or str(uuid.uuid4()), "kind": kind, "x": x, "y": y, "w": w, "h": h}
@@ -47,3 +48,19 @@ class Canvas:
         """One page of objects in a rectangle - a bot's own reconciliation ground truth; see docs/framework.md."""
         params = {"min_x": min_x, "min_y": min_y, "max_x": max_x, "max_y": max_y, "limit": limit}
         return await self._client.call("GET", f"/channels/{self.channel_id}/canvas/objects", params=params)
+
+    async def send_cursor(self, x, y):
+        """A live pointer position over the gateway; no ack and no history, it just stops arriving when you stop."""
+        await self._bot_or_raise().send_frame({"type": "canvas.cursor", "channel_id": self.channel_id, "x": x, "y": y})
+
+    async def send_stroke_preview(self, object_id, points, *, ended=False):
+        """An in-flight drawing stroke over the gateway; send it repeatedly as it grows, `ended=True` on the last one."""
+        await self._bot_or_raise().send_frame({
+            "type": "canvas.stroke_preview", "channel_id": self.channel_id,
+            "object_id": object_id, "points": list(points), "ended": ended,
+        })
+
+    def _bot_or_raise(self):
+        if self._bot is None:
+            raise RuntimeError("Canvas(..., bot=...) needs a bot to send a live gateway signal")
+        return self._bot

@@ -97,6 +97,7 @@ class Bot:
         self._background_tasks = set()
         self._fatal_error = None
         self._main_task = None
+        self._gateway = None
         if help_command:
             self._register_default_help()
 
@@ -317,10 +318,24 @@ class Bot:
         await self._catch_up()
 
         async with await Gateway.open(self.client) as gateway:
-            reset_delay()
-            await self._dispatch_event("on_ready")
-            async for frame in gateway.frames():
-                await self._handle_frame(frame)
+            self._gateway = gateway
+            try:
+                reset_delay()
+                await self._dispatch_event("on_ready")
+                async for frame in gateway.frames():
+                    await self._handle_frame(frame)
+            finally:
+                self._gateway = None
+
+    async def send_frame(self, frame):
+        """Sends a client->server frame (typing, canvas.cursor, canvas.stroke_preview) over the open gateway."""
+        if self._gateway is None:
+            raise RuntimeError("not connected - send_frame needs an open gateway")
+        await self._gateway.send(frame)
+
+    async def start_typing(self, channel_id):
+        """One typing refresh; slim-m has no explicit stop frame, it lapses on its own after a few seconds."""
+        await self.send_frame({"type": "typing", "channel_id": channel_id})
 
     async def _run_forever(self):
         delay = self.base_delay

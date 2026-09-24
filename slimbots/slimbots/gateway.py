@@ -1,4 +1,4 @@
-"""The websocket side of the async `Bot`; kept separate from `ws.Connection`, which the still-sync templates need untouched."""
+"""The websocket side of the async `Bot`: the hello handshake, reading server frames, and sending client ones."""
 
 import json
 
@@ -30,6 +30,10 @@ class Gateway:
     async def frames(self):
         async for raw in self._socket:
             yield json.loads(raw)
+
+    async def send(self, frame):
+        """Sends one client->server frame (typing, canvas.cursor, canvas.stroke_preview)."""
+        await self._socket.send(json.dumps(frame))
 
     async def close(self):
         await self._socket.close()

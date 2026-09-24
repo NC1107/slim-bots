@@ -1,5 +1,34 @@
 """What a command handler receives: who sent it, where, and how to answer."""
 
+import asyncio
+import contextlib
+
+TYPING_REFRESH_SECONDS = 4  # comfortably under slim-m's 6-second typing TTL
+
+
+class _Typing:
+    """Keeps a channel's typing indicator alive for `async with ctx.typing():`'s whole body."""
+
+    def __init__(self, bot, channel_id):
+        self._bot = bot
+        self._channel_id = channel_id
+        self._task = None
+
+    async def __aenter__(self):
+        await self._bot.start_typing(self._channel_id)
+        self._task = asyncio.create_task(self._refresh_loop())
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb):
+        self._task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await self._task
+
+    async def _refresh_loop(self):
+        while True:
+            await asyncio.sleep(TYPING_REFRESH_SECONDS)
+            await self._bot.start_typing(self._channel_id)
+
 
 class Context:
     """One invocation of one command."""
@@ -35,3 +64,7 @@ class Context:
         return await self.bot.client.send(
             self.channel_id, body_content, reply_to_id=self.message.get("id"), embeds=embeds, fallback_content=fallback
         )
+
+    def typing(self):
+        """`async with ctx.typing():` shows a typing indicator for the block's whole duration, not just one refresh."""
+        return _Typing(self.bot, self.channel_id)
