@@ -31,6 +31,9 @@ HELP_TEXT = (
     f"`!jellyfin recent [days]` (default {RECENT_DEFAULT_DAYS}, max {RECENT_MAX_DAYS})."
 )
 
+# What `!watch`/`!subs` need beyond FIELDS: total runtime, and the audio/subtitle track list.
+STREAM_FIELDS = "RunTimeTicks,MediaStreams"
+
 # Populated once by configure(); a bot script calls it right after building Bot().
 JELLYFIN_URL = ""
 JELLYFIN_API_KEY = ""
@@ -40,6 +43,10 @@ JELLYFIN_POLL_SECONDS = 300
 JELLYFIN_BATCH_THRESHOLD = 3
 JELLYFIN_LIBRARY_ROUTES = {}
 JELLYFIN_EXCLUDE_GENRES = set()
+JELLYFIN_STREAM_WIDTH = 1280
+JELLYFIN_STREAM_HEIGHT = 720
+JELLYFIN_STREAM_FPS = 30
+JELLYFIN_STREAM_MAX_BITRATE = 8_000_000
 
 _command_cooldown = Cooldown(COMMAND_COOLDOWN_SECONDS)
 
@@ -62,6 +69,7 @@ def configure(bot):
     """Resolves every JELLYFIN_* setting through `bot.setting()`; called once, right after `Bot()` is built."""
     global JELLYFIN_URL, JELLYFIN_API_KEY, JELLYFIN_ITEM_TYPES, JELLYFIN_LIBRARY_IDS
     global JELLYFIN_POLL_SECONDS, JELLYFIN_BATCH_THRESHOLD, JELLYFIN_LIBRARY_ROUTES, JELLYFIN_EXCLUDE_GENRES
+    global JELLYFIN_STREAM_WIDTH, JELLYFIN_STREAM_HEIGHT, JELLYFIN_STREAM_FPS, JELLYFIN_STREAM_MAX_BITRATE
     JELLYFIN_URL = (bot.setting("JELLYFIN_URL", required=True) or "").rstrip("/")
     JELLYFIN_API_KEY = bot.setting("JELLYFIN_API_KEY", required=True) or ""
     JELLYFIN_ITEM_TYPES = bot.setting("JELLYFIN_ITEM_TYPES", ["Movie", "Episode"], type=list)
@@ -70,6 +78,10 @@ def configure(bot):
     JELLYFIN_BATCH_THRESHOLD = bot.setting("JELLYFIN_BATCH_THRESHOLD", 3, type=int)
     JELLYFIN_LIBRARY_ROUTES = parse_library_routes(bot.setting("JELLYFIN_LIBRARY_ROUTES", "") or "")
     JELLYFIN_EXCLUDE_GENRES = {g.lower() for g in bot.setting("JELLYFIN_EXCLUDE_GENRES", [], type=list)}
+    JELLYFIN_STREAM_WIDTH = bot.setting("JELLYFIN_STREAM_WIDTH", 1280, type=int)
+    JELLYFIN_STREAM_HEIGHT = bot.setting("JELLYFIN_STREAM_HEIGHT", 720, type=int)
+    JELLYFIN_STREAM_FPS = bot.setting("JELLYFIN_STREAM_FPS", 30, type=int)
+    JELLYFIN_STREAM_MAX_BITRATE = bot.setting("JELLYFIN_STREAM_MAX_BITRATE", 8_000_000, type=int)
 
 
 def check_jellyfin_config():
@@ -371,3 +383,41 @@ def search_items(query, limit):
     }
     params = {k: v for k, v in params.items() if v is not None}
     return jf_get("/Items", params).get("Items", [])
+
+
+def fetch_item_for_playback(item_id):
+    """One item's `RunTimeTicks` and `MediaStreams` (audio/subtitle track list) - what `!watch`/`!subs` need."""
+    items = jf_get("/Items", {"ids": item_id, "fields": STREAM_FIELDS}).get("Items", [])
+    return items[0] if items else None
+
+
+def subtitle_streams(item):
+    return [s for s in item.get("MediaStreams") or [] if s.get("Type") == "Subtitle"]
+
+
+def find_subtitle_stream(item, language):
+    """The first subtitle stream whose language code or display title matches `language`, case-insensitively."""
+    language = language.lower()
+    for stream in subtitle_streams(item):
+        if language in (stream.get("Language") or "").lower():
+            return stream
+        if language in (stream.get("DisplayTitle") or "").lower():
+            return stream
+    return None
+
+
+def build_stream_url(item_id, *, start_seconds=0.0, audio_stream_index=None, subtitle_stream_index=None):
+    """A progressive H.264/AAC transcode URL, seekable via `StartTimeTicks`; see README.md's watch-party section.
+    `Container=mkv`, not `ts` - a live Jellyfin 12.1 server's `ts` progressive mux silently drops the audio stream."""
+    params = {
+        "Static": "false", "VideoCodec": "h264", "AudioCodec": "aac", "Container": "mkv",
+        "MaxWidth": JELLYFIN_STREAM_WIDTH, "VideoBitrate": JELLYFIN_STREAM_MAX_BITRATE,
+        "StartTimeTicks": int(start_seconds * 10_000_000),
+    }
+    if audio_stream_index is not None:
+        params["AudioStreamIndex"] = audio_stream_index
+    if subtitle_stream_index is not None:
+        params["SubtitleStreamIndex"] = subtitle_stream_index
+        params["SubtitleMethod"] = "Encode"
+    query = urllib.parse.urlencode(params)
+    return f"{JELLYFIN_URL}/Videos/{item_id}/stream?{query}"

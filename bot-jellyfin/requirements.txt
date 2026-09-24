@@ -3,3 +3,5 @@
 websockets>=12
 httpx>=0.27
 slim-m>=0.3.0
+# For `!watch`: bot.voice publishes through this. ffmpeg must also be on PATH - see README.md.
+livekit>=1.0

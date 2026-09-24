@@ -14,6 +14,7 @@ bot = Bot(prefix="!", require_channels=True, default_data_path="jellyfin_watch.d
 jellyfin_core.configure(bot)
 
 bot.load_extension("search_cog")
+bot.load_extension("watch_cog")
 
 
 async def upload_poster(poster_item_id):
