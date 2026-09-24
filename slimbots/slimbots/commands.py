@@ -9,6 +9,23 @@ from .limits import Cooldown
 from .models import Member
 
 _NO_DEFAULT = inspect.Parameter.empty
+_COOLDOWN_BUCKETS = ("user", "channel", "deployment")
+_DEPLOYMENT_COOLDOWN_KEY = "*"
+
+
+def _cooldown_key(bucket, ctx):
+    """The bucket a cooldown is tracked under: one deployment is one bot process, so `deployment` is a single key."""
+    if bucket == "channel":
+        return ctx.channel_id
+    if bucket == "deployment":
+        return _DEPLOYMENT_COOLDOWN_KEY
+    return ctx.author.id
+
+
+def _validate_cooldown_bucket(bucket):
+    if bucket not in _COOLDOWN_BUCKETS:
+        raise ValueError(f"cooldown_bucket must be one of {_COOLDOWN_BUCKETS}, got {bucket!r}")
+    return bucket
 
 
 def _usage_token(param):
@@ -67,7 +84,10 @@ _SIMPLE_CONVERTERS = {int: _convert_int, float: _convert_float, Duration: _conve
 class Command:
     """One `@bot.command`-decorated handler, plus everything it was declared with."""
 
-    def __init__(self, func, *, name, aliases=(), help=None, usage=None, cooldown=None, requires=None, check=None):
+    def __init__(
+        self, func, *, name, aliases=(), help=None, usage=None,
+        cooldown=None, cooldown_bucket="user", requires=None, check=None,
+    ):
         self.func = func
         self.name = name
         self.aliases = list(aliases)
@@ -75,6 +95,7 @@ class Command:
         self.requires = requires
         self.check = check
         self.cooldown = Cooldown(cooldown) if cooldown else None
+        self.cooldown_bucket = _validate_cooldown_bucket(cooldown_bucket)
         self.params = list(inspect.signature(func).parameters.values())[1:]
         self.usage = usage or " ".join(_usage_token(p) for p in self.params)
 
@@ -86,10 +107,10 @@ class Command:
         if self.requires is not None and not member.has_permission(self.requires):
             raise MissingPermissions(self.requires)
 
-    def check_cooldown(self, user_id):
+    def check_cooldown(self, ctx):
         if self.cooldown is None:
             return
-        message = self.cooldown.check(user_id)
+        message = self.cooldown.check(_cooldown_key(self.cooldown_bucket, ctx))
         if message:
             raise CommandOnCooldown(message)
 
@@ -132,7 +153,7 @@ class Command:
 
     async def invoke(self, ctx):
         self.check_permission(ctx.author)
-        self.check_cooldown(ctx.author.id)
+        self.check_cooldown(ctx)
         if self.check is not None and not await _maybe_await(self.check(ctx)):
             raise CheckFailure("you can't use that command right now")
         args = await self.convert_args(ctx, ctx.raw_args)
@@ -146,7 +167,10 @@ async def _maybe_await(value):
 class Group(Command):
     """A command that dispatches its first argument token to `@group.command()`-registered subcommands."""
 
-    def __init__(self, func, *, name, aliases=(), help=None, cooldown=None, requires=None, check=None):
+    def __init__(
+        self, func, *, name, aliases=(), help=None,
+        cooldown=None, cooldown_bucket="user", requires=None, check=None,
+    ):
         self.func = func
         self.name = name
         self.aliases = list(aliases)
@@ -154,15 +178,19 @@ class Group(Command):
         self.requires = requires
         self.check = check
         self.cooldown = Cooldown(cooldown) if cooldown else None
+        self.cooldown_bucket = _validate_cooldown_bucket(cooldown_bucket)
         self.params = list(inspect.signature(func).parameters.values())[1:]
         self.subcommands = {}
         self._unique_subcommands = []
 
-    def command(self, name=None, *, aliases=(), help=None, usage=None, cooldown=None, requires=None, check=None):
+    def command(
+        self, name=None, *, aliases=(), help=None, usage=None,
+        cooldown=None, cooldown_bucket="user", requires=None, check=None,
+    ):
         def decorator(func):
             sub = Command(
-                func, name=name or func.__name__, aliases=aliases, help=help,
-                usage=usage, cooldown=cooldown, requires=requires, check=check,
+                func, name=name or func.__name__, aliases=aliases, help=help, usage=usage,
+                cooldown=cooldown, cooldown_bucket=cooldown_bucket, requires=requires, check=check,
             )
             for sub_name in sub.names:
                 if sub_name in self.subcommands:
@@ -184,7 +212,7 @@ class Group(Command):
     async def invoke(self, ctx):
         """Dispatches by the first token of `ctx.raw_args`; anything else falls to the group's own handler."""
         self.check_permission(ctx.author)
-        self.check_cooldown(ctx.author.id)
+        self.check_cooldown(ctx)
         if self.check is not None and not await _maybe_await(self.check(ctx)):
             raise CheckFailure("you can't use that command right now")
         name_token, _, remainder = ctx.raw_args.partition(" ")

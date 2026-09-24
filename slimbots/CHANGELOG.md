@@ -34,7 +34,13 @@ The pre-0.3 sync primitives every template used to hand-roll around are gone, no
 - `bot.data_path`, `bot.background()` for a supervised task that outlives one command
 - Real embeds (`Embed`), with a markdown fallback for a server that does not know the field yet
 - Command registration with the server (`PUT /bots/commands`), a no-op against a server too old to have the route
-- Built-in safeguards: bot/webhook ignore, per-command cooldowns, permission gates against the caller's real permissions, 429 backoff, 401 as terminal, clean SIGTERM shutdown
+- Built-in safeguards: bot/webhook ignore, per-command cooldowns (per user, per channel, or per deployment via `cooldown_bucket=`), permission gates against the caller's real permissions, 429 backoff, 401 as terminal, clean SIGTERM shutdown
+- Typed `on_*` dispatch for every websocket frame kind, not just the original eight (`slimbots.events`)
+- Typed REST wrappers: `Message.edit`/`.delete`/`.react`, reactions, pins, threads, polls, attachment upload, DMs
+- `Canvas.clear`/`.restore`/`.reorder`, alongside the existing `place`/`move`/`remove`/`viewport`
+- A gateway send path: `ctx.typing()`, `canvas.send_cursor()`, `canvas.send_stroke_preview()`
+- `bot.wait_for(event, check=, timeout=)` and `ctx.confirm(prompt)`
+- `on_command_not_found(ctx, error)`, dispatched only when a bot actually listens for it
 
 ## 0.2.0 and earlier
 

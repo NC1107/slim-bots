@@ -40,7 +40,7 @@ A bot script imports `Bot` and little else.
 
 ## Commands
 
-`@bot.command(name=None, aliases=(), help=None, usage=None, cooldown=None, requires=None, check=None)` registers a function `async def name(ctx, *typed_args)`.
+`@bot.command(name=None, aliases=(), help=None, usage=None, cooldown=None, cooldown_bucket="user", requires=None, check=None)` registers a function `async def name(ctx, *typed_args)`.
 Arguments convert from the function's own annotations (`slimbots/commands.py`):
 
 - `int` / `float` - parsed from one whitespace-separated token, or a clear `BadArgument` reply, never a traceback.
@@ -51,6 +51,8 @@ Arguments convert from the function's own annotations (`slimbots/commands.py`):
 - A parameter with a default is optional; a missing required one raises `MissingRequiredArgument` naming it.
 
 `help` is auto-generated from the registered set (name, aliases, usage, help text) unless a bot registers its own `help` command first.
+
+`cooldown_bucket` picks who a `cooldown=` applies to: `"user"` (the default - each member gets their own timer), `"channel"` (one timer shared by everyone in that channel), or `"deployment"` (one timer for the whole bot, every channel). A `@group.command()` subcommand takes the same two keywords independently of its group's.
 
 `@bot.check` registers an async predicate run before every command dispatch (a global cooldown/rate-limit rather than one command's own, for example): return a string to refuse with that reply, or `None`/falsy to let the command through.
 
