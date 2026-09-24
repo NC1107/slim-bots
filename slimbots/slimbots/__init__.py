@@ -1,29 +1,71 @@
-"""Shared plumbing for slim-m bot templates.
+"""A discord.py-shaped bot framework for slim-m; see docs/framework.md."""
 
-This is not a client library for slim-m's API in the discord.js sense: there
-is no typed model of a channel or a message, no cache, and no object for
-every route. slim-m's bot surface is small - log in with a token, call REST,
-hold one websocket, track a per-scope `seq` - and that surface is what this
-package covers, nothing more.
-
-See `docs/bots/building-bots.md` in the slim-m repo for the protocol itself.
-`bot-ping` in this repo stays free of this package on purpose, so there is
-still one file that shows the whole protocol with nothing hidden.
-"""
-
-from . import cursor
+from . import catchup, cursor
+from .bot import Bot
+from .canvas import Canvas
 from .client import Client, is_not_found, is_token_revoked, socket_url
+from .commands import Command, Group
+from .context import Context
+from .converters import Duration, TimeOfDay
+from .embeds import Embed
+from .exceptions import (
+    BadArgument,
+    CheckFailure,
+    CommandError,
+    CommandNotFound,
+    CommandOnCooldown,
+    MissingPermissions,
+    MissingRequiredArgument,
+    SlimBotsError,
+)
+from .http import ApiError
+from .http import AsyncClient
+from .limits import Cooldown, Quota, RateLimiter, ValidationError, require_int, require_len, require_range
+from .models import Channel, Member, Role
+from .permissions import Permissions
 from .retry import call_with_retry
 from .runner import run_forever
+from .space import Space
 from .ws import Connection
 
 __all__ = [
+    "ApiError",
+    "AsyncClient",
+    "BadArgument",
+    "Bot",
+    "Canvas",
+    "Channel",
+    "CheckFailure",
     "Client",
+    "Command",
+    "CommandError",
+    "CommandNotFound",
+    "CommandOnCooldown",
     "Connection",
+    "Context",
+    "Cooldown",
+    "Duration",
+    "Embed",
+    "Group",
+    "Member",
+    "MissingPermissions",
+    "MissingRequiredArgument",
+    "Permissions",
+    "Quota",
+    "RateLimiter",
+    "Role",
+    "SlimBotsError",
+    "Space",
+    "TimeOfDay",
+    "ValidationError",
     "call_with_retry",
+    "catchup",
     "cursor",
     "is_not_found",
     "is_token_revoked",
+    "require_int",
+    "require_len",
+    "require_range",
     "run_forever",
     "socket_url",
 ]

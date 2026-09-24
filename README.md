@@ -11,20 +11,20 @@ Read that first. Then pick the template closest to what you want.
 
 ## The library
 
-[`slimbots/`](slimbots/) covers auth, the REST call, an idempotent `send`
-with retries, the websocket handshake, the reconnect loop with backoff, and
-the `seq`-cursor/`/sync` helpers. It is not a typed model of slim-m's API -
-no `Channel` or `Message` objects, no cache - because slim-m's bot surface is
-small enough that this is the whole plumbing layer needed. `slimbots.testing`
-also has `FakeClient`, for unit-testing a bot's command handlers with no live
-deployment - `bot-reminders/test_bot.py` is a worked example. See its own
-README for what it covers and why it is hand-written rather than generated.
+[`slimbots/`](slimbots/) is a discord.py-shaped framework: a `Bot()` constructor, `@bot.command` with typed argument conversion, `ctx`, and a live `Space` model (members/channels/roles).
+See [`docs/framework.md`](docs/framework.md) for the whole shape, the built-in safeguards (bot-ignore, cooldowns, permission gates, lifecycle), and how identity, command registration, and the embed seam work.
+`bot-casino` is built on it and is the reference for a real port.
+
+The pre-0.3 sync primitives - auth, the REST call, the websocket handshake, the reconnect loop, the `seq`-cursor/`/sync` helpers - are still there and still used by every template not yet ported to `Bot`.
+`slimbots.testing` has `FakeClient` (sync) and `FakeAsyncClient` (for `Bot`), for unit-testing a bot's command handlers with no live deployment.
 
 `bot-ping` stays free of it on purpose: it is the one template that shows
 the whole protocol in a single file with nothing hidden behind an import.
 Every other template here is built on it. If a future template looks
 inconsistent with that split, the split is deliberate; see `bot-ping`'s own
-README before "fixing" it.## The templates
+README before "fixing" it.
+
+## The templates
 
 | Directory | What it is for |
 | --- | --- |
@@ -33,11 +33,8 @@ README before "fixing" it.## The templates
 | [`bot-roles`](bot-roles/) | Self-service roles driven by a command, because reactor identity never reaches the wire. |
 | [`bot-canvas-board`](bot-canvas-board/) | Driving the Voice Canvas from outside the app. |
 | [`bot-modlog`](bot-modlog/) | Watching moderation events, and what is missing when one is dropped. |
-<<<<<<< HEAD
 | [`bot-jellyfin`](bot-jellyfin/) | Polling an outside service (Jellyfin) instead of slim-m's own events, and batching a library scan into one message instead of forty. |
-=======
-| [`bot-casino`](bot-casino/) | A currency bot: daily chips, coinflip and blackjack, transfers, a leaderboard, and money kept safe under real concurrency. |
->>>>>>> a17bd09 (refactor(bot-casino): rebase onto the slimbots library)
+| [`bot-casino`](bot-casino/) | A currency bot: daily chips, blackjack (double, split, surrender), coinflip, transfers, a leaderboard, and money kept safe under real concurrency. |
 
 Every template's README says what it deliberately does not do. That section is
 usually the more useful half.
