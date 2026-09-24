@@ -1,3 +1,5 @@
+import pytest
+
 from slimbots import Bot, Canvas
 from slimbots.testing import FakeAsyncClient
 
@@ -19,8 +21,5 @@ async def test_bot_canvas_is_wired_for_live_gateway_signals():
 
 def test_bot_canvas_refuses_without_an_open_connection():
     bot = Bot(prefix="!")
-    try:
+    with pytest.raises(AssertionError):
         bot.canvas("c1")
-        assert False, "expected an AssertionError"
-    except AssertionError:
-        pass
