@@ -19,6 +19,24 @@ python3 bot.py
 `SLIMM_LOG_CHANNEL` is the one channel this bot posts into. It needs only
 `VIEW_CHANNEL` and `SEND_MESSAGES` there - see "What your bot may do" in
 `docs/bots/building-bots.md` for how to grant a bot a channel overwrite.
+`SLIMM_DB_PATH` (default `modlog.db`) holds this bot's own local record of
+what it has logged and when it noticed a reconnect gap - see "Commands"
+below.
+
+## Commands
+
+Sent in `SLIMM_LOG_CHANNEL` itself, and caught up over `/sync` on reconnect
+the same way `bot-roles` catches up its own channel - `message.created`
+carries a `seq`, unlike the five moderation events this bot exists to watch:
+
+- `!modlog stats` - counts of every event this bot has logged locally, by
+  kind, since `SLIMM_DB_PATH` was created. This is this bot's own
+  transcript, not an audit trail - the reply says so.
+- `!modlog gaps` - the last several reconnect gaps this bot has noticed
+  (see below), each one a permanent hole rather than something a later
+  event fills in.
+- `!modlog permissions` - exactly what `MANAGE_MESSAGES` and `MANAGE_ROLES`
+  would each add, on demand.
 
 ## What this proves about permissions
 
@@ -83,6 +101,14 @@ deployment that needs a true audit trail should read
 `GET /reports/history` with a moderator's own credential, not trust a
 bot's transcript of what it happened to be connected for.
 
+The gap is no longer *silent*, though - the earlier version of this bot
+found that gap live and then said nothing about it in the channel, only to
+its own stdout, once, at startup. Every reconnect after the first now posts
+how long the bot was offline, right in the log, and `!modlog gaps` answers
+it later without needing to scroll back. That closes the "did anyone notice"
+problem; it does not and cannot close the "what happened" one, which still
+needs `MANAGE_MESSAGES`.
+
 ## A found edge case: logging your own timeout
 
 Timing this bot's own account out makes its very next log post - the one
@@ -122,13 +148,27 @@ decision 0028, not something to route around here.
 
 - **Say why.** A timeout or removal's reason lives in
   `moderation_audit_log`, reachable only via `GET /reports/history`
-  (`MANAGE_MESSAGES`). This bot logs who and when, never why.
+  (`MANAGE_MESSAGES`). This bot logs who and when, never why -
+  `!modlog permissions` says so on demand.
 - **Distinguish a role create from a rename from a permission edit from a
   delete.** `role.changed` fires for all four and says only the id. Naming
   which one happened would need `GET /roles` (`MANAGE_ROLES`) plus a
   before/after diff, and this bot does not hold that permission on purpose.
-- **Persist anything across a restart.** The name and role-name caches are
-  in memory only and start cold again; see the module docstring.
+- **Answer another bot, or itself.** Checks the author against `GET /me`
+  and, like `bot-ping`, against `GET /users/{id}`'s `is_bot` field - several
+  bots share this fleet, and none of them may answer another one's output.
+- **Treat its own local record as an audit trail.** `SLIMM_DB_PATH` now
+  persists every event this bot has logged and every reconnect gap it
+  noticed across restarts, and the name/role-name caches still start cold
+  every time (cheap to rebuild, not worth persisting). `!modlog stats` says
+  in its own reply that it is this bot's transcript, not a substitute for
+  `GET /reports/history`.
 - **Watch more than these five events.** Reactions, threads, polls, pins,
   and canvas activity all have their own event types and are out of scope
   here - see the other bots here and slim-m's `docs/bots/building-bots.md`.
+
+## Tests
+
+`python3 test_bot.py` - stdlib only plus `slimbots.testing.FakeClient`, no
+live deployment. Covers duration formatting, the role-change inference, the
+three commands, the reconnect-gap threshold, and the bot/self-ignore checks.
