@@ -17,7 +17,7 @@ MAX_TEXT_LENGTH = 240
 
 HELP_TEXT = (
     "commands: `!board` to list, `!board add <text>`, `!board done <n>`, "
-    "`!board move <n> <slot>`, `!board clear yes` (removes everything - needs the confirmation word)."
+    "`!board move <n> <slot>`, `!board clear` (removes everything - asks to confirm)."
 )
 
 # user_id -> display_name, resolved once per author and reused; a later rename keeps the old name.
@@ -127,14 +127,14 @@ async def done_item(ctx, n):
     await ctx.reply(f"done: {text}")
 
 
-async def clear_board(ctx, confirmed):
+async def clear_board(ctx):
     conn = bot.db
     rows = active_items(conn)
     if not rows:
         await ctx.reply("the board is already empty")
         return
-    if not confirmed:
-        await ctx.reply(f"this removes all {len(rows)} item(s) on the board - resend as `!board clear yes` to confirm.")
+    if not await ctx.confirm(f"This removes all {len(rows)} item(s) on the board."):
+        await ctx.reply("cancelled")
         return
     item_ids = [row[0] for row in rows]
     await canvas.remove(item_ids)
@@ -174,7 +174,7 @@ async def list_items(ctx):
     await ctx.reply("\n".join(lines))
 
 
-@bot.command(name="board", help="List, `add <text>`, `done <n>`, `move <n> <slot>`, or `clear yes`", usage="[add|done|move|clear|list ...]")
+@bot.command(name="board", help="List, `add <text>`, `done <n>`, `move <n> <slot>`, or `clear` (asks to confirm)", usage="[add|done|move|clear|list ...]")
 async def board_cmd(ctx, sub: str = None, rest: str = None):
     sub = (sub or "list").lower()
     if sub == "list":
@@ -190,7 +190,7 @@ async def board_cmd(ctx, sub: str = None, rest: str = None):
         else:
             await ctx.reply(HELP_TEXT)
     elif sub == "clear":
-        await clear_board(ctx, confirmed=(rest or "").strip().lower() == "yes")
+        await clear_board(ctx)
     else:
         await ctx.reply(HELP_TEXT)
 

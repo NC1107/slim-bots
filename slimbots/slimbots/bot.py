@@ -189,6 +189,22 @@ class Bot:
             return f
         return decorator(func) if func else decorator
 
+    async def wait_for(self, event, *, check=None, timeout=None):
+        """Waits for the next `event` (an `on_*` name) where `check(*args)` is true; raises `asyncio.TimeoutError`."""
+        future = asyncio.get_running_loop().create_future()
+
+        async def listener(*args):
+            if check is not None and not check(*args):
+                return
+            if not future.done():
+                future.set_result(args[0] if len(args) == 1 else args)
+
+        self._listeners.setdefault(event, []).append(listener)
+        try:
+            return await asyncio.wait_for(future, timeout=timeout)
+        finally:
+            self._listeners[event].remove(listener)
+
     def _register_default_help(self):
         @self.command(name="help", help="Show this list, or one command's usage")
         async def help_command(ctx, command_name: str = None):

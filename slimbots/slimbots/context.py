@@ -68,3 +68,17 @@ class Context:
     def typing(self):
         """`async with ctx.typing():` shows a typing indicator for the block's whole duration, not just one refresh."""
         return _Typing(self.bot, self.channel_id)
+
+    async def confirm(self, prompt, *, timeout=30):
+        """Asks a yes/no question and waits for this author's reply here; True/False, or False on a timeout."""
+        await self.reply(f"{prompt} (yes/no)")
+
+        def is_a_yes_or_no_reply(message):
+            same_place = message.get("channel_id") == self.channel_id and message.get("author_id") == self.author.id
+            return same_place and (message.get("content") or "").strip().lower() in ("yes", "no", "y", "n")
+
+        try:
+            message = await self.bot.wait_for("on_raw_message", check=is_a_yes_or_no_reply, timeout=timeout)
+        except asyncio.TimeoutError:
+            return False
+        return message.get("content", "").strip().lower() in ("yes", "y")

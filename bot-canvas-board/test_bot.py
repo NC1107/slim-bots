@@ -20,6 +20,11 @@ def message(content, msg_id="m1"):
     return {"id": msg_id, "author_id": "u1", "channel_id": "c1", "content": content}
 
 
+def frame(content, msg_id="m1"):
+    """A full message.created envelope - needed for anything going through ctx.confirm's on_raw_message wait."""
+    return {"type": "message.created", "channel_id": "c1", "message": message(content, msg_id)}
+
+
 def setup():
     board.bot.db = board.sqlite3.connect(":memory:")
     board.init_db(board.bot.db)
@@ -111,21 +116,36 @@ def test_move_refuses_a_taken_slot():
     assert "already taken" in client.sent[-1]["content"]
 
 
-def test_clear_without_confirmation_asks_for_one():
+def test_clear_asks_for_confirmation_and_a_no_reply_cancels():
     client = setup()
     board.bot.db.execute("INSERT INTO items (id, slot, text, seq, active, added_by) VALUES ('o1', 0, 'a', 1, 1, 'u1')")
     board.bot.db.commit()
-    process(client, message("!board clear"))
-    assert "resend as `!board clear yes`" in client.sent[-1]["content"]
+
+    async def run():
+        clear_task = asyncio.ensure_future(board.bot._handle_frame(frame("!board clear", "m1")))
+        await asyncio.sleep(0.01)
+        await board.bot._handle_frame(frame("no", "m2"))
+        await clear_task
+
+    asyncio.run(run())
+    assert "This removes all 1 item(s)" in client.sent[-2]["content"]
+    assert client.sent[-1]["content"] == "cancelled"
     assert len(board.active_items(board.bot.db)) == 1
 
 
-def test_clear_yes_removes_everything():
+def test_clear_yes_reply_removes_everything():
     client = setup()
     client.respond("POST", "/channels/c1/canvas/ops", None)
     board.bot.db.execute("INSERT INTO items (id, slot, text, seq, active, added_by) VALUES ('o1', 0, 'a', 1, 1, 'u1')")
     board.bot.db.commit()
-    process(client, message("!board clear yes"))
+
+    async def run():
+        clear_task = asyncio.ensure_future(board.bot._handle_frame(frame("!board clear", "m1")))
+        await asyncio.sleep(0.01)
+        await board.bot._handle_frame(frame("yes", "m2"))
+        await clear_task
+
+    asyncio.run(run())
     assert "cleared 1 item(s)" in client.sent[-1]["content"]
     assert board.active_items(board.bot.db) == []
 

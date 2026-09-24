@@ -2,9 +2,9 @@
 
 A slim-m bot that keeps a todo board on a channel's Voice Canvas:
 `!board add <text>` places a sticky note, `!board done <n>` removes it,
-`!board move <n> <slot>` repositions it, `!board clear yes` wipes the whole
-board, and `!board` (or `!board list`) shows what is up, crediting whoever
-added each note.
+`!board move <n> <slot>` repositions it, `!board clear` (asks to confirm)
+wipes the whole board, and `!board` (or `!board list`) shows what is up,
+crediting whoever added each note.
 
 Built on the `slimbots` `Bot` framework - see `../docs/framework.md`. The
 Voice Canvas calls go through the new `Canvas` model
@@ -64,9 +64,9 @@ Two things that turned out to matter:
 - **A length bound on note text** (`MAX_TEXT_LENGTH`), before it ever
   reaches the canvas API - not a platform limit, just this bot declining to
   place something a fixed 220x140 box could never show usefully.
-- **A confirmation on `!board clear`.** Bare `!board clear` explains what it
-  would do and how many items it would remove, and does nothing; only
-  `!board clear yes` actually removes them.
+- **A confirmation on `!board clear`.** It asks how many items it would
+  remove and waits for a yes/no reply (`ctx.confirm`, a 30-second timeout
+  that answers no) rather than removing anything on the bare command.
 - **A usage hint instead of silence.** Anything starting with `!board` that
   does not match a known subcommand gets `HELP_TEXT` back rather than
   nothing at all.
