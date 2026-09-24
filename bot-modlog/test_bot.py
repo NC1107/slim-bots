@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bot as modlog  # noqa: E402
+from slimbots import Store  # noqa: E402
 from slimbots.authors import AuthorFilter  # noqa: E402
 from slimbots.space import Space  # noqa: E402
 from slimbots.testing import FakeAsyncClient  # noqa: E402
@@ -21,8 +22,8 @@ def message(author_id, content, msg_id="m1"):
 
 
 def setup():
-    modlog.bot.db = sqlite3.connect(":memory:")
-    modlog.init_db(modlog.bot.db)
+    modlog.bot.store = Store(":memory:", migrate=modlog.init_db)
+    asyncio.run(modlog.bot.store.open())
     modlog.bot.channels = {"c1"}
     modlog._last_roles.clear()
     modlog._role_names.clear()
@@ -136,14 +137,14 @@ def test_reconnect_gap_is_recorded_and_reported():
     setup()
     modlog._last_seen_at = None
     asyncio.run(modlog.report_reconnect_gap())
-    assert modlog.bot.db.execute("SELECT COUNT(*) FROM gaps").fetchone()[0] == 0
+    assert modlog.bot.store.connection.execute("SELECT COUNT(*) FROM gaps").fetchone()[0] == 0
 
     modlog.note_alive()
     modlog._last_seen_at -= 100
     client = modlog.bot.client
     asyncio.run(modlog.report_reconnect_gap())
     assert "reconnected after" in client.sent[-1]["content"]
-    assert modlog.bot.db.execute("SELECT COUNT(*) FROM gaps").fetchone()[0] == 1
+    assert modlog.bot.store.connection.execute("SELECT COUNT(*) FROM gaps").fetchone()[0] == 1
 
 
 def test_a_short_gap_is_not_reported():

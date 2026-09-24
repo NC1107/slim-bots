@@ -124,6 +124,17 @@ A bot with `channels` set gets a persisted, cross-restart `seq` cursor for free,
 `on_frame(frame)` fires for every frame of any type, recognised or not, before any other dispatch - a liveness signal (a modlog-style bot marking itself "still connected") is the reason this exists; most bots have no reason to listen for it.
 `slimbots.catchup`/`cursor` are still there for a bot that wants to manage its own separate cursor outside what `channels=` already covers, but neither is needed for the common case any more.
 
+## The async store
+
+`Bot(store_migrate=init_db)` opens `bot.store` automatically during `start()`, off the event loop, the same way `channels=` opens a cursor - most bots never need to call `open_store` by hand.
+`await bot.open_store(migrate=init_db)` does the same thing directly: opens a `Store` at `bot.data_path` (or an explicit `path=`) and returns it as `bot.store`; calling it again just returns the same one.
+`Store` owns a single sqlite connection but runs every query in a worker thread via `asyncio.to_thread`, one call at a time, so `await bot.store.run(get_balance, ctx.author.id)` never blocks the event loop the way a bare `bot.db.execute(...)` used to.
+`migrate` is a plain `def migrate(conn): ...` run once, off the event loop, right after the connection opens - `init_db` in every bot that already had one.
+
+The functions passed to `run()` are unchanged from before this - `get_balance(conn, user_id)`, `due_reminders(conn, now)`, and so on all still take a raw `sqlite3.Connection` and run synchronously; `run()` just moves *where* that call happens.
+That is why `bot-casino/test_concurrency.py` did not need to change at all: it drives those same functions directly against its own real connections on real threads, never through `Bot` or `Store`.
+A background sweep that already ran on its own thread (`bot-jellyfin`'s poster refresh used to reach for `asyncio.to_thread` by hand) can just call `bot.store.connection` directly instead, since it was never blocking the event loop in the first place.
+
 ## Async HTTP
 
 `slimbots.http.AsyncClient` is built on `httpx.AsyncClient` rather than `asyncio.to_thread` over `urllib`.

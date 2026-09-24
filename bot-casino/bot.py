@@ -3,7 +3,6 @@
 
 import asyncio
 import secrets
-import sqlite3
 import time
 
 from slimbots import BadArgument, Bot, Embed, Member, RateLimiter
@@ -28,6 +27,9 @@ SUITS = ["H", "D", "C", "S"]
 
 
 def open_db(path):
+    """A real, synchronous connection - only `test_concurrency.py` uses this now; the bot goes through `bot.store`."""
+    import sqlite3
+
     conn = sqlite3.connect(path, timeout=30, isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
@@ -114,14 +116,6 @@ def credit(conn, user_id, amount):
     conn.execute("UPDATE accounts SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
 
 
-async def debit_or_refuse(ctx, conn, amount):
-    if try_debit(conn, ctx.author.id, amount):
-        return True
-    conn.execute("ROLLBACK")
-    await ctx.reply("you don't have that many chips")
-    return False
-
-
 # --- cards ---
 
 
@@ -179,7 +173,7 @@ def _normalize_guess(raw):
     raise BadArgument("call `heads`/`h` or `tails`/`t`")
 
 
-bot = Bot(prefix="!", require_channels=True, default_data_path="casino.db")
+bot = Bot(prefix="!", require_channels=True, default_data_path="casino.db", store_migrate=init_db)
 _command_limiter = RateLimiter(COMMANDS_PER_WINDOW, COMMAND_WINDOW_SECONDS)
 
 
@@ -189,40 +183,279 @@ async def rate_limit(ctx):
     return _command_limiter.check(ctx.author.id)
 
 
-@bot.command(aliases=["bal"], help="See your balance")
-async def balance(ctx):
-    embed = Embed(title=ctx.author.display_name).add_field("chips", str(get_balance(bot.db, ctx.author.id)))
-    await ctx.reply(embed=embed)
+# --- transaction bodies: run on the store's worker thread, never on the event loop ---
 
 
-@bot.command(help="Claim your daily chips")
-async def daily(ctx):
-    conn = bot.db
-    if not begin_idempotent(conn, ctx.message["id"]):
-        return
-    ensure_account(conn, ctx.author.id)
+def _txn_daily(conn, request_id, user_id):
+    if not begin_idempotent(conn, request_id):
+        return None
+    ensure_account(conn, user_id)
     balance_, last_daily = conn.execute(
-        "SELECT balance, last_daily FROM accounts WHERE user_id = ?", (ctx.author.id,)
+        "SELECT balance, last_daily FROM accounts WHERE user_id = ?", (user_id,)
     ).fetchone()
     now = int(time.time())
     remaining = DAILY_COOLDOWN_SECONDS - (now - last_daily)
     if remaining > 0:
         conn.execute("ROLLBACK")
-        await ctx.reply(f"already claimed - try again in {format_duration(remaining)}")
-        return
+        return {"error": f"already claimed - try again in {format_duration(remaining)}"}
     conn.execute(
         "UPDATE accounts SET balance = balance + ?, last_daily = ? WHERE user_id = ?",
-        (DAILY_AMOUNT, now, ctx.author.id),
+        (DAILY_AMOUNT, now, user_id),
     )
     conn.execute("COMMIT")
-    await ctx.reply(f"claimed {DAILY_AMOUNT} chips. balance: {balance_ + DAILY_AMOUNT}")
+    return {"balance": balance_ + DAILY_AMOUNT}
+
+
+def _txn_give(conn, request_id, sender_id, recipient_id, amount):
+    if not begin_idempotent(conn, request_id):
+        return None
+    ensure_account(conn, recipient_id)
+    if not try_debit(conn, sender_id, amount):
+        conn.execute("ROLLBACK")
+        return {"error": "you don't have that many chips"}
+    credit(conn, recipient_id, amount)
+    conn.execute("COMMIT")
+    return {"balance": get_balance(conn, sender_id)}
+
+
+def _txn_flip(conn, request_id, user_id, amount_spec, guess):
+    if not begin_idempotent(conn, request_id):
+        return None
+    amount = resolve_amount(conn, user_id, amount_spec)
+    if amount < 1:
+        conn.execute("ROLLBACK")
+        return {"error": "you have no chips to flip - `!daily` first"}
+    if amount > MAX_AMOUNT:
+        conn.execute("ROLLBACK")
+        return {"error": f"keep a single flip under {MAX_AMOUNT} chips"}
+    if not try_debit(conn, user_id, amount):
+        conn.execute("ROLLBACK")
+        return {"error": "you don't have that many chips"}
+    landed = secrets.choice(("heads", "tails"))
+    payout = (amount * FLIP_PAYOUT_NUM) // FLIP_PAYOUT_DEN if landed == guess else 0
+    if payout:
+        credit(conn, user_id, payout)
+    conn.execute("COMMIT")
+    return {"landed": landed, "amount": amount, "payout": payout, "balance": get_balance(conn, user_id)}
+
+
+def _resolve_natural(player_natural, dealer_natural, amount):
+    """3:2 on a natural blackjack, a push if the dealer has one too."""
+    if player_natural and dealer_natural:
+        return "push - you both had blackjack", amount
+    if player_natural:
+        payout = amount + (amount * 3) // 2
+        return f"blackjack! +{payout - amount} chips", payout
+    return "dealer has blackjack - you lose", 0
+
+
+def _txn_deal_blackjack(conn, request_id, channel_id, user_id, amount_spec):
+    if not begin_idempotent(conn, request_id):
+        return None
+    if blackjack.has_round(conn, channel_id, user_id):
+        conn.execute("ROLLBACK")
+        return {"error": "finish your hand first - `!hit`, `!stand`, `!double`, `!split` or `!surrender`"}
+    amount = resolve_amount(conn, user_id, amount_spec)
+    if amount < 1:
+        conn.execute("ROLLBACK")
+        return {"error": "you have no chips to bet - `!daily` first"}
+    if amount > MAX_AMOUNT:
+        conn.execute("ROLLBACK")
+        return {"error": f"keep a single bet under {MAX_AMOUNT} chips"}
+    if not try_debit(conn, user_id, amount):
+        conn.execute("ROLLBACK")
+        return {"error": "you don't have that many chips"}
+    player = [draw_card(), draw_card()]
+    dealer = [draw_card(), draw_card()]
+    player_natural = hand_total(player) == 21
+    dealer_natural = hand_total(dealer) == 21
+    if player_natural or dealer_natural:
+        outcome, payout = _resolve_natural(player_natural, dealer_natural, amount)
+        if payout:
+            credit(conn, user_id, payout)
+        conn.execute("COMMIT")
+        return {"resolved": True, "player": player, "dealer": dealer, "outcome": outcome, "balance": get_balance(conn, user_id)}
+    blackjack.start_round(conn, channel_id, user_id, amount, player, dealer)
+    conn.execute("COMMIT")
+    return {"resolved": False, "player": player, "dealer": dealer}
+
+
+def _active_hand_or_none(conn, channel_id, user_id):
+    hand = blackjack.active_hand(conn, channel_id, user_id)
+    if hand is None:
+        conn.execute("ROLLBACK")
+    return hand
+
+
+def _play_dealer_hand(dealer_cards):
+    while hand_total(dealer_cards) < 17:
+        dealer_cards.append(draw_card())
+    return dealer_cards
+
+
+def _resolve_vs_dealer(stake, player_total, dealer_total):
+    if dealer_total > 21 or dealer_total < player_total:
+        return "win", stake * 2
+    if dealer_total > player_total:
+        return "dealer wins", 0
+    return "push", stake
+
+
+def _finish_hand_result(conn, channel_id, user_id):
+    """Points at the next split hand still waiting, or settles the whole round against the dealer once every hand is decided."""
+    next_hand = blackjack.active_hand(conn, channel_id, user_id)
+    if next_hand is not None:
+        next_index, _, next_player, _ = next_hand
+        conn.execute("COMMIT")
+        return {"next": True, "index": next_index, "player": next_player}
+
+    rounds = blackjack.round_hands(conn, channel_id, user_id)
+    multi = len(rounds) > 1
+    needs_dealer = any(status == blackjack.STOOD for _, _, _, _, status in rounds)
+    dealer_cards = _play_dealer_hand(rounds[0][3]) if needs_dealer else rounds[0][3]
+    dealer_total = hand_total(dealer_cards)
+
+    lines = []
+    for idx, stake, player_cards, _, status in rounds:
+        label = f"hand {idx + 1}: " if multi else "you: "
+        if status == blackjack.BUST:
+            lines.append(f"{label}{render_hand(player_cards)} - bust")
+        elif status == blackjack.SURRENDER:
+            lines.append(f"{label}{render_hand(player_cards)} - surrendered, {stake // 2} chips back")
+        else:
+            outcome, payout = _resolve_vs_dealer(stake, hand_total(player_cards), dealer_total)
+            if payout:
+                credit(conn, user_id, payout)
+            lines.append(f"{label}{render_hand(player_cards)} - {outcome}")
+    if needs_dealer:
+        lines.append(f"dealer: {render_hand(dealer_cards)}")
+    blackjack.clear_round(conn, channel_id, user_id)
+    conn.execute("COMMIT")
+    return {"next": False, "lines": lines, "balance": get_balance(conn, user_id)}
+
+
+def _txn_hit(conn, request_id, channel_id, user_id):
+    if not begin_idempotent(conn, request_id):
+        return None
+    hand = _active_hand_or_none(conn, channel_id, user_id)
+    if hand is None:
+        return {"error": "you don't have a hand going - `!blackjack <amount>` to start one"}
+    hand_index, _, player, _ = hand
+    player.append(draw_card())
+    if hand_total(player) > 21:
+        blackjack.update_hand(conn, channel_id, user_id, hand_index, player_cards=player, status=blackjack.BUST)
+        return {"finish": _finish_hand_result(conn, channel_id, user_id)}
+    blackjack.update_hand(conn, channel_id, user_id, hand_index, player_cards=player)
+    conn.execute("COMMIT")
+    return {"player": player}
+
+
+def _txn_stand(conn, request_id, channel_id, user_id):
+    if not begin_idempotent(conn, request_id):
+        return None
+    hand = _active_hand_or_none(conn, channel_id, user_id)
+    if hand is None:
+        return {"error": "you don't have a hand going - `!blackjack <amount>` to start one"}
+    hand_index, _, _, _ = hand
+    blackjack.update_hand(conn, channel_id, user_id, hand_index, status=blackjack.STOOD)
+    return {"finish": _finish_hand_result(conn, channel_id, user_id)}
+
+
+def _txn_double(conn, request_id, channel_id, user_id):
+    if not begin_idempotent(conn, request_id):
+        return None
+    hand = _active_hand_or_none(conn, channel_id, user_id)
+    if hand is None:
+        return {"error": "you don't have a hand going - `!blackjack <amount>` to start one"}
+    hand_index, stake, player, _ = hand
+    if not blackjack.can_double(player):
+        conn.execute("ROLLBACK")
+        return {"error": "you can only double on your first two cards"}
+    if not try_debit(conn, user_id, stake):
+        conn.execute("ROLLBACK")
+        return {"error": "you don't have that many chips"}
+    player.append(draw_card())
+    status = blackjack.BUST if hand_total(player) > 21 else blackjack.STOOD
+    blackjack.update_hand(conn, channel_id, user_id, hand_index, player_cards=player, stake=stake * 2, status=status)
+    return {"finish": _finish_hand_result(conn, channel_id, user_id)}
+
+
+def _txn_split(conn, request_id, channel_id, user_id):
+    if not begin_idempotent(conn, request_id):
+        return None
+    hand = _active_hand_or_none(conn, channel_id, user_id)
+    if hand is None:
+        return {"error": "you don't have a hand going - `!blackjack <amount>` to start one"}
+    hand_index, stake, player, dealer = hand
+    already_split = len(blackjack.round_hands(conn, channel_id, user_id)) > 1
+    if not blackjack.can_split(hand_index, player, already_split, card_value):
+        conn.execute("ROLLBACK")
+        return {"error": "that hand can't be split - two cards of the same value, and only once"}
+    if not try_debit(conn, user_id, stake):
+        conn.execute("ROLLBACK")
+        return {"error": "you don't have that many chips"}
+    first = [player[0], draw_card()]
+    second = [player[1], draw_card()]
+    blackjack.update_hand(conn, channel_id, user_id, 0, player_cards=first)
+    blackjack.insert_split_hand(conn, channel_id, user_id, 1, stake, second, dealer)
+    conn.execute("COMMIT")
+    return {"first": first, "second": second, "dealer": dealer}
+
+
+def _txn_surrender(conn, request_id, channel_id, user_id):
+    if not begin_idempotent(conn, request_id):
+        return None
+    hand = _active_hand_or_none(conn, channel_id, user_id)
+    if hand is None:
+        return {"error": "you don't have a hand going - `!blackjack <amount>` to start one"}
+    hand_index, stake, player, _ = hand
+    already_split = len(blackjack.round_hands(conn, channel_id, user_id)) > 1
+    if not blackjack.can_surrender(hand_index, player, already_split):
+        conn.execute("ROLLBACK")
+        return {"error": "surrender is only offered on your first two cards, before any split"}
+    refund = stake // 2
+    if refund:
+        credit(conn, user_id, refund)
+    blackjack.update_hand(conn, channel_id, user_id, hand_index, status=blackjack.SURRENDER)
+    return {"finish": _finish_hand_result(conn, channel_id, user_id)}
+
+
+async def _reply_finish_hand(ctx, result):
+    if result["next"]:
+        await ctx.reply(f"hand {result['index'] + 1}: {render_hand(result['player'])}\n`!hit`, `!stand`, `!double` or `!surrender` for this hand")
+        return
+    embed = Embed(title="Blackjack", description="\n".join(result["lines"]), footer=f"balance: {result['balance']}")
+    await ctx.reply(embed=embed)
+
+
+# --- commands ---
+
+
+@bot.command(aliases=["bal"], help="See your balance")
+async def balance(ctx):
+    bal = await bot.store.run(get_balance, ctx.author.id)
+    embed = Embed(title=ctx.author.display_name).add_field("chips", str(bal))
+    await ctx.reply(embed=embed)
+
+
+@bot.command(help="Claim your daily chips")
+async def daily(ctx):
+    result = await bot.store.run(_txn_daily, ctx.message["id"], ctx.author.id)
+    if result is None:
+        return
+    if "error" in result:
+        await ctx.reply(result["error"])
+        return
+    await ctx.reply(f"claimed {DAILY_AMOUNT} chips. balance: {result['balance']}")
 
 
 @bot.command(aliases=["top"], help="Top 10 balances")
 async def leaderboard(ctx):
-    rows = bot.db.execute(
-        "SELECT user_id, balance FROM accounts WHERE balance > 0 ORDER BY balance DESC LIMIT 10"
-    ).fetchall()
+    rows = await bot.store.run(
+        lambda conn: conn.execute(
+            "SELECT user_id, balance FROM accounts WHERE balance > 0 ORDER BY balance DESC LIMIT 10"
+        ).fetchall()
+    )
     if not rows:
         await ctx.reply("nobody has any chips yet - `!daily` to start")
         return
@@ -248,254 +481,111 @@ async def give(ctx, amount: int, member: Member):
     if member.is_bot or member.is_webhook:
         await ctx.reply("bots don't play, so they don't take chips either")
         return
-    conn = bot.db
-    if not begin_idempotent(conn, ctx.message["id"]):
+    result = await bot.store.run(_txn_give, ctx.message["id"], ctx.author.id, member.id, amount)
+    if result is None:
         return
-    ensure_account(conn, member.id)
-    if not await debit_or_refuse(ctx, conn, amount):
+    if "error" in result:
+        await ctx.reply(result["error"])
         return
-    credit(conn, member.id, amount)
-    conn.execute("COMMIT")
-    await ctx.reply(f"sent {amount} chips to {member.display_name}. your balance: {get_balance(conn, ctx.author.id)}")
+    await ctx.reply(f"sent {amount} chips to {member.display_name}. your balance: {result['balance']}")
 
 
 @bot.command(help="Coinflip, about a 5% house edge", usage="<amount|all> <heads|tails>")
 async def flip(ctx, amount_spec: str, guess: str):
     amount_spec = _parse_amount_spec(amount_spec)
     guess = _normalize_guess(guess)
-    conn = bot.db
-    if not begin_idempotent(conn, ctx.message["id"]):
+    result = await bot.store.run(_txn_flip, ctx.message["id"], ctx.author.id, amount_spec, guess)
+    if result is None:
         return
-    amount = resolve_amount(conn, ctx.author.id, amount_spec)
-    if amount < 1:
-        conn.execute("ROLLBACK")
-        await ctx.reply("you have no chips to flip - `!daily` first")
+    if "error" in result:
+        await ctx.reply(result["error"])
         return
-    if amount > MAX_AMOUNT:
-        conn.execute("ROLLBACK")
-        await ctx.reply(f"keep a single flip under {MAX_AMOUNT} chips")
-        return
-    if not await debit_or_refuse(ctx, conn, amount):
-        return
-    landed = secrets.choice(("heads", "tails"))
-    payout = (amount * FLIP_PAYOUT_NUM) // FLIP_PAYOUT_DEN if landed == guess else 0
-    if payout:
-        credit(conn, ctx.author.id, payout)
-    conn.execute("COMMIT")
-    bal = get_balance(conn, ctx.author.id)
+    landed, amount, payout, bal = result["landed"], result["amount"], result["payout"], result["balance"]
     if payout:
         await ctx.reply(f"the coin lands on {landed} - you called it, +{payout - amount} chips. balance: {bal}")
     else:
         await ctx.reply(f"the coin lands on {landed} - you called {guess}, -{amount} chips. balance: {bal}")
 
 
-def _resolve_natural(player_natural, dealer_natural, amount):
-    """3:2 on a natural blackjack, a push if the dealer has one too."""
-    if player_natural and dealer_natural:
-        return "push - you both had blackjack", amount
-    if player_natural:
-        payout = amount + (amount * 3) // 2
-        return f"blackjack! +{payout - amount} chips", payout
-    return "dealer has blackjack - you lose", 0
-
-
 @bot.command(name="blackjack", aliases=["bj"], help="Deal a hand, then hit/stand/double/split/surrender", usage="<amount|all>")
 async def deal_blackjack(ctx, amount_spec: str):
     amount_spec = _parse_amount_spec(amount_spec)
-    conn = bot.db
-    if not begin_idempotent(conn, ctx.message["id"]):
+    result = await bot.store.run(_txn_deal_blackjack, ctx.message["id"], ctx.channel_id, ctx.author.id, amount_spec)
+    if result is None:
         return
-    if blackjack.has_round(conn, ctx.channel_id, ctx.author.id):
-        conn.execute("ROLLBACK")
-        await ctx.reply("finish your hand first - `!hit`, `!stand`, `!double`, `!split` or `!surrender`")
+    if "error" in result:
+        await ctx.reply(result["error"])
         return
-    amount = resolve_amount(conn, ctx.author.id, amount_spec)
-    if amount < 1:
-        conn.execute("ROLLBACK")
-        await ctx.reply("you have no chips to bet - `!daily` first")
-        return
-    if amount > MAX_AMOUNT:
-        conn.execute("ROLLBACK")
-        await ctx.reply(f"keep a single bet under {MAX_AMOUNT} chips")
-        return
-    if not await debit_or_refuse(ctx, conn, amount):
-        return
-    player = [draw_card(), draw_card()]
-    dealer = [draw_card(), draw_card()]
-    player_natural = hand_total(player) == 21
-    dealer_natural = hand_total(dealer) == 21
-    if player_natural or dealer_natural:
-        outcome, payout = _resolve_natural(player_natural, dealer_natural, amount)
-        if payout:
-            credit(conn, ctx.author.id, payout)
-        conn.execute("COMMIT")
-        bal = get_balance(conn, ctx.author.id)
-        embed = Embed(title="Blackjack", description=f"you: {render_hand(player)}\ndealer: {render_hand(dealer)}\n{outcome}", footer=f"balance: {bal}")
+    if result["resolved"]:
+        embed = Embed(
+            title="Blackjack",
+            description=f"you: {render_hand(result['player'])}\ndealer: {render_hand(result['dealer'])}\n{result['outcome']}",
+            footer=f"balance: {result['balance']}",
+        )
         await ctx.reply(embed=embed)
         return
-    blackjack.start_round(conn, ctx.channel_id, ctx.author.id, amount, player, dealer)
-    conn.execute("COMMIT")
-    await ctx.reply(f"you: {render_hand(player)}\ndealer: {dealer[0]} ??\n`!hit`, `!stand`, `!double`, `!split` or `!surrender`")
-
-
-async def _active_hand_or_refuse(ctx, conn):
-    """The guard every mid-hand command (hit/stand/double/split/surrender) shares."""
-    hand = blackjack.active_hand(conn, ctx.channel_id, ctx.author.id)
-    if hand is None:
-        conn.execute("ROLLBACK")
-        await ctx.reply("you don't have a hand going - `!blackjack <amount>` to start one")
-    return hand
-
-
-def _play_dealer_hand(dealer_cards):
-    while hand_total(dealer_cards) < 17:
-        dealer_cards.append(draw_card())
-    return dealer_cards
-
-
-def _resolve_vs_dealer(stake, player_total, dealer_total):
-    if dealer_total > 21 or dealer_total < player_total:
-        return "win", stake * 2
-    if dealer_total > player_total:
-        return "dealer wins", 0
-    return "push", stake
-
-
-async def _finish_hand(ctx, conn):
-    """Called once a hand is bust/surrendered/stood; points at the next split
-    hand still waiting, or settles the whole round against the dealer once every hand is decided."""
-    next_hand = blackjack.active_hand(conn, ctx.channel_id, ctx.author.id)
-    if next_hand is not None:
-        next_index, _, next_player, _ = next_hand
-        conn.execute("COMMIT")
-        await ctx.reply(f"hand {next_index + 1}: {render_hand(next_player)}\n`!hit`, `!stand`, `!double` or `!surrender` for this hand")
-        return
-
-    rounds = blackjack.round_hands(conn, ctx.channel_id, ctx.author.id)
-    multi = len(rounds) > 1
-    needs_dealer = any(status == blackjack.STOOD for _, _, _, _, status in rounds)
-    dealer_cards = _play_dealer_hand(rounds[0][3]) if needs_dealer else rounds[0][3]
-    dealer_total = hand_total(dealer_cards)
-
-    lines = []
-    for idx, stake, player_cards, _, status in rounds:
-        label = f"hand {idx + 1}: " if multi else "you: "
-        if status == blackjack.BUST:
-            lines.append(f"{label}{render_hand(player_cards)} - bust")
-        elif status == blackjack.SURRENDER:
-            lines.append(f"{label}{render_hand(player_cards)} - surrendered, {stake // 2} chips back")
-        else:
-            outcome, payout = _resolve_vs_dealer(stake, hand_total(player_cards), dealer_total)
-            if payout:
-                credit(conn, ctx.author.id, payout)
-            lines.append(f"{label}{render_hand(player_cards)} - {outcome}")
-    if needs_dealer:
-        lines.append(f"dealer: {render_hand(dealer_cards)}")
-    blackjack.clear_round(conn, ctx.channel_id, ctx.author.id)
-    conn.execute("COMMIT")
-    embed = Embed(title="Blackjack", description="\n".join(lines), footer=f"balance: {get_balance(conn, ctx.author.id)}")
-    await ctx.reply(embed=embed)
+    await ctx.reply(f"you: {render_hand(result['player'])}\ndealer: {result['dealer'][0]} ??\n`!hit`, `!stand`, `!double`, `!split` or `!surrender`")
 
 
 @bot.command(help="Take another card")
 async def hit(ctx):
-    conn = bot.db
-    if not begin_idempotent(conn, ctx.message["id"]):
+    result = await bot.store.run(_txn_hit, ctx.message["id"], ctx.channel_id, ctx.author.id)
+    if result is None:
         return
-    hand = await _active_hand_or_refuse(ctx, conn)
-    if hand is None:
+    if "error" in result:
+        await ctx.reply(result["error"])
         return
-    hand_index, _, player, _ = hand
-    player.append(draw_card())
-    if hand_total(player) > 21:
-        blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, player_cards=player, status=blackjack.BUST)
-        await _finish_hand(ctx, conn)
+    if "finish" in result:
+        await _reply_finish_hand(ctx, result["finish"])
         return
-    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, player_cards=player)
-    conn.execute("COMMIT")
-    await ctx.reply(f"you: {render_hand(player)}\n`!hit` or `!stand`")
+    await ctx.reply(f"you: {render_hand(result['player'])}\n`!hit` or `!stand`")
 
 
 @bot.command(help="Stop drawing and settle the hand")
 async def stand(ctx):
-    conn = bot.db
-    if not begin_idempotent(conn, ctx.message["id"]):
+    result = await bot.store.run(_txn_stand, ctx.message["id"], ctx.channel_id, ctx.author.id)
+    if result is None:
         return
-    hand = await _active_hand_or_refuse(ctx, conn)
-    if hand is None:
+    if "error" in result:
+        await ctx.reply(result["error"])
         return
-    hand_index, _, _, _ = hand
-    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, status=blackjack.STOOD)
-    await _finish_hand(ctx, conn)
+    await _reply_finish_hand(ctx, result["finish"])
 
 
 @bot.command(aliases=["dbl"], help="Double your stake and take exactly one more card")
 async def double(ctx):
-    conn = bot.db
-    if not begin_idempotent(conn, ctx.message["id"]):
+    result = await bot.store.run(_txn_double, ctx.message["id"], ctx.channel_id, ctx.author.id)
+    if result is None:
         return
-    hand = await _active_hand_or_refuse(ctx, conn)
-    if hand is None:
+    if "error" in result:
+        await ctx.reply(result["error"])
         return
-    hand_index, stake, player, _ = hand
-    if not blackjack.can_double(player):
-        conn.execute("ROLLBACK")
-        await ctx.reply("you can only double on your first two cards")
-        return
-    if not await debit_or_refuse(ctx, conn, stake):
-        return
-    player.append(draw_card())
-    status = blackjack.BUST if hand_total(player) > 21 else blackjack.STOOD
-    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, player_cards=player, stake=stake * 2, status=status)
-    await _finish_hand(ctx, conn)
+    await _reply_finish_hand(ctx, result["finish"])
 
 
 @bot.command(help="Split a pair into two independent hands")
 async def split(ctx):
-    conn = bot.db
-    if not begin_idempotent(conn, ctx.message["id"]):
+    result = await bot.store.run(_txn_split, ctx.message["id"], ctx.channel_id, ctx.author.id)
+    if result is None:
         return
-    hand = await _active_hand_or_refuse(ctx, conn)
-    if hand is None:
+    if "error" in result:
+        await ctx.reply(result["error"])
         return
-    hand_index, stake, player, dealer = hand
-    already_split = len(blackjack.round_hands(conn, ctx.channel_id, ctx.author.id)) > 1
-    if not blackjack.can_split(hand_index, player, already_split, card_value):
-        conn.execute("ROLLBACK")
-        await ctx.reply("that hand can't be split - two cards of the same value, and only once")
-        return
-    if not await debit_or_refuse(ctx, conn, stake):
-        return
-    first = [player[0], draw_card()]
-    second = [player[1], draw_card()]
-    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, 0, player_cards=first)
-    blackjack.insert_split_hand(conn, ctx.channel_id, ctx.author.id, 1, stake, second, dealer)
-    conn.execute("COMMIT")
     await ctx.reply(
-        f"split into two hands\nhand 1: {render_hand(first)}\nhand 2: {render_hand(second)}\n"
-        f"dealer: {dealer[0]} ??\nplaying hand 1 - `!hit`, `!stand` or `!double`"
+        f"split into two hands\nhand 1: {render_hand(result['first'])}\nhand 2: {render_hand(result['second'])}\n"
+        f"dealer: {result['dealer'][0]} ??\nplaying hand 1 - `!hit`, `!stand` or `!double`"
     )
 
 
 @bot.command(aliases=["surr"], help="Forfeit half your stake and end the hand")
 async def surrender(ctx):
-    conn = bot.db
-    if not begin_idempotent(conn, ctx.message["id"]):
+    result = await bot.store.run(_txn_surrender, ctx.message["id"], ctx.channel_id, ctx.author.id)
+    if result is None:
         return
-    hand = await _active_hand_or_refuse(ctx, conn)
-    if hand is None:
+    if "error" in result:
+        await ctx.reply(result["error"])
         return
-    hand_index, stake, player, _ = hand
-    already_split = len(blackjack.round_hands(conn, ctx.channel_id, ctx.author.id)) > 1
-    if not blackjack.can_surrender(hand_index, player, already_split):
-        conn.execute("ROLLBACK")
-        await ctx.reply("surrender is only offered on your first two cards, before any split")
-        return
-    refund = stake // 2
-    if refund:
-        credit(conn, ctx.author.id, refund)
-    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, status=blackjack.SURRENDER)
-    await _finish_hand(ctx, conn)
+    await _reply_finish_hand(ctx, result["finish"])
 
 
 # --- connection lifecycle ---
@@ -517,11 +607,10 @@ async def _maintenance():
     """Prunes processed_requests hourly; the row only needs to survive one reconnect gap."""
     while True:
         await asyncio.sleep(PRUNE_INTERVAL_SECONDS)
-        prune_processed_requests(bot.db, int(time.time()) - PROCESSED_REQUEST_RETENTION_SECONDS)
+        await bot.store.run(prune_processed_requests, int(time.time()) - PROCESSED_REQUEST_RETENTION_SECONDS)
 
 
 def main():
-    bot.db = open_db(bot.data_path)
     try:
         raise SystemExit(bot.run() or 0)
     except RuntimeError as err:

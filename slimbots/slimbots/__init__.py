@@ -25,6 +25,7 @@ from .limits import Cooldown, Quota, RateLimiter, ValidationError, require_int, 
 from .models import Attachment, Channel, DmConversation, Member, Message, Role
 from .permissions import Permissions
 from .space import Space
+from .store import Store
 
 __all__ = [
     "ApiError",
@@ -55,6 +56,7 @@ __all__ = [
     "Role",
     "SlimBotsError",
     "Space",
+    "Store",
     "TimeOfDay",
     "ValidationError",
     "catchup",

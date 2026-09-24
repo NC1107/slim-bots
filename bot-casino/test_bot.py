@@ -9,6 +9,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.setdefault("SLIMM_CHANNELS", "c1")
 
 import bot as casino  # noqa: E402
+from slimbots import Store  # noqa: E402
 from slimbots.authors import AuthorFilter  # noqa: E402
 from slimbots.space import Space  # noqa: E402
 from slimbots.testing import FakeAsyncClient  # noqa: E402
@@ -26,7 +27,8 @@ def message(author_id, content, msg_id="m1"):
 
 def setup():
     """Fresh in-memory db and a fresh FakeAsyncClient wired onto the module-level bot."""
-    casino.bot.db = casino.open_db(":memory:")
+    casino.bot.store = Store(":memory:", migrate=casino.init_db)
+    asyncio.run(casino.bot.store.open())
     casino._command_limiter._hits.clear()
     client = FakeAsyncClient(me_id="bot-1")
     client.respond("GET", "/members", MEMBERS)
@@ -76,23 +78,23 @@ def test_daily_credits_and_then_cools_down():
 
 def test_give_moves_chips_between_accounts():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     process(client, message("u1", "!give 30 sam", "m1"))
     assert "sent 30 chips to Sam" in client.sent[-1]["content"]
-    assert casino.get_balance(casino.bot.db, "u1") == 70
-    assert casino.get_balance(casino.bot.db, "u2") == 30
+    assert casino.get_balance(casino.bot.store.connection, "u1") == 70
+    assert casino.get_balance(casino.bot.store.connection, "u2") == 30
 
 
 def test_give_refuses_yourself():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     process(client, message("u1", "!give 10 nick", "m1"))
     assert "yourself" in client.sent[-1]["content"]
 
 
 def test_give_refuses_a_bot_recipient():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     process(client, message("u1", "!give 10 otherbot", "m1"))
     assert "bots don't play" in client.sent[-1]["content"]
 
@@ -111,10 +113,10 @@ def test_give_refuses_over_max_amount():
 
 def test_flip_rejects_a_bad_guess():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     process(client, message("u1", "!flip 10 maybe", "m1"))
     assert "call `heads`" in client.sent[-1]["content"]
-    assert casino.get_balance(casino.bot.db, "u1") == 100
+    assert casino.get_balance(casino.bot.store.connection, "u1") == 100
 
 
 def test_flip_rejects_a_bad_amount():
@@ -125,7 +127,7 @@ def test_flip_rejects_a_bad_amount():
 
 def test_flip_wins():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     original = casino.secrets.choice
     casino.secrets.choice = lambda seq: "heads"
     try:
@@ -133,12 +135,12 @@ def test_flip_wins():
     finally:
         casino.secrets.choice = original
     assert "you called it" in client.sent[-1]["content"]
-    assert casino.get_balance(casino.bot.db, "u1") == 109
+    assert casino.get_balance(casino.bot.store.connection, "u1") == 109
 
 
 def test_flip_loses():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     original = casino.secrets.choice
     casino.secrets.choice = lambda seq: "tails"
     try:
@@ -146,12 +148,12 @@ def test_flip_loses():
     finally:
         casino.secrets.choice = original
     assert "-10 chips" in client.sent[-1]["content"]
-    assert casino.get_balance(casino.bot.db, "u1") == 90
+    assert casino.get_balance(casino.bot.store.connection, "u1") == 90
 
 
 def test_blackjack_natural_win_pays_three_to_two():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     original = casino.draw_card
     script_cards(["AH", "KH", "2C", "5D"])
     try:
@@ -159,12 +161,12 @@ def test_blackjack_natural_win_pays_three_to_two():
     finally:
         restore_draw_card(original)
     assert "blackjack!" in client.sent[-1]["content"]
-    assert casino.get_balance(casino.bot.db, "u1") == 115
+    assert casino.get_balance(casino.bot.store.connection, "u1") == 115
 
 
 def test_blackjack_hit_then_bust():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     original = casino.draw_card
     script_cards(["7H", "8H", "2C", "5D", "KC"])
     try:
@@ -172,12 +174,12 @@ def test_blackjack_hit_then_bust():
     finally:
         restore_draw_card(original)
     assert "bust" in client.sent[-1]["content"]
-    assert casino.get_balance(casino.bot.db, "u1") == 90
+    assert casino.get_balance(casino.bot.store.connection, "u1") == 90
 
 
 def test_blackjack_double_doubles_the_stake():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     original = casino.draw_card
     script_cards(["5H", "6H", "2C", "5D", "KC", "QC"])
     try:
@@ -185,12 +187,12 @@ def test_blackjack_double_doubles_the_stake():
     finally:
         restore_draw_card(original)
     assert "balance" in client.sent[-1]["content"]
-    assert casino.get_balance(casino.bot.db, "u1") == 120
+    assert casino.get_balance(casino.bot.store.connection, "u1") == 120
 
 
 def test_blackjack_split_creates_two_hands():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     original = casino.draw_card
     script_cards(["8H", "8D", "2C", "5D", "3H", "4H"])
     try:
@@ -198,12 +200,12 @@ def test_blackjack_split_creates_two_hands():
     finally:
         restore_draw_card(original)
     assert "split into two hands" in client.sent[-1]["content"]
-    assert casino.blackjack.has_round(casino.bot.db, "c1", "u1")
+    assert casino.blackjack.has_round(casino.bot.store.connection, "c1", "u1")
 
 
 def test_blackjack_surrender_refunds_half():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     original = casino.draw_card
     script_cards(["9H", "6H", "2C", "5D"])
     try:
@@ -211,12 +213,12 @@ def test_blackjack_surrender_refunds_half():
     finally:
         restore_draw_card(original)
     assert "surrendered" in client.sent[-1]["content"]
-    assert casino.get_balance(casino.bot.db, "u1") == 95
+    assert casino.get_balance(casino.bot.store.connection, "u1") == 95
 
 
 def test_rate_limiter_kicks_in_after_a_burst():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 1000)
+    casino.credit(casino.bot.store.connection, "u1", 1000)
     messages = [message("u1", "!balance", f"m{i}") for i in range(casino.COMMANDS_PER_WINDOW)]
     messages.append(message("u1", "!balance", "m-over"))
     process(client, *messages)
@@ -225,10 +227,10 @@ def test_rate_limiter_kicks_in_after_a_burst():
 
 def test_a_duplicate_request_id_is_a_no_op():
     client = setup()
-    casino.credit(casino.bot.db, "u1", 100)
+    casino.credit(casino.bot.store.connection, "u1", 100)
     process(client, message("u1", "!give 10 sam", "dupe-1"), message("u1", "!give 10 sam", "dupe-1"))
-    assert casino.get_balance(casino.bot.db, "u1") == 90
-    assert casino.get_balance(casino.bot.db, "u2") == 10
+    assert casino.get_balance(casino.bot.store.connection, "u1") == 90
+    assert casino.get_balance(casino.bot.store.connection, "u2") == 10
 
 
 def test_another_bot_is_ignored_by_default():

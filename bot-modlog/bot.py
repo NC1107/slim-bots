@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """bot-modlog: mirrors timeouts, kicks, restores, and role changes into a channel; see README.md."""
 
-import sqlite3
 import time
 import uuid
 from datetime import datetime, timezone
@@ -12,16 +11,6 @@ from slimbots.http import is_forbidden
 # A reconnect faster than this is not worth a channel post - most drops are a blip that missed nothing worth naming.
 GAP_NOTICE_THRESHOLD_SECONDS = 5
 MAX_GAPS_SHOWN = 10
-
-bot = Bot(prefix="!", require_channels=True, default_data_path="modlog.db")
-bot.db = None
-
-# user_id -> set of role_ids last observed, used to infer a member.role_changed event's direction.
-_last_roles = {}
-# role_id -> role name, learned only from member profiles (GET /roles needs MANAGE_ROLES, deliberately not held).
-_role_names = {}
-# Wall-clock time this bot last knew for certain it was connected - None until the first successful connect.
-_last_seen_at = None
 
 
 def init_db(conn):
@@ -41,6 +30,16 @@ def init_db(conn):
         """
     )
     conn.commit()
+
+
+bot = Bot(prefix="!", require_channels=True, default_data_path="modlog.db", store_migrate=init_db)
+
+# user_id -> set of role_ids last observed, used to infer a member.role_changed event's direction.
+_last_roles = {}
+# role_id -> role name, learned only from member profiles (GET /roles needs MANAGE_ROLES, deliberately not held).
+_role_names = {}
+# Wall-clock time this bot last knew for certain it was connected - None until the first successful connect.
+_last_seen_at = None
 
 
 def format_duration(seconds):
@@ -67,9 +66,9 @@ def format_until(until_ms):
     return f"until {when} ({format_duration(remaining)} from now)"
 
 
-def record_event(kind, text):
-    bot.db.execute("INSERT INTO events (ts, kind, text) VALUES (?, ?, ?)", (int(time.time()), kind, text))
-    bot.db.commit()
+def record_event(conn, kind, text):
+    conn.execute("INSERT INTO events (ts, kind, text) VALUES (?, ?, ?)", (int(time.time()), kind, text))
+    conn.commit()
 
 
 async def post(kind, text):
@@ -77,12 +76,17 @@ async def post(kind, text):
     so there is nothing here worth deduplicating against the way a command reply is."""
     embed = Embed(footer=kind)
     await bot.client.send(bot.channel, text, message_id=str(uuid.uuid4()), embeds=[embed.to_wire()], fallback_content=text)
-    record_event(kind, text)
+    await bot.store.run(record_event, kind, text)
 
 
 def note_alive():
     global _last_seen_at
     _last_seen_at = time.time()
+
+
+def _record_gap(conn, downtime):
+    conn.execute("INSERT INTO gaps (reconnected_at, downtime_seconds) VALUES (?, ?)", (int(time.time()), downtime))
+    conn.commit()
 
 
 async def report_reconnect_gap():
@@ -93,8 +97,7 @@ async def report_reconnect_gap():
     downtime = int(time.time() - _last_seen_at)
     if downtime < GAP_NOTICE_THRESHOLD_SECONDS:
         return
-    bot.db.execute("INSERT INTO gaps (reconnected_at, downtime_seconds) VALUES (?, ?)", (int(time.time()), downtime))
-    bot.db.commit()
+    await bot.store.run(_record_gap, downtime)
     await post(
         "gap",
         f"reconnected after approximately {format_duration(downtime)} offline - moderation events during that "
@@ -143,8 +146,12 @@ async def handle_role_change(user_id, role_id):
     await post("member.role_changed", f"{name_of(user_id)} {verb} {label}")
 
 
+def _fetch_stats(conn):
+    return conn.execute("SELECT kind, COUNT(*) FROM events WHERE kind != 'gap' GROUP BY kind ORDER BY kind").fetchall()
+
+
 async def show_stats(ctx):
-    rows = bot.db.execute("SELECT kind, COUNT(*) FROM events WHERE kind != 'gap' GROUP BY kind ORDER BY kind").fetchall()
+    rows = await bot.store.run(_fetch_stats)
     if not rows:
         await ctx.reply("nothing recorded yet.")
         return
@@ -155,10 +162,14 @@ async def show_stats(ctx):
     await ctx.reply("\n".join(lines))
 
 
-async def show_gaps(ctx):
-    rows = bot.db.execute(
+def _fetch_gaps(conn):
+    return conn.execute(
         "SELECT reconnected_at, downtime_seconds FROM gaps ORDER BY id DESC LIMIT ?", (MAX_GAPS_SHOWN,)
     ).fetchall()
+
+
+async def show_gaps(ctx):
+    rows = await bot.store.run(_fetch_gaps)
     if not rows:
         await ctx.reply("no reconnect gaps recorded.")
         return
@@ -265,8 +276,6 @@ async def on_connect():
 
 
 def main():
-    bot.db = sqlite3.connect(bot.data_path)
-    init_db(bot.db)
     try:
         raise SystemExit(bot.run() or 0)
     except RuntimeError as err:

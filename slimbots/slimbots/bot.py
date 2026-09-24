@@ -18,6 +18,7 @@ from .http import ApiError, AsyncClient, is_forbidden, is_token_revoked
 from .lifecycle import guard_dispatch, run_with_shutdown
 from .registration import register_commands
 from .space import Space
+from .store import Store
 
 DEFAULT_USER_AGENT = "slimbots/0.3"
 DEFAULT_CURSOR_DB = "slimbots-cursor.db"
@@ -71,7 +72,8 @@ class Bot:
 
     def __init__(self, prefix="!", *, url=None, token=None, user_agent=DEFAULT_USER_AGENT,
                  ignore_bots=True, base_delay=1.0, max_delay=60.0, help_command=True,
-                 channels=None, require_channels=False, cursor_path=None, default_data_path=None):
+                 channels=None, require_channels=False, cursor_path=None, default_data_path=None,
+                 store_migrate=None):
         self.prefix = prefix
         self._url = url
         self._token = token
@@ -84,6 +86,7 @@ class Bot:
         self.cursor_path = cursor_path
         self.default_data_path = default_data_path
         self.data_path = os.environ.get("SLIMM_DB_PATH") or default_data_path
+        self._store_migrate = store_migrate
         self._setting_errors = []
         self.commands = {}
         self._unique_commands = []
@@ -98,8 +101,16 @@ class Bot:
         self._fatal_error = None
         self._main_task = None
         self._gateway = None
+        self.store = None
         if help_command:
             self._register_default_help()
+
+    async def open_store(self, *, migrate=None, path=None):
+        """Opens (or returns the already-open) thread-offloaded `Store` at `path` or `self.data_path`."""
+        if self.store is None:
+            self.store = Store(path or self.data_path, migrate=migrate)
+            await self.store.open()
+        return self.store
 
     def check(self, func):
         """Registers an async predicate run before every command; a truthy string return refuses with that reply."""
@@ -427,6 +438,8 @@ class Bot:
         self.space = Space(self.client)
         self.authors = AuthorFilter(self.client, space=self.space, ignore_bots=self.ignore_bots)
         self._open_cursor_if_scoped()
+        if self._store_migrate is not None:
+            await self.open_store(migrate=self._store_migrate)
         self._main_task = asyncio.create_task(self._run_forever())
         try:
             return await run_with_shutdown(self._main_task)
@@ -438,6 +451,8 @@ class Bot:
             await self.client.aclose()
             if self._cursor_conn is not None:
                 self._cursor_conn.close()
+            if self.store is not None:
+                await self.store.close()
 
     def run(self, *, url=None, token=None):
         """A cancelled `start()` (SIGTERM, or a fatal background task) becomes 0 for a clean shutdown, 1 otherwise."""
