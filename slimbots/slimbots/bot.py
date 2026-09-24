@@ -15,6 +15,7 @@ from typing import Any, Awaitable, Callable, Coroutine
 from . import catchup, cursor
 from . import events as ev
 from .authors import AuthorFilter
+from .canvas import Canvas
 from .commands import Command, Group, build_help_text
 from .context import Context
 from .exceptions import CommandError, CommandNotFound
@@ -129,6 +130,11 @@ class Bot:
         module.setup(self)  # type: ignore[attr-defined]
         self._extensions[name] = module
         return module
+
+    def canvas(self, channel_id: str) -> Canvas:
+        """A `Canvas` for `channel_id`, wired with this bot's client and gateway - never tied to a command's own channel."""
+        assert self.client is not None, "canvas() needs an open connection"
+        return Canvas(self.client, channel_id, bot=self)
 
     async def open_store(self, *, migrate: Callable[[Any], None] | None = None, path: str | None = None) -> Store:
         """Opens (or returns the already-open) thread-offloaded `Store` at `path` or `self.data_path`."""

@@ -1,13 +1,13 @@
 # bot-canvas-board
 
-A slim-m bot that keeps a todo board on a channel's Voice Canvas:
+A slim-m bot that keeps a todo board on a voice channel's Voice Canvas:
 `!board add <text>` places a sticky note, `!board done <n>` removes it,
 `!board move <n> <slot>` repositions it, `!board clear` (asks to confirm)
-wipes the whole board, and `!board` (or `!board list`) shows what is up,
-crediting whoever added each note.
+wipes the whole board, and `!board` (or `!board list`) shows what is up
+and which canvas it is drawing on, crediting whoever added each note.
 
 Built on the `slimbots` `Bot` framework - see `../docs/framework.md`. The
-Voice Canvas calls go through the new `Canvas` model
+Voice Canvas calls go through the `Canvas` model
 (`canvas.place`/`move`/`remove`/`viewport`) instead of building the
 `canvas/objects`/`canvas/ops` request bodies by hand, and the three canvas
 events map onto `on_canvas_object_placed`/`on_canvas_objects_removed`/
@@ -17,20 +17,44 @@ script only opens its own tables at `bot.data_path` (from `SLIMM_DB_PATH`),
 never importing `os` itself. `bot-ping` stays free of the library on
 purpose; see its own README.
 
+## Commands in a text channel, drawing on a voice channel
+
+Since 0.3.1, `!board` commands can come from an ordinary text channel while
+the board itself lives on a separate voice channel's canvas - `CANVAS_CHANNEL`
+names which one:
+
 ```bash
 pip install -r requirements.txt
 SLIMM_URL=https://your.space \
 SLIMM_BOT_TOKEN=slimbot_... \
-SLIMM_CHANNELS=<channel-uuid> \
+SLIMM_CHANNELS=<text-channel-uuid>,<voice-channel-uuid> \
+CANVAS_CHANNEL=<voice-channel-uuid> \
 python3 bot.py
 ```
 
-`SLIMM_CHANNELS` should name exactly one channel here - `bot.channel` is
-that channel. The bot needs `SEND_MESSAGES`, `VIEW_CHANNEL` and
-`USE_CANVAS` there - no `MANAGE_CANVAS`, since it only ever places, moves
-and removes objects it authored itself. See "Getting a token" and "What
-your bot may do" in `docs/bots/building-bots.md` for how to find the
-channel id and grant those.
+`SLIMM_CHANNELS` must include *both* the text channel(s) `!board` is typed
+in and the voice channel `CANVAS_CHANNEL` names - the voice channel needs
+to be watched too, or its `canvas.object.placed`/`canvas.objects.removed`/
+`canvas.cleared` events never reach this bot and reconciliation only
+catches up on the next reconnect instead of live. `CANVAS_CHANNEL` accepts
+either the channel id or its name. The bot refuses to start if it does not
+name a real, visible, voice channel, or if that channel is missing from
+`SLIMM_CHANNELS`.
+
+**Backward compatible:** if `CANVAS_CHANNEL` is not set and `SLIMM_CHANNELS`
+names exactly one channel, this bot behaves exactly like before 0.3.1 -
+that one channel is both where commands are typed and where the board is
+drawn - logging a startup warning so the gap is visible without breaking
+an existing deployment mid-upgrade. If `SLIMM_CHANNELS` names more than one
+channel and `CANVAS_CHANNEL` is unset, it refuses to start rather than
+guess which one is the canvas.
+
+The bot needs `SEND_MESSAGES`, `VIEW_CHANNEL` and `USE_CANVAS` on the
+voice channel - no `MANAGE_CANVAS`, since it only ever places, moves and
+removes objects it authored itself - and `VIEW_CHANNEL`/`SEND_MESSAGES` on
+whichever text channel(s) it takes commands from. See "Getting a token"
+and "What your bot may do" in `docs/bots/building-bots.md` for how to find
+a channel id and grant those.
 
 State (which canvas object is in which of the board's 20 slots, each one's
 own `seq`, and - shared with `Bot` - the seq cursor for the channel's own

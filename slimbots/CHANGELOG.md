@@ -12,6 +12,8 @@ A 0.2.0 database carried over into 0.3.0 could crash on a column that only 0.3.0
 - `bot-casino` now migrates its `hands` table's `hand_index`/`status` columns *and* rebuilds the table to widen its primary key, which a plain `ALTER TABLE` cannot do - a 0.2.0 database's in-progress hand is carried over as `hand_index = 0`.
 - `bot-reminders`' existing hand-rolled `_ensure_column` is now `ensure_columns`, the shared helper, instead of a bot-local copy.
 - Audited every other bot's schema against what 0.2.0 created; `bot-jellyfin` and `bot-modlog` had no drift to migrate.
+- `bot.canvas(channel_id)`: a `Canvas` wired with the bot's own client and gateway, for a bot that draws on a channel other than the one a command came from.
+- `bot-canvas-board` takes `!board` commands from an ordinary text channel and draws on a separately configured voice channel's canvas, via a new `CANVAS_CHANNEL` setting - backward compatible with the old single-channel setup, which now logs a startup warning instead of silently staying implicit.
 
 ## 0.3.0
 

@@ -60,7 +60,8 @@ jobs:
           python-version: "3.12"
       - name: Install every template's shared runtime dependencies (hash-locked, wheel-only)
         run: "python -m pip install --only-binary=:all: --require-hashes -r bot-templates-requirements.lock.txt"
-      - name: Run every template's own test_bot.py and test_migrations.py, skipping one not yet ported onto Bot
+      - name: Run every template's own test_bot.py plus its other test_*.py files, skipping one not yet ported onto Bot
+        # test_concurrency.py is deliberately excluded here - it has its own dedicated job below.
         run: |
           set -e
           for dir in bot-*/; do
@@ -71,9 +72,12 @@ jobs:
             fi
             echo "::group::$bot"
             (cd "$bot" && python test_bot.py)
-            if [ -f "$bot/test_migrations.py" ]; then
-              (cd "$bot" && python test_migrations.py)
-            fi
+            for extra in "$bot"/test_*.py; do
+              name="$(basename "$extra")"
+              if [ "$name" != "test_bot.py" ] && [ "$name" != "test_concurrency.py" ]; then
+                (cd "$bot" && python "$name")
+              fi
+            done
             echo "::endgroup::"
           done
 

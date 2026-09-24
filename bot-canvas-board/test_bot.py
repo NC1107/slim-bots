@@ -38,6 +38,7 @@ def setup():
     board.bot.authors = AuthorFilter(client, space=board.bot.space, ignore_bots=True)
     board.bot.me_id = "bot-1"
     board.canvas = Canvas(client, "c1")
+    board.canvas_channel_name = "voice-room"
     asyncio.run(board.bot.space.refresh_members())
     return client
 
@@ -53,7 +54,7 @@ def process(client, *messages):
 def test_board_empty_says_so():
     client = setup()
     process(client, message("!board"))
-    assert client.sent[-1]["content"] == "the board is empty"
+    assert client.sent[-1]["content"] == "the board is empty (drawing on #voice-room)"
 
 
 def test_add_places_a_note_and_acks():
