@@ -99,6 +99,12 @@ Global versus channel-scoped follows the same test as before: an event about a c
 `clear`/`restore`/`reorder` are the same `POST canvas/ops` endpoint `move`/`remove` already use, just a different `kind` - `clear` needs MANAGE_CANVAS unconditionally and a `before_seq` fence (never optional, so a lost response retried without one cannot wipe an interval it should not); `restore` names a prior `remove`/`clear` op's own id, not an object id; `reorder` takes an explicit `z_index` the caller computes (typically one above/below every value it already knows, for "bring to front"/"send to back") rather than a server-computed delta.
 `on_canvas_object_placed`, `on_canvas_objects_removed` and `on_canvas_cleared` are channel-scoped events - dispatched only for a channel in `channels`, the same gate `message.created` gets, since (unlike the member/role events) these carry a `channel_id` and are not deployment-wide.
 
+## Voice
+
+`await bot.voice.join(channel_id)` mints a token through `POST .../voice/token`, connects over LiveKit, and returns a `VoiceSession` that heartbeats itself as a `bot.background()` task for as long as it holds the room - `crates/slimm-server/src/voice/heartbeat.rs` evicts a participant whose heartbeat goes stale, so a bot that stops sending one is a bot that gets kicked. `session.can_publish` mirrors the caller's `SPEAK` grant, the same way a human's token does; `await session.publish_screen_share(width=, height=, sample_rate=, num_channels=)` publishes a video+audio pair tagged `SOURCE_SCREENSHARE`/`SOURCE_SCREENSHARE_AUDIO` - the same sources a person's own "share your screen" button publishes, so a client renders and plays a bot's stream on the call stage with no bot-specific code - and hands back the `VideoSource`/`AudioSource` a bot pushes its own decoded frames into. `await session.leave()` stops the heartbeat, disconnects, and forgets the heartbeat server-side; safe to call more than once.
+
+The real work happens through `livekit.rtc`, loaded dynamically (`importlib.import_module`, not a static `import`) so neither pyright nor a bot that never touches voice needs the package installed - `bot-jellyfin`'s `!watch` (`stream_session.py`) is the worked example: Jellyfin transcodes server-side, a local `ffmpeg` decodes to raw frames, and those get pushed into the sources `publish_screen_share` returns at the source's own pace.
+
 ## Config, settings, channel scoping, and durable cursors - all owned by Bot
 
 `Bot()` reads `SLIMM_URL`/`SLIMM_BOT_TOKEN` itself, and `SLIMM_CHANNELS` (comma-separated ids) too when `channels=` is not passed explicitly - a bot script never needs `import os` just to read these three.
@@ -218,6 +224,7 @@ If the server rejects the request with `embeds` present (an older deployment), `
 
 `slimbots.testing.FakeAsyncClient` never touches the network: pre-stubbed `/me`/`/channels`/`/members`/`/roles`, `respond(method, path, response_or_exception)` to stub anything else, and an unstubbed call fails loud rather than hanging.
 Drive a `Bot` directly with `await bot.process_message({...})` to exercise argument conversion, cooldowns, permission gating, and the bot-ignore default with no deployment; `await bot._handle_frame({...})` reaches an `@bot.event` handler the same way.
+`slimbots.testing.FakeVoice`/`FakeVoiceSession` stand in for `bot.voice`: `bot.voice = FakeVoice()`, then `await bot.voice.join(...)` hands back a session that records `publish_screen_share`'s arguments and whether `leave()` was called - no LiveKit package or network involved, which is also why CI never installs `livekit` (`bot-jellyfin`'s `test_bot.py` and `slimbots/tests/test_voice.py` are the worked examples).
 It is not a mock of slim-m's own validation or concurrency - `bot-casino/test_concurrency.py` is what proves money-safety, with a real sqlite connection and real threads.
 
 ## Types

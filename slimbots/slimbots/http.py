@@ -211,6 +211,22 @@ class AsyncClient:
         )
         return Attachment(response)
 
+    async def voice_token(self, channel_id: str) -> Any:
+        """Mints a join token for a channel's LiveKit room; see `crates/slimm-server/src/http/voice.rs`."""
+        return await self.call("POST", f"/channels/{channel_id}/voice/token")
+
+    async def voice_heartbeat(self, channel_id: str) -> None:
+        """Refreshes this caller's liveness on a channel's call; send every ~15s while connected."""
+        await self.call("POST", f"/channels/{channel_id}/voice/heartbeat")
+
+    async def forget_voice_heartbeat(self, channel_id: str) -> None:
+        """Tells the server this caller left a channel's call cleanly."""
+        await self.call("DELETE", f"/channels/{channel_id}/voice/heartbeat")
+
+    async def voice_roster(self, channel_id: str) -> Any:
+        """Who is currently connected to a channel's voice room."""
+        return await self.call("GET", f"/channels/{channel_id}/voice/roster")
+
     async def list_dms(self) -> list[DmConversation]:
         return [DmConversation(d) for d in await self.call("GET", "/dms")]
 
