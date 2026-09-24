@@ -1,7 +1,7 @@
 [project]
 name = "slim-m"
-version = "0.2.0"
-description = "Shared plumbing for slim-m bots: auth, REST, retries, websocket reconnect, seq cursors"
+version = "0.3.0"
+description = "Shared plumbing for slim-m bots: auth, REST, retries, websocket reconnect, seq cursors, author/bot filtering, safeguards"
 readme = "README.md"
 requires-python = ">=3.9"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"

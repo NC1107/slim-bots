@@ -20,6 +20,62 @@ track a per-scope `seq`. That is what this package covers:
 - a `seq` cursor in sqlite and the `/sync` catch-up call (`cursor`)
 - refusing to carry a token over plain `ws://` to anything but a loopback
   address (`socket_url`)
+- telling a bot or webhook message apart from a human one, cached per author
+  id (`AuthorFilter`) - see "Bot safeguards" below
+- per-user cooldowns, rate limits, quotas, and input-bounds checks
+  (`limits`)
+- resolving a user's actual base permissions instead of a hardcoded id list
+  (`permissions`)
+- a clean exit on SIGTERM/SIGINT, and keeping one bad message from tearing
+  down a whole connection (`lifecycle`)
+
+## Bot safeguards
+
+**Every template must ignore bot and webhook messages by default, not just
+its own.** slim-m's message frame carries no `author.bot`-style flag the way
+Discord's does, so with several bots sharing a channel the only thing that
+stopped a loop so far was luck: no bot happened to trigger on another's
+output. It already misfired once - a reminder whose text is `!daily` used to
+make bot-casino credit the *reminders bot's own account*, because casino
+keys the balance on whoever posted the message, bot or not.
+
+```python
+from slimbots import AuthorFilter
+
+authors = AuthorFilter(client)  # ignore_bots=False opts out, for the rare
+                                 # bot that wants to see other bots' output
+
+def handle_message(client, conn, me, channel_id, message):
+    author_id = message.get("author_id")
+    if not authors.should_handle(author_id, me):
+        return
+    ...
+```
+
+`AuthorFilter` resolves `is_bot`/`is_webhook` from `GET /users/{id}`, once
+per author id for the life of the process - one lookup per new author, not
+per message.
+
+`limits.Cooldown`, `limits.RateLimiter`, and `limits.Quota` are per-user
+in-memory safeguards for spam and pile-up; `limits.require_len`,
+`require_range`, and `require_int` reject bad input with a message meant to
+be sent straight back to the user (`limits.ValidationError`). None of these
+cap what a feature can do once a caller is allowed to use it - a cooldown
+says how often you may ask, never how good the answer is.
+
+`permissions.PermissionResolver` answers whether the *person who typed a
+command* - not the bot - holds a permission, by reconstructing the same base
+permission set (`@everyone` plus their roles, `ADMINISTRATOR` bypassing
+everything) `crates/slimm-server/src/permissions.rs` evaluates server-side.
+It needs `GET /roles`, which requires `MANAGE_ROLES` - the same escalation
+tradeoff bot-roles already documents for handing roles out at all.
+
+`lifecycle.run_with_shutdown` wraps a bot's `main()` so SIGTERM (sent by
+docker on every redeploy) and SIGINT exit cleanly instead of an unhandled
+traceback. `lifecycle.guard_handler` isolates one message handler's failure
+- a 403 because the bot lost a channel, a bug tripped by one message - from
+tearing down the whole websocket connection; a 401 still propagates, since
+`run_forever` needs to see it to stop retrying.
 
 It deliberately does **not** give you a typed route client, a cache, or an
 event-object hierarchy. See `docs/bots/building-bots.md` in slim-m for the

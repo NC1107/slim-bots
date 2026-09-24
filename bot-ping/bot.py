@@ -100,13 +100,44 @@ def socket_url(base):
     )
 
 
-def should_answer(message, me):
-    """Whether this message is a `!ping` from somebody other than us.
+_is_bot_cache = {}
 
-    The author check is what stops the bot answering itself forever. Every bot
-    that posts in a channel it also listens to needs one.
+
+def is_bot_or_webhook(author_id):
+    """Whether `author_id` is a bot or webhook account, cached after the
+    first lookup so answering many messages from the same author costs one
+    `GET /users/{id}` call, not one per message.
+
+    slim-m's message frame carries no `author.bot`-style flag the way
+    Discord's does, so this is resolved from the author's own profile
+    instead - the same fix every other template in this repo gets from
+    `slimbots.AuthorFilter`. This file stays free of that package on
+    purpose (see the module docstring), so the same handful of lines is
+    written out here instead of imported.
     """
-    if message.get("author_id") == me:
+    cached = _is_bot_cache.get(author_id)
+    if cached is not None:
+        return cached
+    try:
+        profile = call("GET", f"/users/{author_id}")
+    except Exception as err:
+        print(f"author lookup failed for {author_id}: {err}", file=sys.stderr)
+        return False
+    automated = bool(profile.get("is_bot")) or bool(profile.get("is_webhook"))
+    _is_bot_cache[author_id] = automated
+    return automated
+
+
+def should_answer(message, me):
+    """Whether this message is a `!ping` from a human other than us.
+
+    The author check is what stops the bot answering itself, or another
+    bot, forever. Every bot that posts in a channel it also listens to
+    needs one, and with several bots sharing a channel that means every
+    other bot too, not just ourselves.
+    """
+    author_id = message.get("author_id")
+    if not author_id or author_id == me or is_bot_or_webhook(author_id):
         return False
     return (message.get("content") or "").strip().lower().startswith(TRIGGER)
 

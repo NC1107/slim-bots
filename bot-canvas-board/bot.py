@@ -91,7 +91,7 @@ import sys
 import urllib.parse
 import uuid
 
-from slimbots import Client, Connection, cursor, run_forever
+from slimbots import AuthorFilter, Client, Connection, cursor, run_forever
 
 BASE = os.environ.get("SLIMM_URL", "").rstrip("/")
 TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
@@ -270,9 +270,9 @@ def list_items(client, conn, channel_id, request_message_id):
     client.send(channel_id, "\n".join(lines), reply_to_id=request_message_id)
 
 
-def handle_message(client, conn, me, message):
+def handle_message(client, conn, me, authors, message):
     author_id = message.get("author_id")
-    if author_id is None or author_id == me:
+    if not authors.should_handle(author_id, me):
         return
     content = (message.get("content") or "").strip()
     channel_id = message.get("channel_id") or CHANNEL
@@ -296,23 +296,23 @@ def handle_canvas_removed(conn, before_seq, object_ids):
     conn.commit()
 
 
-def resync(client, conn, me):
+def resync(client, conn, me, authors):
     """Catches up messages sent to this channel while disconnected, the same
     shape `bot-reminders` uses for the same reason."""
     scopes = cursor.sync(client, [{"channel_id": CHANNEL, "after_seq": cursor.get(conn, CHANNEL)}])
     scope = scopes[0]
     for message in scope["messages"]:
-        handle_message(client, conn, me, message)
+        handle_message(client, conn, me, authors, message)
     if scope["messages"]:
         cursor.set(conn, CHANNEL, scope["messages"][-1]["seq"])
     elif scope["reset"]:
         cursor.bootstrap(client, conn, CHANNEL)
 
 
-async def attempt(client, conn, reset_delay):
+async def attempt(client, conn, authors, reset_delay):
     cursor.bootstrap(client, conn, CHANNEL)
     me = reconcile(client, conn)
-    resync(client, conn, me)
+    resync(client, conn, me, authors)
     print(f"connected as {me}", flush=True)
 
     async with await Connection.open(client) as socket:
@@ -324,7 +324,7 @@ async def attempt(client, conn, reset_delay):
             # Ignore a frame type we do not know; see bot-ping's docstring.
             if frame_type == "message.created" and frame.get("channel_id") == CHANNEL:
                 message = frame.get("message") or {}
-                handle_message(client, conn, me, message)
+                handle_message(client, conn, me, authors, message)
                 if message.get("seq") is not None:
                     cursor.set(conn, CHANNEL, message["seq"])
             elif frame_type == "canvas.objects.removed" and frame.get("channel_id") == CHANNEL:
@@ -341,8 +341,9 @@ async def main():
     client = Client(BASE, TOKEN, USER_AGENT)
     conn = sqlite3.connect(DB_PATH)
     init_db(conn)
+    authors = AuthorFilter(client)
 
-    return await run_forever(lambda reset_delay: attempt(client, conn, reset_delay))
+    return await run_forever(lambda reset_delay: attempt(client, conn, authors, reset_delay))
 
 
 if __name__ == "__main__":

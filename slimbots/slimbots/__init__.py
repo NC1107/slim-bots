@@ -11,19 +11,26 @@ See `docs/bots/building-bots.md` in the slim-m repo for the protocol itself.
 still one file that shows the whole protocol with nothing hidden.
 """
 
-from . import cursor
+from . import cursor, limits, permissions
+from .authors import AuthorFilter
 from .client import Client, is_not_found, is_token_revoked, socket_url
+from .lifecycle import guard_handler, run_with_shutdown
 from .retry import call_with_retry
 from .runner import run_forever
 from .ws import Connection
 
 __all__ = [
+    "AuthorFilter",
     "Client",
     "Connection",
     "call_with_retry",
     "cursor",
+    "guard_handler",
     "is_not_found",
     "is_token_revoked",
+    "limits",
+    "permissions",
     "run_forever",
+    "run_with_shutdown",
     "socket_url",
 ]

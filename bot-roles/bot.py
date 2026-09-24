@@ -54,7 +54,7 @@ import sys
 import urllib.error
 import uuid
 
-from slimbots import Client, Connection, is_not_found, run_forever
+from slimbots import AuthorFilter, Client, Connection, is_not_found, run_forever
 
 BASE = os.environ.get("SLIMM_URL", "").rstrip("/")
 TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
@@ -154,12 +154,13 @@ def revoke(client, role_name, actor_id, reply_to_id):
     client.send(CHANNEL, f"removed `{role_name}`.", reply_to_id=reply_to_id)
 
 
-def handle_message(client, me, message):
-    """The author check is what stops the bot answering itself forever, and
-    matters more here than in bot-ping: this bot posts its own listing in
-    the very channel it listens to."""
+def handle_message(client, me, authors, message):
+    """The author check is what stops the bot answering itself, or any other
+    bot, forever - see `slimbots.AuthorFilter`. It matters more here than in
+    bot-ping: this bot posts its own listing in the very channel it listens
+    to."""
     author_id = message.get("author_id")
-    if author_id is None or author_id == me:
+    if not authors.should_handle(author_id, me):
         return
     content = (message.get("content") or "").strip()
     request_message_id = message.get("id")
@@ -174,7 +175,7 @@ def handle_message(client, me, message):
         client.send(CHANNEL, listing_text(), reply_to_id=request_message_id)
 
 
-def resync(client, cursor):
+def resync(client, cursor, authors):
     """Catches up on the configured channel over `/sync` when reconnecting
     mid-run, so a command sent during a dropped socket is not lost. `cursor`
     of `None` means this is the first connection this process has made, so
@@ -188,7 +189,7 @@ def resync(client, cursor):
     response = client.call("POST", "/sync", {"scopes": [{"channel_id": CHANNEL, "after_seq": cursor}]})
     scope = response["scopes"][0]
     for message in scope["messages"]:
-        handle_message(client, me, message)
+        handle_message(client, me, authors, message)
     if scope["messages"]:
         return scope["messages"][-1]["seq"]
     if scope["reset"]:
@@ -197,11 +198,11 @@ def resync(client, cursor):
     return cursor
 
 
-async def attempt(client, state, reset_delay):
+async def attempt(client, state, authors, reset_delay):
     me = client.me()["id"]
     print(f"connected as {me}", flush=True)
 
-    state["cursor"] = resync(client, state["cursor"])
+    state["cursor"] = resync(client, state["cursor"], authors)
     post_listing(client)
 
     async with await Connection.open(client) as socket:
@@ -215,7 +216,7 @@ async def attempt(client, state, reset_delay):
             if frame.get("channel_id") != CHANNEL:
                 continue
             message = frame.get("message") or {}
-            handle_message(client, me, message)
+            handle_message(client, me, authors, message)
             seq = message.get("seq")
             if seq is not None:
                 state["cursor"] = seq
@@ -227,9 +228,10 @@ async def main():
         return 2
 
     client = Client(BASE, TOKEN, USER_AGENT)
+    authors = AuthorFilter(client)
     state = {"cursor": None}
 
-    return await run_forever(lambda reset_delay: attempt(client, state, reset_delay))
+    return await run_forever(lambda reset_delay: attempt(client, state, authors, reset_delay))
 
 
 if __name__ == "__main__":
