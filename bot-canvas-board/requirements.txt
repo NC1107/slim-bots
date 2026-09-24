@@ -1,2 +1,3 @@
 websockets>=12
-slim-m>=0.1.0
+httpx>=0.27
+slim-m>=0.3.0
