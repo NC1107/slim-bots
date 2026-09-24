@@ -4,8 +4,10 @@ reconnect, command dispatch, and `run()`.
 
 import asyncio
 import os
+import sqlite3
 import sys
 
+from . import catchup, cursor
 from .authors import AuthorFilter
 from .commands import Command, build_help_text
 from .context import Context
@@ -17,6 +19,7 @@ from .registration import register_commands
 from .space import Space
 
 DEFAULT_USER_AGENT = "slimbots/0.3"
+DEFAULT_CURSOR_DB = "slimbots-cursor.db"
 
 # Deployment-wide frame types dispatched as events; see docs/framework.md on why there is no on_member_join.
 _EVENT_FRAMES = {
@@ -32,7 +35,8 @@ class Bot:
     """Owns everything a bot script would otherwise wire up by hand."""
 
     def __init__(self, prefix="!", *, url=None, token=None, user_agent=DEFAULT_USER_AGENT,
-                 ignore_bots=True, base_delay=1.0, max_delay=60.0, help_command=True, channels=None):
+                 ignore_bots=True, base_delay=1.0, max_delay=60.0, help_command=True,
+                 channels=None, require_channels=False, cursor_path=None):
         self.prefix = prefix
         self._url = url
         self._token = token
@@ -41,6 +45,8 @@ class Bot:
         self.base_delay = base_delay
         self.max_delay = max_delay
         self.channels = set(channels) if channels else None
+        self.require_channels = require_channels
+        self.cursor_path = cursor_path
         self.commands = {}
         self._unique_commands = []
         self._listeners = {}
@@ -49,6 +55,7 @@ class Bot:
         self.space = None
         self.authors = None
         self.me_id = None
+        self._cursor_conn = None
         if help_command:
             self._register_default_help()
 
@@ -72,6 +79,13 @@ class Bot:
                 raise ValueError(f"command name/alias `{name}` is already registered")
             self.commands[name] = command
         self._unique_commands.append(command)
+
+    @property
+    def channel(self):
+        """The one configured channel, when `channels` names exactly one; None otherwise."""
+        if self.channels and len(self.channels) == 1:
+            return next(iter(self.channels))
+        return None
 
     def get_command(self, name):
         return self.commands.get(name)
@@ -157,15 +171,37 @@ class Bot:
         kind = frame.get("type")
         await guard_dispatch(self._dispatch_event, "on_frame", frame)
         if kind == "message.created":
-            if self.channels is not None and frame.get("channel_id") not in self.channels:
+            channel_id = frame.get("channel_id")
+            if self.channels is not None and channel_id not in self.channels:
                 return
             message = frame.get("message") or {}
+            self._note_seq(channel_id, message.get("seq"))
             await guard_dispatch(self._dispatch_event, "on_raw_message", message)
             await guard_dispatch(self.process_message, message)
             return
         event_name = _EVENT_FRAMES.get(kind)
         if event_name:
             await guard_dispatch(self._dispatch_event, event_name, frame)
+
+    def _note_seq(self, channel_id, seq):
+        if self._cursor_conn is not None and seq is not None:
+            cursor.set(self._cursor_conn, channel_id, seq)
+
+    async def _catch_up(self):
+        """Replays any `/sync` backlog for `channels` through `process_message`, persisting the cursor as it goes."""
+        if not self.channels or self._cursor_conn is None:
+            return
+        for channel_id in self.channels:
+            await catchup.bootstrap(self.client, self._cursor_conn, channel_id)
+        scopes = [{"channel_id": c, "after_seq": cursor.get(self._cursor_conn, c)} for c in self.channels]
+        for scope in await catchup.sync(self.client, scopes):
+            channel_id = scope["channel_id"]
+            for message in scope["messages"]:
+                await guard_dispatch(self.process_message, message)
+            if scope["messages"]:
+                cursor.set(self._cursor_conn, channel_id, scope["messages"][-1]["seq"])
+            elif scope["reset"]:
+                await catchup.bootstrap(self.client, self._cursor_conn, channel_id)
 
     async def _connect_once(self, reset_delay):
         self.me_id = (await self.client.me())["id"]
@@ -178,6 +214,7 @@ class Bot:
         await self.space.refresh_members()
         await register_commands(self.client, prefix=self.prefix, commands=self.unique_commands())
         await self._dispatch_event("on_connect")
+        await self._catch_up()
 
         async with await Gateway.open(self.client) as gateway:
             reset_delay()
@@ -205,18 +242,41 @@ class Bot:
             await asyncio.sleep(delay)
             delay = min(delay * 2, self.max_delay)
 
+    def _resolve_channels_from_env(self):
+        raw = os.environ.get("SLIMM_CHANNELS", "")
+        return {c.strip() for c in raw.split(",") if c.strip()}
+
     async def start(self, *, url=None, token=None):
         base = url or self._url or os.environ.get("SLIMM_URL", "")
         token = token or self._token or os.environ.get("SLIMM_BOT_TOKEN", "")
-        if not base or not token:
-            raise RuntimeError("set SLIMM_URL and SLIMM_BOT_TOKEN, or pass url=/token= to Bot()")
+        if self.channels is None:
+            env_channels = self._resolve_channels_from_env()
+            if env_channels:
+                self.channels = env_channels
+
+        missing = []
+        if not base:
+            missing.append("SLIMM_URL")
+        if not token:
+            missing.append("SLIMM_BOT_TOKEN")
+        if self.require_channels and not self.channels:
+            missing.append("SLIMM_CHANNELS")
+        if missing:
+            raise RuntimeError(f"set {', '.join(missing)}")
+
         self.client = AsyncClient(base, token, self.user_agent)
         self.space = Space(self.client)
         self.authors = AuthorFilter(self.client, space=self.space, ignore_bots=self.ignore_bots)
+        if self.channels:
+            path = self.cursor_path or os.environ.get("SLIMM_CURSOR_DB") or DEFAULT_CURSOR_DB
+            self._cursor_conn = sqlite3.connect(path, isolation_level=None)
+            cursor.init_table(self._cursor_conn)
         try:
             return await run_with_shutdown(self._run_forever)
         finally:
             await self.client.aclose()
+            if self._cursor_conn is not None:
+                self._cursor_conn.close()
 
     def run(self, *, url=None, token=None):
         return asyncio.run(self.start(url=url, token=token)) or 0

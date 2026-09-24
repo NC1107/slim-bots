@@ -72,13 +72,18 @@ There is deliberately no `on_member_join` in this framework.
 slim-m's wire protocol has no such event: `crates/slimm-server/src/http/ws/frames.rs` carries `member.removed`, `member.restored`, `member.timeout`, `member.role_changed` and `role.changed`, and nothing for a join.
 Faking one from roster diffs would be a lie about what the wire actually says, so `on_member_removed`, `on_member_restored`, `on_member_timeout`, `on_member_role_changed` and `on_role_changed` are the real, honest set.
 
-## Channel scoping and durable cursors
+## Config, channel scoping, and durable cursors - all owned by Bot
 
-`Bot(channels={...})` restricts `message.created` dispatch to that set of channel ids; omitted, a bot answers wherever its role can see, same as before.
-`on_raw_message(message)` fires for every in-scope message, command or not, before `on_message`/command dispatch - the hook a bot uses to persist a `seq` cursor, since `on_message` only fires for a non-command message.
+`Bot()` reads `SLIMM_URL`/`SLIMM_BOT_TOKEN` itself, and `SLIMM_CHANNELS` (comma-separated ids) too when `channels=` is not passed explicitly - a bot script never needs `import os` just to read these three.
+`Bot(require_channels=True)` folds a missing `SLIMM_CHANNELS` into the same one-line `RuntimeError` as a missing URL/token, instead of the bot re-checking it.
+`bot.channel` is the lone configured channel when `channels` names exactly one - the common case for a bot that posts to one place.
+
+A bot with `channels` set gets a persisted, cross-restart `seq` cursor for free: `Bot(cursor_path=...)` picks the sqlite file (default `SLIMM_CURSOR_DB` env var, then `slimbots-cursor.db`), and `Bot` bootstraps and `/sync`-replays the backlog through `process_message` on every connect, before `on_ready` fires - no bot code calls `cursor`/`catchup` directly any more.
+Pass the same path as a bot's own business-data db (`cursor_path=DB_PATH`) to keep everything in one file, the way `bot-casino` does; `cursor.init_table` just adds a `cursors` table alongside whatever else lives there.
+
+`on_raw_message(message)` still fires for every in-scope message, command or not - for a bot that wants its own hook into every message, not for cursor-keeping any more.
 `on_frame(frame)` fires for every frame of any type, recognised or not, before any other dispatch - a liveness signal (a modlog-style bot marking itself "still connected") is the reason this exists; most bots have no reason to listen for it.
-`slimbots.catchup.bootstrap`/`sync` are async equivalents of the existing sync `cursor.bootstrap`/`sync`, for replaying a reconnect gap through `bot.process_message` before the gateway opens (`bot-casino/bot.py` is the worked example).
-`cursor.get`/`cursor.set`/`cursor.init_table` are plain sqlite and need no async equivalent.
+`slimbots.catchup`/`cursor` are still there for a bot that wants to manage its own separate cursor outside what `channels=` already covers, but neither is needed for the common case any more.
 
 ## Async HTTP
 
@@ -115,11 +120,11 @@ Every alias is registered as its own composer entry alongside its command's name
 A `requires=` permission becomes the entry's single-bit `permission`, which only hides the row in the composer for a caller who lacks it - it is never enforced against the message a bot receives, so the command's own `requires=` check still runs.
 A 404 or 405 is treated as "server too old" and skipped quietly; any other error (400 naming the violated cap, 403 if the token somehow isn't a bot's) is raised, so the framework works against today's production server exactly as it will against tomorrow's.
 
-## The embed seam
+## Embeds
 
-`ctx.send(content, embed=Embed(...))` and `ctx.reply(...)` already accept `embed=`.
-Until slim-m has a real embed API, `Embed.render_fallback()` folds it into plain markdown text (`slimbots/embeds.py`, `slimbots/context.py::Context._render`).
-When a real embed field lands on the wire, only `_render` changes - no bot's call site does.
+`ctx.send(content, embed=Embed(...))` and `ctx.reply(...)` send the real `RequestEmbed` wire shape decision 0030 defines (title/description/url/color/author/fields/footer/timestamp/image/thumbnail), capped to the same limits the server enforces (10 embeds/message elsewhere is a bot's own concern; per-embed caps live in `slimbots/embeds.py`).
+`content` is never sent blank - slim-m refuses that - so a bare `embed=` with no `content` sends the embed's own `render_fallback()` text alongside the real embed.
+If the server rejects the request with `embeds` present (an older deployment), `AsyncClient.send` retries once, under the same message id, as plain fallback text - the one case `render_fallback()` is the whole reply rather than a companion to it.
 
 ## Testing
 

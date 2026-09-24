@@ -126,11 +126,25 @@ class AsyncClient:
     async def unassign_role(self, user_id, role_id):
         await self.call("DELETE", f"/members/{user_id}/roles/{role_id}")
 
-    async def send(self, channel_id, content, *, message_id=None, reply_to_id=None, attachment_ids=None):
-        """Posts a message under a stable id, so a retried send never duplicates it."""
-        body = {"id": message_id or str(uuid.uuid4()), "content": content}
+    async def send(self, channel_id, content, *, message_id=None, reply_to_id=None, attachment_ids=None,
+                    embeds=None, fallback_content=None):
+        """Posts a message under a stable id; on rejection with `embeds` set, retries once as plain `fallback_content`."""
+        message_id = message_id or str(uuid.uuid4())
+        body = {"id": message_id, "content": content}
         if reply_to_id:
             body["reply_to_id"] = reply_to_id
         if attachment_ids:
             body["attachment_ids"] = attachment_ids
-        return await self.call("POST", f"/channels/{channel_id}/messages", body)
+        if embeds:
+            body["embeds"] = embeds
+        try:
+            return await self.call("POST", f"/channels/{channel_id}/messages", body)
+        except ApiError:
+            if not embeds or fallback_content is None:
+                raise
+            body = {"id": message_id, "content": fallback_content}
+            if reply_to_id:
+                body["reply_to_id"] = reply_to_id
+            if attachment_ids:
+                body["attachment_ids"] = attachment_ids
+            return await self.call("POST", f"/channels/{channel_id}/messages", body)

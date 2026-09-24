@@ -17,17 +17,21 @@ class Context:
     def channel(self):
         return self.bot.space.channels.get(self.channel_id)
 
-    def _render(self, content, embed):
-        """The embed seam: folds `embed` into `content` until a real API exists."""
+    def _prepare(self, content, embed):
+        """Body content (never blank - slim-m refuses that) and the fallback text for a server that rejects `embeds`."""
         if embed is None:
-            return content or ""
+            return content or "", None, None
         rendered = embed.render_fallback()
-        return f"{content}\n{rendered}" if content else rendered
+        body_content = content if content else rendered
+        fallback = f"{content}\n{rendered}" if content else rendered
+        return body_content, [embed.to_wire()], fallback
 
     async def send(self, content=None, *, embed=None, channel_id=None):
-        return await self.bot.client.send(channel_id or self.channel_id, self._render(content, embed))
+        body_content, embeds, fallback = self._prepare(content, embed)
+        return await self.bot.client.send(channel_id or self.channel_id, body_content, embeds=embeds, fallback_content=fallback)
 
     async def reply(self, content=None, *, embed=None):
+        body_content, embeds, fallback = self._prepare(content, embed)
         return await self.bot.client.send(
-            self.channel_id, self._render(content, embed), reply_to_id=self.message.get("id")
+            self.channel_id, body_content, reply_to_id=self.message.get("id"), embeds=embeds, fallback_content=fallback
         )
