@@ -10,7 +10,11 @@ class CommandError(SlimBotsError):
 
 
 class CommandNotFound(CommandError):
-    """No registered command matches the invoked name or alias."""
+    """No registered command matches the invoked name or alias; dispatched to on_command_not_found, silent by default."""
+
+    def __init__(self, invoked_with):
+        super().__init__(f"no command called `{invoked_with}`")
+        self.invoked_with = invoked_with
 
 
 class BadArgument(CommandError):

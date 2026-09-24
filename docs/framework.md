@@ -58,6 +58,9 @@ Arguments convert from the function's own annotations (`slimbots/commands.py`):
 This is what replaced every bot's own `TRIGGER_X = re.compile(...)` wall of shapes under one command name; `bot-reminders`' `!remind`/`!reminders` are the worked example.
 `build_help_text` descends into a subcommand (`!help remind in`) the same way; command registration still counts a whole group as one entry, not one per subcommand (below).
 
+A prefixed message naming no registered command is silent by default - it fires `on_command_not_found(ctx, error)` if, and only if, something is actually listening for it, so a stray `!` in ordinary conversation costs nothing (no author lookup, no `ctx` built) when nobody cares.
+`error` is a real `CommandNotFound` (`error.invoked_with`, `str(error)`), not just a name string, for the same reason every other command failure is a real exception rather than a tuple.
+
 ## Identity
 
 Store your own data under `member.storage_key` (an alias for the stable slim-m user id, never `username`, which can change).

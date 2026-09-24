@@ -12,7 +12,7 @@ from . import events as ev
 from .authors import AuthorFilter
 from .commands import Command, Group, build_help_text
 from .context import Context
-from .exceptions import CommandError
+from .exceptions import CommandError, CommandNotFound
 from .gateway import Gateway
 from .http import ApiError, AsyncClient, is_forbidden, is_token_revoked
 from .lifecycle import guard_dispatch, run_with_shutdown
@@ -240,6 +240,8 @@ class Bot:
         invoked_with, _, raw_args = content[len(self.prefix):].partition(" ")
         command = self.commands.get(invoked_with)
         if command is None:
+            if self._listeners.get("on_command_not_found"):
+                await self._dispatch_not_found(message, author_id, invoked_with, raw_args)
             return
 
         author = await self._resolve_author(author_id)
@@ -250,6 +252,17 @@ class Bot:
             command=command, invoked_with=invoked_with, raw_args=raw_args,
         )
         await self._invoke(ctx, command)
+
+    async def _dispatch_not_found(self, message, author_id, invoked_with, raw_args):
+        """Off by default: only resolves the author and builds a `ctx` when something is actually listening."""
+        author = await self._resolve_author(author_id)
+        if author is None:
+            return
+        ctx = Context(
+            bot=self, message=message, author=author, channel_id=message.get("channel_id"),
+            invoked_with=invoked_with, raw_args=raw_args,
+        )
+        await self._dispatch_event("on_command_not_found", ctx, CommandNotFound(invoked_with))
 
     async def _invoke(self, ctx, command):
         try:
