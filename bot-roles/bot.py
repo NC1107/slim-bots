@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """bot-roles: self-service roles - `!role <name>`, `!role remove <name>`, `!role mine`, `!roles`, `!roles status`; see README.md."""
 
-import os
 import uuid
 
 from slimbots import Bot, Permissions
@@ -25,9 +24,8 @@ def parse_roles(spec):
     return roles
 
 
-ROLES = parse_roles(os.environ.get("SLIMM_ROLES", ""))
-
 bot = Bot(prefix="!", require_channels=True)
+ROLES = parse_roles(bot.setting("SLIMM_ROLES", ""))
 bot.my_permissions = 0
 _role_permissions_cache = {}
 

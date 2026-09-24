@@ -10,9 +10,9 @@ Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
 `@bot.command` replaces the old regex trigger wall, role
 grants/revokes go through `bot.space.grant_role`/`revoke_role` rather
 than a raw HTTP call, and `Bot` itself reads `SLIMM_URL`/`SLIMM_BOT_TOKEN`/
-`SLIMM_CHANNELS` and persists the seq cursor - this script never touches
-`os.environ` for any of that, only for `SLIMM_ROLES`. `bot-ping` stays free
-of the library on purpose; see its own README.
+`SLIMM_CHANNELS` and persists the seq cursor - this script never imports
+`os`, reading `SLIMM_ROLES` through `bot.setting()` instead. `bot-ping`
+stays free of the library on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt
