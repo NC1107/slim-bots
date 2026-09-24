@@ -143,6 +143,12 @@ Every one of these is still a thin, hand-written wrapper over one REST call rath
 `async with ctx.typing():` is the one most commands want: it sends the initial frame on entry and refreshes every four seconds (slim-m's typing TTL is six) for as long as the block runs, so a slow command's typing indicator does not lapse partway through - `ctx.typing()`'s refresh loop is a plain, locally-scoped task cancelled on exit, not a `bot.background()` task, since nothing about it needs to outlive one command.
 `Canvas(client, channel_id, bot=bot)`'s `send_cursor(x, y)` and `send_stroke_preview(object_id, points, ended=)` need that `bot=` (a clear `RuntimeError` otherwise) since they go over the gateway, not REST - the REST-only methods (`place`/`move`/`remove`/`clear`/`restore`/`reorder`/`viewport`) never needed it and still do not.
 
+## Waiting for a reply
+
+`await bot.wait_for(event, check=, timeout=)` waits for the next dispatch of an `on_*` event (a typed one from the previous section included) where `check(*args)` is true, or raises `asyncio.TimeoutError`; it registers and removes a temporary listener under the hood, so it composes with a bot's real `@bot.event` handlers rather than replacing them.
+`await ctx.confirm(prompt, timeout=30)` is the one most commands want: it replies with `prompt` plus `(yes/no)`, waits for the same author's next message in the same channel via `wait_for("on_raw_message", ...)`, and returns `True`/`False` - a timeout answers `False`, the safe default for anything a confirmation is guarding.
+`bot-canvas-board`'s `!board clear` is the worked example: it used to require retyping `!board clear yes` to confirm; it now asks and waits for a real reply.
+
 ## Safeguards, and how to opt out
 
 All from PR #6's primitives, now built in rather than something a bot must remember to call:
