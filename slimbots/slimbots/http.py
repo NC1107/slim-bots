@@ -71,13 +71,16 @@ class AsyncClient:
     def socket_url(self):
         return socket_url(self.base)
 
-    async def call(self, method, path, body=None, *, params=None, headers=None,
+    async def call(self, method, path, body=None, *, params=None, headers=None, raw_body=None,
                     retries=5, base_delay=0.5, max_delay=8.0, sleep=asyncio.sleep):
-        """One authenticated call, retrying only a genuinely uncertain outcome (429/5xx/network)."""
+        """One authenticated call, retrying a genuinely uncertain outcome; `raw_body` sends bytes as-is (an attachment)."""
         attempt = 0
         while True:
             try:
-                response = await self._http.request(method, path, json=body, params=params, headers=headers)
+                if raw_body is not None:
+                    response = await self._http.request(method, path, content=raw_body, params=params, headers=headers)
+                else:
+                    response = await self._http.request(method, path, json=body, params=params, headers=headers)
             except httpx.HTTPError as err:
                 api_err = ApiError(None, str(err))
                 if attempt >= retries:
