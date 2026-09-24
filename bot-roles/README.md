@@ -1,29 +1,35 @@
 # bot-roles
 
 A slim-m bot: `!role <name>` to grab a self-service role, `!role remove
-<name>` to drop it, `!roles` to see what is on offer. At startup it also
-posts (or updates) that same listing in its channel.
+<name>` to drop it, `!role mine` to see what you hold, `!roles` to see
+what is on offer, `!roles status` to diagnose what this bot can currently
+grant. At startup it also posts (or updates) that same listing in its
+channel.
 
-Unlike `bot-ping`, this template is built on the `slimbots` package in
-`../slimbots/`, which covers the plumbing every template but `bot-ping`
-shares - auth, the REST call, retries, the websocket handshake, and the
-reconnect loop. `bot-ping` stays free of it on purpose; see its own README.
+Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
+`@bot.command` replaces the old regex trigger wall, role
+grants/revokes go through `bot.space.grant_role`/`revoke_role` rather
+than a raw HTTP call, and `Bot` itself reads `SLIMM_URL`/`SLIMM_BOT_TOKEN`/
+`SLIMM_CHANNELS` and persists the seq cursor - this script never imports
+`os`, reading `SLIMM_ROLES` through `bot.setting()` instead. `bot-ping`
+stays free of the library on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt
 SLIMM_URL=https://your.space \
 SLIMM_BOT_TOKEN=slimbot_... \
-SLIMM_CHANNEL=<channel-uuid> \
+SLIMM_CHANNELS=<channel-uuid> \
 SLIMM_ROLES=member:<role-uuid>,helper:<role-uuid> \
 python3 bot.py
 ```
 
 `SLIMM_ROLES` is a comma-separated `name:role-id` map. Only the roles listed
 there are offered; a request for anything else is refused with a message
-that says so, never ignored silently. `SLIMM_CHANNEL` is the one channel the
-bot watches and posts in - see "Getting a token" and "What your bot may do"
-in `docs/bots/building-bots.md` for how to find channel and role ids, and
-how to grant the bot `SEND_MESSAGES`/`VIEW_CHANNEL` there.
+that says so, never ignored silently. `SLIMM_CHANNELS` should name exactly
+one channel here - `bot.channel` is that one channel - the one this bot
+watches and posts in. See "Getting a token" and "What your bot may do" in
+`docs/bots/building-bots.md` for how to find channel and role ids, and how
+to grant the bot `SEND_MESSAGES`/`VIEW_CHANNEL` there.
 
 ## The no-escalation rule
 
@@ -48,6 +54,18 @@ deployment that wants this bot to hand out a role with real permissions has
 to give the bot at least that much itself. If a grant is coming back
 forbidden, check the bot's own roles before assuming the code is broken.
 
+## Diagnosing the gap instead of a bare refusal
+
+The server gives every `403` the same body, so a failed grant and a missing
+`MANAGE_ROLES` are not distinguishable from the wire alone. This bot tells
+them apart using what it already has: its own `permissions` bitmask from
+`GET /me`, and - once `MANAGE_ROLES` is confirmed - the target role's own
+bits from `GET /roles`, turned into names with `slimbots.Permissions.names`.
+`!role <name>` and `!role remove <name>` show this automatically on a
+refusal; `!roles status` runs the same check for every configured role at
+once, on demand, so an admin can see the whole picture without provoking a
+403 first.
+
 ## Do not answer yourself
 
 Like every slim-m bot, this one checks the message author against its own
@@ -70,25 +88,20 @@ skipping that check would have it react to its own listing message forever.
   instead. This was checked twice already, once statically against the
   frame types and once live against a running deployment - it is a platform
   property, not a missing feature waiting on this example.
-- **Durable state.** Unlike `bot-reminders/`, there is no sqlite
-  file here. A reminder is a promise to act later and must survive a
-  restart, or it silently never fires. A role command is acted on
-  immediately: if the bot is offline when it arrives, the member's cost is
-  typing it again, not a promise broken without them knowing. So the only
-  state worth keeping is a `seq` cursor to skip old channel history, and
-  that only needs to survive a dropped websocket within one run (handled
-  in memory, with `/sync` catching up a reconnect), not a process restart.
-  A full restart just re-baselines at the channel's current head, the same
-  tradeoff `bot-reminders` accepts for its own long-outage case. The
-  listing message's id is derived deterministically from the channel id
-  (a UUIDv5), so even that needs nothing persisted to stay stable across
-  restarts.
+- **Its own business-data store.** A reminder is a promise to act later and
+  must survive a restart, or it silently never fires, so `bot-reminders`
+  needs its own sqlite file. A role grant needs nothing of its own: it is
+  acted on immediately, and if the bot is offline when it arrives, the
+  member's cost is typing it again once `Bot`'s own cursor catches the
+  command up on reconnect - see `../docs/framework.md`. The listing
+  message's id is derived deterministically from the channel id (a
+  UUIDv5), so even that needs nothing bot-specific persisted.
 - **Re-granting a role a moderator took away by hand.** This bot only ever
   touches a member's roles in direct response to a `!role`/`!role remove`
   command. There is no background pass that walks members and reconciles
   their roles against some expected state, so a moderator revoking a role
   by hand stays revoked until the member asks for it again themselves.
-- **Answering outside `SLIMM_CHANNEL`.** Only one channel is configured on
+- **Answering outside `SLIMM_CHANNELS`.** Only one channel is configured on
   purpose; every other channel the bot's role can see is left alone.
 - **Editing a pending request, role hierarchies, or approval flows.** This
   is a flat, self-service list. A role that should require approval before
