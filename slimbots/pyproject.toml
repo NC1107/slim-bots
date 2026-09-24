@@ -5,19 +5,36 @@ description = "A discord.py-shaped bot framework for slim-m: Bot, commands, ctx,
 readme = "README.md"
 requires-python = ">=3.9"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
+license-files = ["LICENSE"]
 keywords = ["slim-m", "bots", "chat"]
+authors = [{ name = "Nick Conn", email = "nickpconn@gmail.com" }]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Chat",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Framework :: AsyncIO",
+]
 
 dependencies = ["websockets>=12", "httpx>=0.27"]
 
 [project.urls]
 Homepage = "https://github.com/NC1107/slim-m"
 Source = "https://github.com/NC1107/slim-bots"
+Documentation = "https://github.com/NC1107/slim-bots/blob/main/docs/framework.md"
+"Bug Tracker" = "https://github.com/NC1107/slim-bots/issues"
+Changelog = "https://github.com/NC1107/slim-bots/blob/main/slimbots/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-asyncio"]
 
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=69.5"]
 build-backend = "setuptools.build_meta"
 
 [tool.setuptools.packages.find]
