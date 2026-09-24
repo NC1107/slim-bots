@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+import signal
 import sys
 import urllib.error
 import urllib.parse
@@ -57,9 +58,28 @@ def socket_url(base):
     )
 
 
+_is_bot_cache = {}
+
+
+def is_bot_or_webhook(author_id):
+    """Whether `author_id` is automated, cached per id; see README.md."""
+    cached = _is_bot_cache.get(author_id)
+    if cached is not None:
+        return cached
+    try:
+        profile = call("GET", f"/users/{author_id}")
+    except Exception as err:
+        print(f"author lookup failed for {author_id}: {err}", file=sys.stderr)
+        return False
+    automated = bool(profile.get("is_bot")) or bool(profile.get("is_webhook"))
+    _is_bot_cache[author_id] = automated
+    return automated
+
+
 def should_answer(message, me):
-    """Whether this message is a `!ping` from somebody other than us."""
-    if message.get("author_id") == me:
+    """Whether this message is a `!ping` from a human other than us."""
+    author_id = message.get("author_id")
+    if not author_id or author_id == me or is_bot_or_webhook(author_id):
         return False
     return (message.get("content") or "").strip().lower().startswith(TRIGGER)
 
@@ -93,10 +113,21 @@ async def listen():
                 print(f"answered in {frame['channel_id']}", flush=True)
 
 
+def _install_sigterm_handler():
+    """Exits 0 on SIGTERM instead of an unhandled signal's default, so a container stop is a clean shutdown."""
+
+    def _on_sigterm(signum, frame):
+        print("received SIGTERM, shutting down", flush=True)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+
 async def main():
     if not BASE or not TOKEN:
         print("set SLIMM_URL and SLIMM_BOT_TOKEN", file=sys.stderr)
         return 2
+    _install_sigterm_handler()
     while True:
         try:
             await listen()
