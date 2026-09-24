@@ -313,7 +313,8 @@ class Bot:
         raw = os.environ.get("SLIMM_CHANNELS", "")
         return {c.strip() for c in raw.split(",") if c.strip()}
 
-    async def start(self, *, url=None, token=None):
+    def _resolve_config(self, url, token):
+        """`(base, token)`, or a `RuntimeError` naming every missing piece of config at once."""
         base = url or self._url or os.environ.get("SLIMM_URL", "")
         token = token or self._token or os.environ.get("SLIMM_BOT_TOKEN", "")
         if self.channels is None:
@@ -331,23 +332,26 @@ class Bot:
         missing.extend(self._setting_errors)
         if missing:
             raise RuntimeError(f"set {', '.join(missing)}")
+        return base, token
 
+    def _open_cursor_if_scoped(self):
+        if not self.channels:
+            return
+        path = self.cursor_path or self.data_path or os.environ.get("SLIMM_CURSOR_DB") or DEFAULT_CURSOR_DB
+        self._cursor_conn = sqlite3.connect(path, isolation_level=None)
+        cursor.init_table(self._cursor_conn)
+
+    async def start(self, *, url=None, token=None):
+        base, token = self._resolve_config(url, token)
         self.client = AsyncClient(base, token, self.user_agent)
         self.space = Space(self.client)
         self.authors = AuthorFilter(self.client, space=self.space, ignore_bots=self.ignore_bots)
-        if self.channels:
-            path = self.cursor_path or self.data_path or os.environ.get("SLIMM_CURSOR_DB") or DEFAULT_CURSOR_DB
-            self._cursor_conn = sqlite3.connect(path, isolation_level=None)
-            cursor.init_table(self._cursor_conn)
+        self._open_cursor_if_scoped()
         self._main_task = asyncio.create_task(self._run_forever())
         try:
             return await run_with_shutdown(self._main_task)
-        except asyncio.CancelledError:
-            if self._fatal_error is None:
-                raise
-            return 1
         finally:
-            for task in list(self._background_tasks):
+            for task in self._background_tasks:
                 task.cancel()
             if self._background_tasks:
                 await asyncio.gather(*self._background_tasks, return_exceptions=True)
@@ -356,4 +360,8 @@ class Bot:
                 self._cursor_conn.close()
 
     def run(self, *, url=None, token=None):
-        return asyncio.run(self.start(url=url, token=token)) or 0
+        """A cancelled `start()` (SIGTERM, or a fatal background task) becomes 0 for a clean shutdown, 1 otherwise."""
+        try:
+            return asyncio.run(self.start(url=url, token=token)) or 0
+        except asyncio.CancelledError:
+            return 1 if self._fatal_error is not None else 0

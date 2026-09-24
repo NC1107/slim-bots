@@ -74,7 +74,7 @@ def test_require_range_bounds():
         require_range(11, max_value=10)
 
 
-async def test_run_with_shutdown_exits_clean_on_sigterm():
+async def test_run_with_shutdown_cancels_the_task_on_sigterm():
     async def forever():
         await asyncio.sleep(100)
         return 1
@@ -83,8 +83,8 @@ async def test_run_with_shutdown_exits_clean_on_sigterm():
     task = asyncio.ensure_future(run_with_shutdown(main_task))
     await asyncio.sleep(0.05)
     os.kill(os.getpid(), signal.SIGTERM)
-    result = await asyncio.wait_for(task, timeout=2)
-    assert result == 0
+    with pytest.raises(asyncio.CancelledError):
+        await asyncio.wait_for(task, timeout=2)
 
 
 async def test_registration_is_a_noop_on_a_server_without_the_route():

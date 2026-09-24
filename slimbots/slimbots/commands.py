@@ -19,35 +19,35 @@ def _usage_token(param):
     return f"<{name}...>" if is_rest else f"<{name}>"
 
 
-async def _convert_int(token, name):
+def _convert_int(token, name):
     try:
         return int(token)
     except ValueError as err:
         raise BadArgument(f"`{name}` must be a whole number, got `{token}`") from err
 
 
-async def _convert_float(token, name):
+def _convert_float(token, name):
     try:
         return float(token)
     except ValueError as err:
         raise BadArgument(f"`{name}` must be a number, got `{token}`") from err
 
 
-async def _convert_duration(token, name):
+def _convert_duration(token, name):
     parsed = Duration.parse(token)
     if parsed is None:
         raise BadArgument(f"`{name}` must be a duration like `10m` or `2h30m`, got `{token}`")
     return parsed
 
 
-async def _convert_time_of_day(token, name):
+def _convert_time_of_day(token, name):
     parsed = TimeOfDay.parse(token)
     if parsed is None:
         raise BadArgument(f"`{name}` must be a time like `14:30`, got `{token}`")
     return parsed
 
 
-async def _convert_member(ctx, token, name):
+async def _convert_member(ctx, token):
     needle = token.lstrip("@")
     member = await ctx.bot.space.get_member(needle)
     if member is None:
@@ -95,10 +95,10 @@ class Command:
 
     async def _convert(self, ctx, annotation, token, name):
         if annotation is Member:
-            return await _convert_member(ctx, token, name)
+            return await _convert_member(ctx, token)
         converter = _SIMPLE_CONVERTERS.get(annotation)
         if converter is not None:
-            return await converter(token, name)
+            return converter(token, name)
         return token
 
     def _rest_value(self, tokens, i, param):

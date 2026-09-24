@@ -8,13 +8,10 @@ from .http import is_token_revoked
 
 
 async def run_with_shutdown(task):
-    """Awaits `task` to completion, or exits 0 on a clean SIGTERM/SIGINT; the caller owns creating and tracking `task`."""
+    """Awaits `task`; SIGTERM/SIGINT cancel it. The CancelledError always propagates - the caller decides what it means."""
     loop = asyncio.get_running_loop()
-    shutdown_requested = False
 
     def cancel():
-        nonlocal shutdown_requested
-        shutdown_requested = True
         print("shutting down", file=sys.stderr)
         task.cancel()
 
@@ -28,10 +25,6 @@ async def run_with_shutdown(task):
 
     try:
         return await task
-    except asyncio.CancelledError:
-        if shutdown_requested:
-            return 0
-        raise
     finally:
         for sig in installed:
             loop.remove_signal_handler(sig)
