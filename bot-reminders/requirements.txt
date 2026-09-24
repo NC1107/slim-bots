@@ -1,2 +1,7 @@
 websockets>=12
-slim-m>=0.1.0
+httpx>=0.27
+slim-m>=0.3.0
+# zoneinfo (stdlib since 3.9) needs an IANA timezone database; a minimal
+# container image is not guaranteed to have the OS one installed, and
+# zoneinfo falls back to this package automatically when it does not.
+tzdata
