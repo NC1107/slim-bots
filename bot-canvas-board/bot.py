@@ -2,6 +2,7 @@
 """bot-canvas-board: a todo board on a channel's Voice Canvas - `!board add/done/move/clear/list`; see README.md."""
 
 from slimbots import ApiError, Bot, Canvas
+from slimbots.migrations import ensure_columns
 
 # A note's box is 220x140, the app's own quick-placement default, so a note this bot places renders identically to a hand-drawn one.
 BOARD_X = 0.0
@@ -34,6 +35,7 @@ def init_db(conn):
         );
         """
     )
+    ensure_columns(conn, "items", {"added_by": "TEXT"})
     conn.commit()
 
 

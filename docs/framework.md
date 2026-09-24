@@ -141,6 +141,16 @@ The functions passed to `run()` are unchanged from before this - `get_balance(co
 That is why `bot-casino/test_concurrency.py` did not need to change at all: it drives those same functions directly against its own real connections on real threads, never through `Bot` or `Store`.
 A background sweep that already ran on its own thread (`bot-jellyfin`'s poster refresh used to reach for `asyncio.to_thread` by hand) can just call `bot.store.connection` directly instead, since it was never blocking the event loop in the first place.
 
+## Migrating an existing table
+
+`CREATE TABLE IF NOT EXISTS` only ever creates a table that does not exist yet - a bot's own DB file carried over from an older release keeps its old columns forever unless something adds the new ones.
+`slimbots.migrations.ensure_columns(conn, table, columns)` is that something: `columns` is `{name: "TYPE [NOT NULL DEFAULT ...]"}`, and it adds whatever the table is actually missing, one `ALTER TABLE ... ADD COLUMN` per column, safe to call on every `init_db` (a column already there is left alone).
+Call it after the `CREATE TABLE IF NOT EXISTS` for that table, inside the same `migrate` function passed to `Bot(store_migrate=...)`, the way `bot-reminders` and `bot-canvas-board` do for their own added columns.
+
+`ensure_columns` cannot widen a `PRIMARY KEY` - SQLite's `ALTER TABLE` has no way to change one on an existing table, only add nullable-or-defaulted columns to it.
+A column that needs to join the primary key (`bot-casino`'s `hands.hand_index`, added alongside real multi-hand support) needs the table rebuilt instead: rename the old table, create the new one, `INSERT INTO ... SELECT` the old rows across with a value for the new key column, drop the old table.
+`bot-casino/blackjack.py`'s `_migrate_legacy_hands_table` is the worked example - it only runs when the table exists without `hand_index`, so it is a one-time rebuild, not something every `init_table` call redoes.
+
 ## Async HTTP
 
 `slimbots.http.AsyncClient` is built on `httpx.AsyncClient` rather than `asyncio.to_thread` over `urllib`.

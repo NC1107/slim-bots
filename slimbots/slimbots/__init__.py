@@ -2,6 +2,7 @@
 
 from . import catchup, cursor
 from . import events
+from . import migrations
 from .bot import Bot
 from .canvas import Canvas
 from .client import socket_url
@@ -66,6 +67,7 @@ __all__ = [
     "catchup",
     "cursor",
     "events",
+    "migrations",
     "require_int",
     "require_len",
     "require_range",
