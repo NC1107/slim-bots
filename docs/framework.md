@@ -93,6 +93,13 @@ Faking one from roster diffs would be a lie about what the wire actually says, s
 `bot.setting(name, default=None, *, type=str, required=False)` reads one of a bot's *own* env vars the same way, converting via `type` (`int`, `float`, or `list` for a comma-separated one) - `bot-jellyfin`'s nine `JELLYFIN_*` variables are the worked example.
 A missing `required=True` value is never raised at the `setting()` call itself (which usually runs at import time, before `Bot.start()`); it is collected and reported together with a missing `SLIMM_URL`/token/channels in the same one-line error when `start()` runs.
 
+## Background tasks
+
+`bot.background(coro, *, name=None)` is the one way a bot should ever start a loop that outlives one command - `bot-casino`'s hourly prune, `bot-reminders`' due-checker and pruner, `bot-jellyfin`'s poll loop.
+A plain `asyncio.create_task(...)` is only weakly referenced by the event loop, so a fire-and-forget task like that can be garbage-collected mid-run and stop silently; `bot.background` stores the task in `bot._background_tasks` for as long as it is running, which is also what a shutdown walks to cancel every one of them cleanly.
+An exception out of a background task (a 401 included, which stays terminal exactly like one on the socket) is treated as fatal: it is logged, the bot's main loop is cancelled, and `bot.run()` exits non-zero so a container orchestrator restarts it, rather than the task's failure going unnoticed while the rest of the bot carries on.
+Call it from `on_connect`/`on_ready`, the same place a bot used to reach for `asyncio.create_task` directly.
+
 `Bot(default_data_path="casino.db")` gives `bot.data_path`: `SLIMM_DB_PATH` if set, else that default - the one place a bot's own sqlite file path is derived, instead of every bot re-deriving `os.environ.get("SLIMM_DB_PATH", "...")` by hand.
 
 A bot with `channels` set gets a persisted, cross-restart `seq` cursor for free, at `bot.data_path` when the bot has one (sharing the same file as its business data, the way `bot-casino` does) or a generic default (`slimbots-cursor.db`) otherwise; `Bot` bootstraps and `/sync`-replays the backlog through `process_message` on every connect, before `on_ready` fires - no bot code calls `cursor`/`catchup` directly any more.

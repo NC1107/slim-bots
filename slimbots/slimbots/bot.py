@@ -66,6 +66,9 @@ class Bot:
         self.authors = None
         self.me_id = None
         self._cursor_conn = None
+        self._background_tasks = set()
+        self._fatal_error = None
+        self._main_task = None
         if help_command:
             self._register_default_help()
 
@@ -73,6 +76,29 @@ class Bot:
         """Registers an async predicate run before every command; a truthy string return refuses with that reply."""
         self._global_checks.append(func)
         return func
+
+    def background(self, coro, *, name=None):
+        """Runs `coro` as a supervised task: held strongly, cancelled on shutdown, and a real exception stops the bot."""
+        task = asyncio.create_task(coro, name=name)
+        self._background_tasks.add(task)
+        task.add_done_callback(self._on_background_done)
+        return task
+
+    def _on_background_done(self, task):
+        self._background_tasks.discard(task)
+        if task.cancelled():
+            return
+        err = task.exception()
+        if err is None:
+            return
+        self._fatal_error = err
+        label = task.get_name() or "background task"
+        if is_token_revoked(err):
+            print(f"{label}: token rejected - revoked?", file=sys.stderr)
+        else:
+            print(f"{label} failed: {type(err).__name__}: {err}", file=sys.stderr)
+        if self._main_task is not None:
+            self._main_task.cancel()
 
     def setting(self, name, default=None, *, type=str, required=False):
         """One config value from the environment, converted by `type`; a missing `required` one is reported at `start()`."""
@@ -313,9 +339,18 @@ class Bot:
             path = self.cursor_path or self.data_path or os.environ.get("SLIMM_CURSOR_DB") or DEFAULT_CURSOR_DB
             self._cursor_conn = sqlite3.connect(path, isolation_level=None)
             cursor.init_table(self._cursor_conn)
+        self._main_task = asyncio.create_task(self._run_forever())
         try:
-            return await run_with_shutdown(self._run_forever)
+            return await run_with_shutdown(self._main_task)
+        except asyncio.CancelledError:
+            if self._fatal_error is None:
+                raise
+            return 1
         finally:
+            for task in list(self._background_tasks):
+                task.cancel()
+            if self._background_tasks:
+                await asyncio.gather(*self._background_tasks, return_exceptions=True)
             await self.client.aclose()
             if self._cursor_conn is not None:
                 self._cursor_conn.close()

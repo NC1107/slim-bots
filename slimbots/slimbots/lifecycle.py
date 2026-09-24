@@ -7,10 +7,9 @@ import sys
 from .http import is_token_revoked
 
 
-async def run_with_shutdown(coro_factory):
-    """Runs `coro_factory()` to completion, or exits 0 on a clean SIGTERM/SIGINT."""
+async def run_with_shutdown(task):
+    """Awaits `task` to completion, or exits 0 on a clean SIGTERM/SIGINT; the caller owns creating and tracking `task`."""
     loop = asyncio.get_running_loop()
-    task = asyncio.ensure_future(coro_factory())
     shutdown_requested = False
 
     def cancel():

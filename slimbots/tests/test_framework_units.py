@@ -79,7 +79,8 @@ async def test_run_with_shutdown_exits_clean_on_sigterm():
         await asyncio.sleep(100)
         return 1
 
-    task = asyncio.ensure_future(run_with_shutdown(forever))
+    main_task = asyncio.create_task(forever())
+    task = asyncio.ensure_future(run_with_shutdown(main_task))
     await asyncio.sleep(0.05)
     os.kill(os.getpid(), signal.SIGTERM)
     result = await asyncio.wait_for(task, timeout=2)
@@ -121,8 +122,9 @@ async def test_registration_reraises_a_real_error():
 
     client = FakeAsyncClient()
     client.respond("PUT", "/bots/commands", ApiError(500, {"error": "boom"}))
+    commands = [Command(handler, name="ping")]
     with pytest.raises(ApiError):
-        await register_commands(client, prefix="!", commands=[Command(handler, name="ping")])
+        await register_commands(client, prefix="!", commands=commands)
 
 
 def test_registration_body_includes_aliases_and_permission():
@@ -167,6 +169,7 @@ async def test_bad_argument_message_names_the_field():
     class FakeCtx:
         bot = None
 
+    ctx = FakeCtx()
     with pytest.raises(BadArgument) as excinfo:
-        await cmd.convert_args(FakeCtx(), "notanumber")
+        await cmd.convert_args(ctx, "notanumber")
     assert "amount" in str(excinfo.value)
