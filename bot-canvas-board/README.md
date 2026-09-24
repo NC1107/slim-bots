@@ -13,8 +13,9 @@ Voice Canvas calls go through the new `Canvas` model
 events map onto `on_canvas_object_placed`/`on_canvas_objects_removed`/
 `on_canvas_cleared`. `Bot` owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/
 `SLIMM_CHANNELS` and the seq cursor for the channel's message traffic; this
-script only reads `SLIMM_DB_PATH`, its own business config. `bot-ping`
-stays free of the library on purpose; see its own README.
+script only opens its own tables at `bot.data_path` (from `SLIMM_DB_PATH`),
+never importing `os` itself. `bot-ping` stays free of the library on
+purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt

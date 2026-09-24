@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
 """bot-canvas-board: a todo board on a channel's Voice Canvas - `!board add/done/move/clear/list`; see README.md."""
 
-import os
 import sqlite3
 
 from slimbots import ApiError, Bot, Canvas
-
-DB_PATH = os.environ.get("SLIMM_DB_PATH", "board.db")
 
 # A note's box is 220x140, the app's own quick-placement default, so a note this bot places renders identically to a hand-drawn one.
 BOARD_X = 0.0
@@ -26,7 +23,7 @@ HELP_TEXT = (
 # user_id -> display_name, resolved once per author and reused; a later rename keeps the old name.
 _names = {}
 
-bot = Bot(prefix="!", require_channels=True, cursor_path=DB_PATH)
+bot = Bot(prefix="!", require_channels=True, default_data_path="board.db")
 canvas = None  # set once bot.channel is known, in on_connect
 
 
@@ -226,7 +223,7 @@ async def on_connect():
 
 
 def main():
-    bot.db = sqlite3.connect(DB_PATH)
+    bot.db = sqlite3.connect(bot.data_path)
     init_db(bot.db)
     try:
         raise SystemExit(bot.run() or 0)
