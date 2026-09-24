@@ -136,6 +136,13 @@ httpx was already a transitive dependency in this environment, so it costs nothi
 
 Every one of these is still a thin, hand-written wrapper over one REST call rather than a generated client - it is not route-shaped, it is "one class with the actions people actually reach for bound to it".
 
+## Sending over the gateway
+
+`typing`, `canvas.cursor` and `canvas.stroke_preview` are client->server frames, not REST calls - slim-m's own rate limits and authorization for them mirror the REST routes they stand in for, but there is no request/response, just a frame sent into the open socket.
+`await bot.send_frame(frame)` sends one, raising a clear `RuntimeError` rather than hanging if nothing is connected yet; `await bot.start_typing(channel_id)` is the one-line form.
+`async with ctx.typing():` is the one most commands want: it sends the initial frame on entry and refreshes every four seconds (slim-m's typing TTL is six) for as long as the block runs, so a slow command's typing indicator does not lapse partway through - `ctx.typing()`'s refresh loop is a plain, locally-scoped task cancelled on exit, not a `bot.background()` task, since nothing about it needs to outlive one command.
+`Canvas(client, channel_id, bot=bot)`'s `send_cursor(x, y)` and `send_stroke_preview(object_id, points, ended=)` need that `bot=` (a clear `RuntimeError` otherwise) since they go over the gateway, not REST - the REST-only methods (`place`/`move`/`remove`/`clear`/`restore`/`reorder`/`viewport`) never needed it and still do not.
+
 ## Safeguards, and how to opt out
 
 All from PR #6's primitives, now built in rather than something a bot must remember to call:
