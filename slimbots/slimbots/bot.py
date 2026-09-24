@@ -3,6 +3,7 @@ reconnect, command dispatch, and `run()`.
 """
 
 import asyncio
+import importlib
 import os
 import sqlite3
 import sys
@@ -102,8 +103,20 @@ class Bot:
         self._main_task = None
         self._gateway = None
         self.store = None
+        self._extensions = {}
         if help_command:
             self._register_default_help()
+
+    def load_extension(self, module):
+        """Imports `module` (a name, or an already-imported module) and calls its `setup(bot)`; see docs/framework.md."""
+        name = module if isinstance(module, str) else module.__name__
+        if name in self._extensions:
+            return self._extensions[name]
+        if isinstance(module, str):
+            module = importlib.import_module(module)
+        module.setup(self)
+        self._extensions[name] = module
+        return module
 
     async def open_store(self, *, migrate=None, path=None):
         """Opens (or returns the already-open) thread-offloaded `Store` at `path` or `self.data_path`."""

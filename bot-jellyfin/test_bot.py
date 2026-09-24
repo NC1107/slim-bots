@@ -32,72 +32,72 @@ def movie(item_id, name, created="2024-01-01T00:00:00Z"):
 
 
 def test_a_single_new_episode_posts_as_one_episode_card():
-    posts = jellyfin.build_posts([episode("s1", "Show", "Season 1", 3)])
+    posts = jellyfin.jellyfin_core.build_posts([episode("s1", "Show", "Season 1", 3)])
     assert len(posts) == 1
     assert "Episode 3" not in posts[0]["title"] or "New episode" in posts[0]["title"]
 
 
 def test_multiple_new_episodes_group_by_series():
     items = [episode("s1", "Show", "Season 1", i) for i in (1, 2, 3)]
-    posts = jellyfin.build_posts(items)
+    posts = jellyfin.jellyfin_core.build_posts(items)
     assert len(posts) == 1
     assert "3 new episodes" in posts[0]["title"]
 
 
 def test_movies_over_the_batch_threshold_collapse():
-    items = [movie(f"m{i}", f"Movie {i}") for i in range(jellyfin.JELLYFIN_BATCH_THRESHOLD + 2)]
-    posts = jellyfin.build_posts(items)
+    items = [movie(f"m{i}", f"Movie {i}") for i in range(jellyfin.jellyfin_core.JELLYFIN_BATCH_THRESHOLD + 2)]
+    posts = jellyfin.jellyfin_core.build_posts(items)
     assert len(posts) == 1
     assert "added" in posts[0]["title"]
 
 
 def test_movies_under_the_batch_threshold_post_individually():
     items = [movie("m1", "Movie One"), movie("m2", "Movie Two")]
-    posts = jellyfin.build_posts(items)
+    posts = jellyfin.jellyfin_core.build_posts(items)
     assert len(posts) == 2
 
 
 def test_cursor_only_moves_forward():
     conn = sqlite3.connect(":memory:")
-    jellyfin.init_db(conn)
-    jellyfin.advance_cursor(conn, "2024-06-01T00:00:00.0000000Z")
-    jellyfin.advance_cursor(conn, "2024-01-01T00:00:00.0000000Z")
-    assert jellyfin.get_cursor(conn) == "2024-06-01T00:00:00.0000000Z"
+    jellyfin.jellyfin_core.init_db(conn)
+    jellyfin.jellyfin_core.advance_cursor(conn, "2024-06-01T00:00:00.0000000Z")
+    jellyfin.jellyfin_core.advance_cursor(conn, "2024-01-01T00:00:00.0000000Z")
+    assert jellyfin.jellyfin_core.get_cursor(conn) == "2024-06-01T00:00:00.0000000Z"
 
 
 def test_already_posted_items_are_filtered_before_grouping():
     conn = sqlite3.connect(":memory:")
-    jellyfin.init_db(conn)
-    jellyfin.advance_cursor(conn, "2000-01-01T00:00:00.0000000Z")
-    jellyfin.mark_posted(conn, ["m1"])
-    original = jellyfin.items_since
-    jellyfin.items_since = lambda cursor: [movie("m1", "Old"), movie("m2", "New")]
+    jellyfin.jellyfin_core.init_db(conn)
+    jellyfin.jellyfin_core.advance_cursor(conn, "2000-01-01T00:00:00.0000000Z")
+    jellyfin.jellyfin_core.mark_posted(conn, ["m1"])
+    original = jellyfin.jellyfin_core.items_since
+    jellyfin.jellyfin_core.items_since = lambda cursor: [movie("m1", "Old"), movie("m2", "New")]
     try:
-        fresh = jellyfin.fetch_new_items(conn)
+        fresh = jellyfin.jellyfin_core.fetch_new_items(conn)
     finally:
-        jellyfin.items_since = original
+        jellyfin.jellyfin_core.items_since = original
     assert [item["Id"] for item in fresh] == ["m2"]
 
 
 def test_excluded_genre_is_dropped():
-    jellyfin.JELLYFIN_EXCLUDE_GENRES.add("horror")
+    jellyfin.jellyfin_core.JELLYFIN_EXCLUDE_GENRES.add("horror")
     try:
         item = {**movie("m1", "Scary"), "Genres": ["Horror"]}
-        assert jellyfin.is_excluded(item)
+        assert jellyfin.jellyfin_core.is_excluded(item)
         item2 = {**movie("m2", "Not Scary"), "Genres": ["Comedy"]}
-        assert not jellyfin.is_excluded(item2)
+        assert not jellyfin.jellyfin_core.is_excluded(item2)
     finally:
-        jellyfin.JELLYFIN_EXCLUDE_GENRES.discard("horror")
+        jellyfin.jellyfin_core.JELLYFIN_EXCLUDE_GENRES.discard("horror")
 
 
 def test_library_routes_fall_back_to_the_default_channel():
-    jellyfin.JELLYFIN_LIBRARY_ROUTES["lib-1"] = "routed-channel"
+    jellyfin.jellyfin_core.JELLYFIN_LIBRARY_ROUTES["lib-1"] = "routed-channel"
     jellyfin.bot.channels = {"default-channel"}
     try:
-        assert jellyfin.target_channel("lib-1") == "routed-channel"
-        assert jellyfin.target_channel("lib-2") == "default-channel"
+        assert jellyfin.jellyfin_core.target_channel(jellyfin.bot, "lib-1") == "routed-channel"
+        assert jellyfin.jellyfin_core.target_channel(jellyfin.bot, "lib-2") == "default-channel"
     finally:
-        jellyfin.JELLYFIN_LIBRARY_ROUTES.pop("lib-1", None)
+        jellyfin.jellyfin_core.JELLYFIN_LIBRARY_ROUTES.pop("lib-1", None)
 
 
 def message(content, msg_id="m1"):
@@ -105,10 +105,10 @@ def message(content, msg_id="m1"):
 
 
 def setup():
-    jellyfin.bot.store = Store(":memory:", migrate=jellyfin.init_db)
+    jellyfin.bot.store = Store(":memory:", migrate=jellyfin.jellyfin_core.init_db)
     asyncio.run(jellyfin.bot.store.open())
     jellyfin.bot.channels = {"c1"}
-    jellyfin._command_cooldown._last.clear()
+    jellyfin.jellyfin_core._command_cooldown._last.clear()
     client = FakeAsyncClient(me_id="bot-1")
     client.respond("GET", "/members", MEMBERS)
     jellyfin.bot.client = client
@@ -128,8 +128,8 @@ def process(client, *messages):
 
 
 def _patch_search_items(items):
-    original = jellyfin.search_items
-    jellyfin.search_items = lambda query, limit: items
+    original = jellyfin.jellyfin_core.search_items
+    jellyfin.jellyfin_core.search_items = lambda query, limit: items
     return original
 
 
@@ -139,7 +139,7 @@ def test_search_returns_matching_items():
     try:
         process(client, message("!jellyfin search inception"))
     finally:
-        jellyfin.search_items = original
+        jellyfin.jellyfin_core.search_items = original
     assert "Inception" in client.sent[-1]["content"]
 
 
@@ -156,18 +156,18 @@ def test_search_is_cooldown_limited():
         process(client, message("!jellyfin search inception", "m1"))
         process(client, message("!jellyfin search inception", "m2"))
     finally:
-        jellyfin.search_items = original
+        jellyfin.jellyfin_core.search_items = original
     assert "try again" in client.sent[-1]["content"]
 
 
 def test_recent_reports_a_summary():
     client = setup()
-    original = jellyfin.items_since
-    jellyfin.items_since = lambda cutoff: [movie("m1", "A"), movie("m2", "B")]
+    original = jellyfin.jellyfin_core.items_since
+    jellyfin.jellyfin_core.items_since = lambda cutoff: [movie("m1", "A"), movie("m2", "B")]
     try:
         process(client, message("!jellyfin recent 3"))
     finally:
-        jellyfin.items_since = original
+        jellyfin.jellyfin_core.items_since = original
     assert "2 item(s)" in client.sent[-1]["content"]
 
 
@@ -196,7 +196,7 @@ def test_another_bot_is_ignored_by_default():
 
 def test_poll_loop_propagates_a_terminal_jellyfin_auth_error():
     async def boom():
-        raise jellyfin.JellyfinAuthError("nope")
+        raise jellyfin.jellyfin_core.JellyfinAuthError("nope")
 
     original = jellyfin.poll_once
     jellyfin.poll_once = boom
@@ -204,7 +204,7 @@ def test_poll_loop_propagates_a_terminal_jellyfin_auth_error():
         raised = False
         try:
             asyncio.run(jellyfin.poll_loop())
-        except jellyfin.JellyfinAuthError:
+        except jellyfin.jellyfin_core.JellyfinAuthError:
             raised = True
         assert raised
     finally:
@@ -214,8 +214,8 @@ def test_poll_loop_propagates_a_terminal_jellyfin_auth_error():
 def test_on_connect_registers_poll_loop_as_a_supervised_background_task():
     setup()
     jellyfin._background_started = False
-    original = jellyfin.bootstrap_cursor
-    jellyfin.bootstrap_cursor = lambda conn: None
+    original = jellyfin.jellyfin_core.bootstrap_cursor
+    jellyfin.jellyfin_core.bootstrap_cursor = lambda conn: None
 
     async def run():
         await jellyfin.on_connect()
@@ -230,29 +230,29 @@ def test_on_connect_registers_poll_loop_as_a_supervised_background_task():
     try:
         asyncio.run(run())
     finally:
-        jellyfin.bootstrap_cursor = original
+        jellyfin.jellyfin_core.bootstrap_cursor = original
 
 
 def test_upload_poster_returns_the_uploaded_attachments_id():
     client = setup()
-    original = jellyfin.jf_get_bytes
-    jellyfin.jf_get_bytes = lambda path: b"\x89PNGdata"
+    original = jellyfin.jellyfin_core.jf_get_bytes
+    jellyfin.jellyfin_core.jf_get_bytes = lambda path: b"\x89PNGdata"
     client.respond("POST", "/attachments?filename=poster.jpg", {"id": "att-1", "content_type": "image/png"})
     try:
         attachment_id = asyncio.run(jellyfin.upload_poster("item-1"))
     finally:
-        jellyfin.jf_get_bytes = original
+        jellyfin.jellyfin_core.jf_get_bytes = original
     assert attachment_id == "att-1"
 
 
 def test_upload_poster_returns_none_when_jellyfin_has_no_image():
     client = setup()
-    original = jellyfin.jf_get_bytes
-    jellyfin.jf_get_bytes = lambda path: None
+    original = jellyfin.jellyfin_core.jf_get_bytes
+    jellyfin.jellyfin_core.jf_get_bytes = lambda path: None
     try:
         attachment_id = asyncio.run(jellyfin.upload_poster("item-1"))
     finally:
-        jellyfin.jf_get_bytes = original
+        jellyfin.jellyfin_core.jf_get_bytes = original
     assert attachment_id is None
     assert not any(method == "POST" and path.startswith("/attachments") for method, path, _, _ in client.calls)
 
