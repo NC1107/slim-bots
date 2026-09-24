@@ -109,10 +109,10 @@ The one case that needs it is a webhook, which never appears in `GET /members` a
 
 ## Command registration
 
-`@bot.command` registers itself with the server automatically, on every connect: `PUT /bots/commands` with the bot's prefix and its whole command set (`slimbots/registration.py`), per decision 0031 in slim-m (PR #1325 at the time this was written).
-Every alias is registered as its own composer entry alongside its command's name.
-A `requires=` permission becomes the entry's `permission` bit, which only hides the row in the composer for a caller who lacks it - it is never enforced against the message a bot receives, so the command's own `requires=` check still runs.
-Registration is a clean no-op (skipped, not raised) against a deployment old enough not to have the route at all, so the framework works against today's production server exactly as it will against tomorrow's.
+`@bot.command` registers itself with the server automatically, on every connect: `PUT /bots/commands` with `{prefix, commands: [{name, description, usage?, permission?}]}` (`slimbots/registration.py`), a full bulk overwrite each time, per decision 0031 in slim-m.
+Every alias is registered as its own composer entry alongside its command's name, each truncated to the server's caps (name 1-32 `[A-Za-z0-9_-]`, description 1-100 chars, usage at most 80, at most 50 entries total).
+A `requires=` permission becomes the entry's single-bit `permission`, which only hides the row in the composer for a caller who lacks it - it is never enforced against the message a bot receives, so the command's own `requires=` check still runs.
+A 404 or 405 is treated as "server too old" and skipped quietly; any other error (400 naming the violated cap, 403 if the token somehow isn't a bot's) is raised, so the framework works against today's production server exactly as it will against tomorrow's.
 
 ## The embed seam
 

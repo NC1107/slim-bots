@@ -93,6 +93,19 @@ async def test_registration_is_a_noop_on_a_server_without_the_route():
     assert ok is False
 
 
+async def test_registration_is_a_noop_on_405_too():
+    from slimbots.commands import Command
+    from slimbots.registration import register_commands
+
+    async def handler(ctx):
+        pass
+
+    client = FakeAsyncClient()
+    client.respond("PUT", "/bots/commands", ApiError(405, {"error": "method not allowed"}))
+    ok = await register_commands(client, prefix="!", commands=[Command(handler, name="ping")])
+    assert ok is False
+
+
 async def test_registration_reraises_a_real_error():
     from slimbots.commands import Command
     from slimbots.registration import register_commands
