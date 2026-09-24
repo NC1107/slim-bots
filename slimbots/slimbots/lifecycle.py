@@ -27,13 +27,20 @@ async def run_with_shutdown(coro_factory):
     on `docker compose up -d --build`, not only on a deliberate stop - every
     bot in this repo runs that way, so this matters on an ordinary redeploy,
     not just an intentional shutdown. Returns the coroutine's own result, or
-    0 on a clean cancellation.
+    0 once our own signal handler is what cancelled it - a cancellation this
+    function did not itself request is re-raised rather than swallowed,
+    since absorbing a cancellation that was never ours to catch would be a
+    real bug in a function meant to be reusable, not just a top-level entry
+    point.
     """
     loop = asyncio.get_event_loop()
     task = asyncio.ensure_future(coro_factory())
     registered = []
+    shutdown_requested = False
 
     def _cancel():
+        nonlocal shutdown_requested
+        shutdown_requested = True
         print("shutting down", file=sys.stderr)
         task.cancel()
 
@@ -47,6 +54,8 @@ async def run_with_shutdown(coro_factory):
     try:
         return await task
     except asyncio.CancelledError:
+        if not shutdown_requested:
+            raise
         return 0
     finally:
         for sig in registered:

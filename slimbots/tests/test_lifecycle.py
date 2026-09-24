@@ -63,3 +63,11 @@ async def test_run_with_shutdown_exits_cleanly_on_sigterm():
 
     result = await asyncio.wait_for(run_with_shutdown(work), timeout=2)
     assert result == 0
+
+
+async def test_run_with_shutdown_reraises_a_cancellation_it_did_not_request():
+    async def work():
+        raise asyncio.CancelledError()
+
+    with pytest.raises(asyncio.CancelledError):
+        await run_with_shutdown(work)
