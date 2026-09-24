@@ -61,4 +61,5 @@ yet, so they are on you:
 
 ## Licence
 
-Same terms as slim-m. Copy freely.
+[PolyForm Noncommercial 1.0.0](LICENSES/LicenseRef-PolyForm-Noncommercial-1.0.0.txt), the same terms as slim-m.
+The templates are free to copy and adapt under those terms - noncommercial use, not "copy freely" without qualification.
