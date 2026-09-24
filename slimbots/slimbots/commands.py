@@ -19,6 +19,51 @@ def _usage_token(param):
     return f"<{name}...>" if is_rest else f"<{name}>"
 
 
+async def _convert_int(token, name):
+    try:
+        return int(token)
+    except ValueError as err:
+        raise BadArgument(f"`{name}` must be a whole number, got `{token}`") from err
+
+
+async def _convert_float(token, name):
+    try:
+        return float(token)
+    except ValueError as err:
+        raise BadArgument(f"`{name}` must be a number, got `{token}`") from err
+
+
+async def _convert_duration(token, name):
+    parsed = Duration.parse(token)
+    if parsed is None:
+        raise BadArgument(f"`{name}` must be a duration like `10m` or `2h30m`, got `{token}`")
+    return parsed
+
+
+async def _convert_time_of_day(token, name):
+    parsed = TimeOfDay.parse(token)
+    if parsed is None:
+        raise BadArgument(f"`{name}` must be a time like `14:30`, got `{token}`")
+    return parsed
+
+
+async def _convert_member(ctx, token, name):
+    needle = token.lstrip("@")
+    member = await ctx.bot.space.get_member(needle)
+    if member is None:
+        try:
+            member = await ctx.bot.space.fetch_member(needle)
+        except ApiError:
+            member = None
+    if member is None:
+        raise BadArgument(f"no member called `{token}` here")
+    return member
+
+
+# Every annotation `_convert` recognizes that doesn't need `ctx` - Member is the one exception, handled directly.
+_SIMPLE_CONVERTERS = {int: _convert_int, float: _convert_float, Duration: _convert_duration, TimeOfDay: _convert_time_of_day}
+
+
 class Command:
     """One `@bot.command`-decorated handler, plus everything it was declared with."""
 
@@ -49,38 +94,21 @@ class Command:
             raise CommandOnCooldown(message)
 
     async def _convert(self, ctx, annotation, token, name):
-        if annotation is int:
-            try:
-                return int(token)
-            except ValueError as err:
-                raise BadArgument(f"`{name}` must be a whole number, got `{token}`") from err
-        if annotation is float:
-            try:
-                return float(token)
-            except ValueError as err:
-                raise BadArgument(f"`{name}` must be a number, got `{token}`") from err
         if annotation is Member:
-            needle = token.lstrip("@")
-            member = await ctx.bot.space.get_member(needle)
-            if member is None:
-                try:
-                    member = await ctx.bot.space.fetch_member(needle)
-                except ApiError:
-                    member = None
-            if member is None:
-                raise BadArgument(f"no member called `{token}` here")
-            return member
-        if annotation is Duration:
-            parsed = Duration.parse(token)
-            if parsed is None:
-                raise BadArgument(f"`{name}` must be a duration like `10m` or `2h30m`, got `{token}`")
-            return parsed
-        if annotation is TimeOfDay:
-            parsed = TimeOfDay.parse(token)
-            if parsed is None:
-                raise BadArgument(f"`{name}` must be a time like `14:30`, got `{token}`")
-            return parsed
+            return await _convert_member(ctx, token, name)
+        converter = _SIMPLE_CONVERTERS.get(annotation)
+        if converter is not None:
+            return await converter(token, name)
         return token
+
+    def _rest_value(self, tokens, i, param):
+        """The rest-of-message value for the last, str-annotated param; `param`'s default if nothing is left."""
+        rest = " ".join(tokens[i:])
+        if rest:
+            return rest
+        if param.default is not _NO_DEFAULT:
+            return param.default
+        raise MissingRequiredArgument(param.name)
 
     async def convert_args(self, ctx, raw_args):
         """Converts each whitespace-split token per the signature; see docs/framework.md."""
@@ -89,16 +117,8 @@ class Command:
         i = 0
         for idx, param in enumerate(self.params):
             annotation = param.annotation if param.annotation is not _NO_DEFAULT else str
-            is_last_rest = idx == len(self.params) - 1 and annotation is str
-            if is_last_rest:
-                rest = " ".join(tokens[i:])
-                if not rest:
-                    if param.default is not _NO_DEFAULT:
-                        values.append(param.default)
-                    else:
-                        raise MissingRequiredArgument(param.name)
-                else:
-                    values.append(rest)
+            if idx == len(self.params) - 1 and annotation is str:
+                values.append(self._rest_value(tokens, i, param))
                 i = len(tokens)
                 continue
             if i >= len(tokens):

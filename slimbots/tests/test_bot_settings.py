@@ -24,10 +24,12 @@ def test_a_missing_required_setting_is_reported_at_start_not_at_call_time(monkey
     bot = Bot()
     value = bot.setting("JELLYFIN_URL", required=True)  # never raises here
     assert value is None
-    with pytest.raises(RuntimeError) as excinfo:
-        import asyncio
 
-        asyncio.run(bot.start())
+    import asyncio
+
+    coro = bot.start()
+    with pytest.raises(RuntimeError) as excinfo:
+        asyncio.run(coro)
     assert "JELLYFIN_URL" in str(excinfo.value)
 
 

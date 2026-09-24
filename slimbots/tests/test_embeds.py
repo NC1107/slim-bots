@@ -70,7 +70,8 @@ async def test_context_reply_with_only_an_embed_never_sends_blank_content():
     ctx, client = _ctx()
     await ctx.reply(embed=Embed(title="Balance").add_field("chips", "100"))
     content = client.calls[-1][2]["content"]
-    assert isinstance(content, str) and content != ""
+    assert isinstance(content, str)
+    assert content != ""
     assert "Balance" in content
     assert client.calls[-1][2]["embeds"]
 

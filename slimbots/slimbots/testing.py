@@ -109,4 +109,5 @@ class FakeAsyncClient(AsyncClient):
         raise KeyError(f"FakeAsyncClient: no response queued for {method} {path} - call .respond() first")
 
     async def aclose(self):
-        pass
+        """Closes the real httpx client `AsyncClient.__init__` opened underneath, even though `call` never uses it."""
+        await super().aclose()

@@ -21,7 +21,8 @@ async def test_move_posts_a_move_op():
     body = client.calls[-1][2]
     assert body["kind"] == "move"
     assert body["object_id"] == "o1"
-    assert body["x"] == 10 and body["y"] == 20
+    assert body["x"] == 10
+    assert body["y"] == 20
 
 
 async def test_remove_posts_a_remove_op_with_every_id():
@@ -40,5 +41,6 @@ async def test_viewport_sends_the_rectangle_as_query_params():
     canvas = Canvas(client, "c1")
     await canvas.viewport(min_x=0, min_y=0, max_x=100, max_y=100)
     method, path, body, params = client.calls[-1]
-    assert method == "GET" and path == "/channels/c1/canvas/objects"
+    assert method == "GET"
+    assert path == "/channels/c1/canvas/objects"
     assert params == {"min_x": 0, "min_y": 0, "max_x": 100, "max_y": 100, "limit": 100}

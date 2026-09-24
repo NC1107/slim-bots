@@ -44,6 +44,14 @@ def is_retryable(err):
     return isinstance(err, ApiError) and (err.status is None or err.status == 429 or err.status >= 500)
 
 
+def _error_from_response(response):
+    try:
+        detail = response.json()
+    except ValueError:
+        detail = response.text
+    return ApiError(response.status_code, detail)
+
+
 class AsyncClient:
     """An authenticated async slim-m REST client for one bot token."""
 
@@ -71,29 +79,26 @@ class AsyncClient:
     def socket_url(self):
         return socket_url(self.base)
 
+    async def _send_once(self, method, path, body, params, headers, raw_body):
+        if raw_body is not None:
+            return await self._http.request(method, path, content=raw_body, params=params, headers=headers)
+        return await self._http.request(method, path, json=body, params=params, headers=headers)
+
     async def call(self, method, path, body=None, *, params=None, headers=None, raw_body=None,
                     retries=5, base_delay=0.5, max_delay=8.0, sleep=asyncio.sleep):
         """One authenticated call, retrying a genuinely uncertain outcome; `raw_body` sends bytes as-is (an attachment)."""
         attempt = 0
         while True:
             try:
-                if raw_body is not None:
-                    response = await self._http.request(method, path, content=raw_body, params=params, headers=headers)
-                else:
-                    response = await self._http.request(method, path, json=body, params=params, headers=headers)
+                response = await self._send_once(method, path, body, params, headers, raw_body)
             except httpx.HTTPError as err:
-                api_err = ApiError(None, str(err))
                 if attempt >= retries:
-                    raise api_err from err
+                    raise ApiError(None, str(err)) from err
                 await sleep(min(base_delay * (2**attempt), max_delay))
                 attempt += 1
                 continue
             if response.status_code >= 400:
-                try:
-                    detail = response.json()
-                except ValueError:
-                    detail = response.text
-                err = ApiError(response.status_code, detail)
+                err = _error_from_response(response)
                 if attempt >= retries or not is_retryable(err):
                     raise err
                 await sleep(min(base_delay * (2**attempt), max_delay))
