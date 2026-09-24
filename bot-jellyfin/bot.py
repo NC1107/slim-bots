@@ -143,10 +143,44 @@ only the one live server available.
 - **Retrying a failed image upload separately from the message it
   belongs to.** A poster that fails to fetch or upload just means that
   one message posts without an attachment; the text still goes out.
+
+## Commands, per-library routing, and filtering
+
+Set `SLIMM_COMMAND_CHANNEL` to also open a websocket connection and answer
+`!jellyfin search <query>`, `!jellyfin recent [days]` and `!jellyfin help`
+there, alongside the polling loop above - unset, this bot behaves exactly
+as it always has, poll-only, no websocket at all. Both commands hit
+Jellyfin directly rather than reading `posted_items`, so they answer from
+the library's own current state, not from what this bot happened to have
+posted. `slimbots.limits.Cooldown` guards both against being fired rapidly
+enough to hammer Jellyfin, and `slimbots.limits.require_len`/`require_int`
+bound the query text and the day count before either ever reaches a
+request. `slimbots.AuthorFilter` keeps this from ever answering another bot
+in the fleet, the same as every other template built on `slimbots`.
+
+`JELLYFIN_LIBRARY_ROUTES` (`libraryId:channelId,...`) sends a library's own
+new-item posts to a channel other than `SLIMM_CHANNEL`; a library not
+listed still falls back to `SLIMM_CHANNEL`. `JELLYFIN_EXCLUDE_GENRES`
+(comma-separated, case-insensitive) drops items carrying any of those
+genres before they are grouped into a post - they are still recorded in
+`posted_items` and still advance the cursor, quietly, so an excluded item
+is never re-fetched and re-considered on every later poll.
+
+## The embed seam
+
+`render_text(card)` is the one function that turns a card - a plain dict of
+`title`, `description`, and the ids/timestamps `send_post` needs - into the
+message body this bot posts today. Every `render_*_post` function above
+builds a card; none of them format text directly. Once slim-m ships message
+embeds, adopting them here should mean writing a `render_embed(card)` next
+to this function and switching `send_post` to call it, not touching the
+five functions that decide what a card says.
 """
 
+import asyncio
 import json
 import os
+import re
 import sqlite3
 import sys
 import time
@@ -154,12 +188,14 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import uuid
+from datetime import datetime, timedelta, timezone
 
-from slimbots import Client, is_token_revoked
+from slimbots import AuthorFilter, Client, Connection, is_token_revoked, limits, run_forever
 
 SLIMM_URL = os.environ.get("SLIMM_URL", "").rstrip("/")
 SLIMM_BOT_TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
 SLIMM_CHANNEL = os.environ.get("SLIMM_CHANNEL", "")
+SLIMM_COMMAND_CHANNEL = os.environ.get("SLIMM_COMMAND_CHANNEL", "")
 JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
 JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
 JELLYFIN_ITEM_TYPES = [t for t in os.environ.get("JELLYFIN_ITEM_TYPES", "Movie,Episode").split(",") if t]
@@ -174,7 +210,58 @@ OVERVIEW_MAX_CHARS = 220
 USER_AGENT = "slimm-bot-jellyfin/1.0"
 NAMESPACE = uuid.UUID("6e6f6220-6a65-6c6c-7966-696e2d626f74")
 
-FIELDS = "Overview,DateCreated,SeriesId,SeriesName,SeasonName,ParentIndexNumber,IndexNumber,AlbumId,Album,AlbumArtist"
+FIELDS = (
+    "Overview,DateCreated,Genres,SeriesId,SeriesName,SeasonName,"
+    "ParentIndexNumber,IndexNumber,AlbumId,Album,AlbumArtist"
+)
+
+COMMAND_COOLDOWN_SECONDS = 20
+MAX_SEARCH_RESULTS = 8
+MAX_QUERY_LENGTH = 100
+RECENT_DEFAULT_DAYS = 7
+RECENT_MAX_DAYS = 30
+
+TRIGGER_SEARCH = re.compile(r"^!jellyfin\s+search\s+(\S[\s\S]*)$", re.IGNORECASE)
+TRIGGER_RECENT = re.compile(r"^!jellyfin\s+recent(?:\s+(\d+))?\s*$", re.IGNORECASE)
+TRIGGER_HELP = re.compile(r"^!jellyfin\s+help\s*$", re.IGNORECASE)
+TRIGGER_ANY = re.compile(r"^!jellyfin\b", re.IGNORECASE)
+
+HELP_TEXT = (
+    "commands: `!jellyfin search <query>`, "
+    f"`!jellyfin recent [days]` (default {RECENT_DEFAULT_DAYS}, max {RECENT_MAX_DAYS})."
+)
+
+
+def parse_library_routes(spec):
+    """`"libraryId:channelId,..."` -> `{library_id: channel_id}`. A library
+    not present here still posts to `SLIMM_CHANNEL`."""
+    routes = {}
+    for pair in spec.split(","):
+        pair = pair.strip()
+        if not pair:
+            continue
+        library_id, _, channel_id = pair.partition(":")
+        if not library_id or not channel_id:
+            raise RuntimeError(f"bad JELLYFIN_LIBRARY_ROUTES entry: {pair!r}")
+        routes[library_id.strip()] = channel_id.strip()
+    return routes
+
+
+JELLYFIN_LIBRARY_ROUTES = parse_library_routes(os.environ.get("JELLYFIN_LIBRARY_ROUTES", ""))
+JELLYFIN_EXCLUDE_GENRES = {
+    g.strip().lower() for g in os.environ.get("JELLYFIN_EXCLUDE_GENRES", "").split(",") if g.strip()
+}
+
+
+def target_channel(library_id):
+    return JELLYFIN_LIBRARY_ROUTES.get(library_id, SLIMM_CHANNEL)
+
+
+def is_excluded(item):
+    if not JELLYFIN_EXCLUDE_GENRES:
+        return False
+    genres = {g.lower() for g in (item.get("Genres") or [])}
+    return bool(genres & JELLYFIN_EXCLUDE_GENRES)
 
 
 class JellyfinAuthError(Exception):
@@ -325,6 +412,7 @@ def _items_since_in_library(library_id, cursor):
             if item["DateCreated"] < cursor:
                 crossed_cursor = True
                 break
+            item["_library_id"] = library_id
             collected[item["Id"]] = item
         if crossed_cursor or len(page) < PAGE_SIZE:
             return collected
@@ -401,10 +489,10 @@ def trimmed_overview(item):
 def render_single_post(item):
     item_type = item.get("Type")
     year = item.get("ProductionYear")
-    label = f"{item_type} added: {item['Name']}" + (f" ({year})" if year else "")
-    overview = trimmed_overview(item)
-    content = f"{label}\n{overview}" if overview else label
-    return post(content, [item["Id"]], item["DateCreated"], poster_item_id=item["Id"])
+    title = f"{item_type} added: {item['Name']}" + (f" ({year})" if year else "")
+    return make_card(
+        title, trimmed_overview(item), [item["Id"]], item["DateCreated"], poster_item_id=item["Id"], library_id=item.get("_library_id")
+    )
 
 
 def render_series_post(episodes):
@@ -421,14 +509,20 @@ def render_series_post(episodes):
             season_order.append(season)
         by_season[season].append(episode)
 
-    lines = [f"{series_name}: {len(episodes)} new episodes"]
+    lines = []
     for season in season_order:
         eps = sorted(e.get("IndexNumber") or 0 for e in by_season[season])
         span = f"episode {eps[0]}" if len(eps) == 1 else f"episodes {eps[0]}-{eps[-1]}"
         lines.append(f"{season}: {len(by_season[season])} ({span})")
-    content = "\n".join(lines)
     max_created = max(e["DateCreated"] for e in episodes)
-    return post(content, [e["Id"] for e in episodes], max_created, poster_item_id=episodes[0]["SeriesId"])
+    return make_card(
+        f"{series_name}: {len(episodes)} new episodes",
+        "\n".join(lines),
+        [e["Id"] for e in episodes],
+        max_created,
+        poster_item_id=episodes[0]["SeriesId"],
+        library_id=episodes[0].get("_library_id"),
+    )
 
 
 def render_episode_post(episode, series_name):
@@ -436,19 +530,33 @@ def render_episode_post(episode, series_name):
     number = episode.get("IndexNumber")
     tag = f"{season} episode {number}" if number is not None else season
     title = episode.get("Name") or ""
-    content = f"New episode: {series_name} - {tag}" + (f' "{title}"' if title else "")
-    return post(content, [episode["Id"]], episode["DateCreated"], poster_item_id=episode.get("SeriesId"))
+    label = f"New episode: {series_name} - {tag}" + (f' "{title}"' if title else "")
+    return make_card(
+        label,
+        None,
+        [episode["Id"]],
+        episode["DateCreated"],
+        poster_item_id=episode.get("SeriesId"),
+        library_id=episode.get("_library_id"),
+    )
 
 
 def render_album_post(tracks):
     artist = tracks[0].get("AlbumArtist") or "Unknown artist"
     album = tracks[0].get("Album") or "Unknown album"
     if len(tracks) == 1:
-        content = f"Track added: {artist} - {tracks[0]['Name']} ({album})"
+        title = f"Track added: {artist} - {tracks[0]['Name']} ({album})"
     else:
-        content = f"Album added: {artist} - {album} ({len(tracks)} tracks)"
+        title = f"Album added: {artist} - {album} ({len(tracks)} tracks)"
     max_created = max(t["DateCreated"] for t in tracks)
-    return post(content, [t["Id"] for t in tracks], max_created, poster_item_id=tracks[0]["AlbumId"])
+    return make_card(
+        title,
+        None,
+        [t["Id"] for t in tracks],
+        max_created,
+        poster_item_id=tracks[0]["AlbumId"],
+        library_id=tracks[0].get("_library_id"),
+    )
 
 
 def render_collapsed_post(item_type, items):
@@ -456,19 +564,37 @@ def render_collapsed_post(item_type, items):
     names = [item["Name"] for item in items[:3]]
     rest = len(items) - len(names)
     named = ", ".join(names) + (f" and {rest} more" if rest > 0 else "")
-    content = f"{len(items)} {plural} added: {named}"
     max_created = max(item["DateCreated"] for item in items)
-    return post(content, [item["Id"] for item in items], max_created, poster_item_id=None)
+    return make_card(
+        f"{len(items)} {plural} added: {named}",
+        None,
+        [item["Id"] for item in items],
+        max_created,
+        poster_item_id=None,
+        library_id=items[0].get("_library_id"),
+    )
 
 
-def post(content, item_ids, max_created, poster_item_id):
+def make_card(title, description, item_ids, max_created, poster_item_id, library_id):
+    """A plain dict describing one message: a title, an optional
+    description, and what `send_post` needs to post and track it. See the
+    module docstring's "The embed seam" for what this is for."""
     return {
-        "content": content,
+        "title": title,
+        "description": description,
         "item_ids": item_ids,
         "max_created": max_created,
         "poster_item_id": poster_item_id,
+        "library_id": library_id,
         "message_id": str(uuid.uuid5(NAMESPACE, ",".join(sorted(item_ids)))),
     }
+
+
+def render_text(card):
+    """Renders a card as the plain-text message body this bot posts today -
+    the seam a future `render_embed(card)` replaces. See the module
+    docstring."""
+    return f"{card['title']}\n{card['description']}" if card.get("description") else card["title"]
 
 
 def upload_poster(client, poster_item_id):
@@ -497,14 +623,20 @@ def upload_poster(client, poster_item_id):
 def send_post(client, entry):
     attachment_id = upload_poster(client, entry["poster_item_id"])
     attachment_ids = [attachment_id] if attachment_id else None
-    client.send(SLIMM_CHANNEL, entry["content"], message_id=entry["message_id"], attachment_ids=attachment_ids)
+    channel_id = target_channel(entry.get("library_id"))
+    client.send(channel_id, render_text(entry), message_id=entry["message_id"], attachment_ids=attachment_ids)
 
 
 def poll_once(client, conn):
     items = fetch_new_items(conn)
     if not items:
         return
-    for entry in build_posts(items):
+    excluded = [item for item in items if is_excluded(item)]
+    if excluded:
+        mark_posted(conn, [item["Id"] for item in excluded], quiet=True)
+        advance_cursor(conn, max(item["DateCreated"] for item in excluded))
+    postable = [item for item in items if not is_excluded(item)]
+    for entry in build_posts(postable):
         try:
             send_post(client, entry)
         except Exception as err:
@@ -514,6 +646,130 @@ def poll_once(client, conn):
             break
         mark_posted(conn, entry["item_ids"])
         advance_cursor(conn, entry["max_created"])
+
+
+async def poll_loop(client, conn):
+    while True:
+        try:
+            poll_once(client, conn)
+        except JellyfinAuthError:
+            print("jellyfin api key rejected - exiting", file=sys.stderr)
+            return 1
+        except Exception as err:
+            if is_token_revoked(err):
+                print("slimm bot token rejected - exiting", file=sys.stderr)
+                return 1
+            print(f"{type(err).__name__}: {err}, retrying next cycle", file=sys.stderr)
+        await asyncio.sleep(JELLYFIN_POLL_SECONDS)
+
+
+def search_items(query, limit):
+    params = {
+        "searchTerm": query,
+        "recursive": "true",
+        "fields": FIELDS,
+        "includeItemTypes": ",".join(JELLYFIN_ITEM_TYPES) if JELLYFIN_ITEM_TYPES else None,
+        "limit": limit,
+    }
+    params = {k: v for k, v in params.items() if v is not None}
+    return jf_get("/Items", params).get("Items", [])
+
+
+def run_search(client, cooldown, author_id, query, reply_to_id):
+    wait_message = cooldown.check(author_id)
+    if wait_message:
+        client.send(SLIMM_COMMAND_CHANNEL, wait_message, reply_to_id=reply_to_id)
+        return
+    try:
+        query = limits.require_len(query.strip(), max_len=MAX_QUERY_LENGTH, field="a search query")
+    except limits.ValidationError as err:
+        client.send(SLIMM_COMMAND_CHANNEL, str(err), reply_to_id=reply_to_id)
+        return
+    try:
+        items = search_items(query, MAX_SEARCH_RESULTS)
+    except JellyfinAuthError:
+        client.send(SLIMM_COMMAND_CHANNEL, "jellyfin search is unavailable right now.", reply_to_id=reply_to_id)
+        return
+    if not items:
+        client.send(SLIMM_COMMAND_CHANNEL, f'nothing found for "{query}".', reply_to_id=reply_to_id)
+        return
+    lines = [
+        f"- {item.get('Name')}"
+        + (f" ({item['ProductionYear']})" if item.get("ProductionYear") else "")
+        + f" [{item.get('Type')}]"
+        for item in items
+    ]
+    client.send(SLIMM_COMMAND_CHANNEL, "\n".join(lines), reply_to_id=reply_to_id)
+
+
+def run_recent(client, cooldown, author_id, days_text, reply_to_id):
+    wait_message = cooldown.check(author_id)
+    if wait_message:
+        client.send(SLIMM_COMMAND_CHANNEL, wait_message, reply_to_id=reply_to_id)
+        return
+    try:
+        days = limits.require_int(
+            days_text or str(RECENT_DEFAULT_DAYS), min_value=1, max_value=RECENT_MAX_DAYS, field="days"
+        )
+    except limits.ValidationError as err:
+        client.send(SLIMM_COMMAND_CHANNEL, str(err), reply_to_id=reply_to_id)
+        return
+    try:
+        items = items_since((datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%S.0000000Z"))
+    except JellyfinAuthError:
+        client.send(SLIMM_COMMAND_CHANNEL, "jellyfin is unavailable right now.", reply_to_id=reply_to_id)
+        return
+    if not items:
+        client.send(SLIMM_COMMAND_CHANNEL, f"nothing added in the last {days} day(s).", reply_to_id=reply_to_id)
+        return
+    counts = {}
+    for item in items:
+        item_type = item.get("Type", "item")
+        counts[item_type] = counts.get(item_type, 0) + 1
+    summary = ", ".join(f"{count} {item_type}" for item_type, count in sorted(counts.items()))
+    client.send(
+        SLIMM_COMMAND_CHANNEL,
+        f"{len(items)} item(s) added in the last {days} day(s): {summary}",
+        reply_to_id=reply_to_id,
+    )
+
+
+def handle_command(client, authors, cooldown, me, message):
+    author_id = message.get("author_id")
+    if not authors.should_handle(author_id, me):
+        return
+    content = (message.get("content") or "").strip()
+    reply_to_id = message.get("id")
+
+    if match := TRIGGER_SEARCH.match(content):
+        run_search(client, cooldown, author_id, match.group(1), reply_to_id)
+    elif match := TRIGGER_RECENT.match(content):
+        run_recent(client, cooldown, author_id, match.group(1), reply_to_id)
+    elif TRIGGER_HELP.match(content) or TRIGGER_ANY.match(content):
+        client.send(SLIMM_COMMAND_CHANNEL, HELP_TEXT, reply_to_id=reply_to_id)
+
+
+async def command_loop(client):
+    """Only runs when SLIMM_COMMAND_CHANNEL is set - unset, this coroutine
+    returns immediately and the bot behaves exactly as it always has."""
+    if not SLIMM_COMMAND_CHANNEL:
+        return 0
+    authors = AuthorFilter(client)
+    cooldown = limits.Cooldown(COMMAND_COOLDOWN_SECONDS)
+
+    async def attempt(reset_delay):
+        me = client.me()["id"]
+        async with await Connection.open(client) as socket:
+            print("commands: listening", flush=True)
+            reset_delay()
+            async for frame in socket.frames():
+                # Ignore a frame type we do not know; see bot-ping's docstring.
+                if frame.get("type") != "message.created" or frame.get("channel_id") != SLIMM_COMMAND_CHANNEL:
+                    continue
+                message = frame.get("message") or {}
+                handle_command(client, authors, cooldown, me, message)
+
+    return await run_forever(attempt)
 
 
 def check_config():
@@ -539,7 +795,7 @@ def check_config():
     return True
 
 
-def main():
+async def main():
     if not check_config():
         return 2
 
@@ -564,20 +820,22 @@ def main():
         return 2
 
     print(f"watching {', '.join(JELLYFIN_ITEM_TYPES) or 'no types (misconfigured)'}, polling every {JELLYFIN_POLL_SECONDS}s", flush=True)
+    if SLIMM_COMMAND_CHANNEL:
+        print(f"commands enabled on {SLIMM_COMMAND_CHANNEL}", flush=True)
 
-    while True:
-        try:
-            poll_once(client, conn)
-        except JellyfinAuthError:
-            print("jellyfin api key rejected - exiting", file=sys.stderr)
-            return 1
-        except Exception as err:
-            if is_token_revoked(err):
-                print("slimm bot token rejected - exiting", file=sys.stderr)
-                return 1
-            print(f"{type(err).__name__}: {err}, retrying next cycle", file=sys.stderr)
-        time.sleep(JELLYFIN_POLL_SECONDS)
+    tasks = [asyncio.create_task(poll_loop(client, conn))]
+    if SLIMM_COMMAND_CHANNEL:
+        tasks.append(asyncio.create_task(command_loop(client)))
+
+    done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+    for task in pending:
+        task.cancel()
+    for task in done:
+        result = task.result()
+        if result:
+            return result
+    return 0
 
 
 if __name__ == "__main__":
-    raise SystemExit(main() or 0)
+    raise SystemExit(asyncio.run(main()) or 0)

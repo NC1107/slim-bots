@@ -39,9 +39,12 @@ tested here - there was only the one live server to test against.
 | --- | --- | --- |
 | `JELLYFIN_ITEM_TYPES` | `Movie,Episode` | Comma-separated Jellyfin item types to watch. `Audio` is deliberately not in the default - see Batching. |
 | `JELLYFIN_LIBRARY_IDS` | unset (whole server) | Comma-separated library (`parentId`) UUIDs to scope to. Find one by opening the library in Jellyfin's web UI and reading `ParentId` off the URL - `GET /Library/MediaFolders` also lists them, but needs an elevated key, more than this bot otherwise asks for. |
+| `JELLYFIN_LIBRARY_ROUTES` | unset | `libraryId:channelId,...` - sends a library's new-item posts to a channel other than `SLIMM_CHANNEL`. A library not listed still falls back to `SLIMM_CHANNEL`. |
+| `JELLYFIN_EXCLUDE_GENRES` | unset | Comma-separated, case-insensitive. An item carrying any of these genres is recorded as seen and never posted - see "Commands and filtering" below. |
 | `JELLYFIN_POLL_SECONDS` | `300` | How often to check Jellyfin for anything new. |
 | `JELLYFIN_BATCH_THRESHOLD` | `3` | More than this many ungrouped items (movies, mainly) of the same type in one poll collapse into one summary message instead of one card each. |
 | `SLIMM_DB_PATH` | `jellyfin_watch.db` | Where the sqlite cursor and dedupe table live. |
+| `SLIMM_COMMAND_CHANNEL` | unset | Also open a websocket and answer `!jellyfin search`/`!jellyfin recent`/`!jellyfin help` there - see "Commands and filtering". Unset, this bot never opens a websocket at all, exactly as before. |
 
 ## Cold start
 
@@ -134,6 +137,41 @@ describes for a client-generated message id. Verified live against the
 running deployment: sending the same message id twice with different
 content stored only the first content, exactly as documented.
 
+## Commands and filtering
+
+Setting `SLIMM_COMMAND_CHANNEL` turns on a second, independent loop that
+opens a websocket and answers three commands there - the polling loop above
+is completely unaffected either way:
+
+- `!jellyfin search <query>` - up to 8 results straight from Jellyfin's own
+  search, not from `posted_items`, so it can find something this bot never
+  posted about (added before this bot ever ran, or excluded by
+  `JELLYFIN_EXCLUDE_GENRES`).
+- `!jellyfin recent [days]` - a count-by-type summary of what has been added
+  in the last N days (default 7, max 30), reusing the same `DateCreated`
+  paging the poll loop uses, just against a wall-clock cutoff instead of the
+  stored cursor.
+- `!jellyfin help` - and anything starting with `!jellyfin` that matches
+  neither command above.
+
+Both real commands are guarded by `slimbots.limits.Cooldown` (one shared
+20-second-per-user cooldown, so a burst of searches cannot hammer Jellyfin)
+and bound their input with `slimbots.limits.require_len`/`require_int`
+before it ever reaches a Jellyfin request. `slimbots.AuthorFilter` keeps
+this bot from ever answering another bot in the fleet.
+
+`JELLYFIN_LIBRARY_ROUTES` sends a library's new-item posts to their own
+channel instead of all of them landing in `SLIMM_CHANNEL`. `item["_library_id"]`
+is tagged onto every item while paging, purely in-memory - it is not a
+Jellyfin field - so `send_post` can look up the right destination per
+group without a second Jellyfin call.
+
+`JELLYFIN_EXCLUDE_GENRES` drops a matching item before it is grouped into a
+post, but still marks it `posted_items` and still advances the cursor
+(quietly, the same way the cold-start boundary is seeded) - otherwise an
+excluded item would be re-fetched and re-considered on every single poll
+forever, since nothing would ever mark it as handled.
+
 ## What was tested live
 
 Both sides were tested end to end against the real, live deployments, in a
@@ -160,6 +198,16 @@ metadata resave. Worth remembering for anything else built against
 Jellyfin from its docs alone: verify field and sort behavior against a
 real instance before trusting either.
 
+**Commands, routing, and filtering (this round) were not validated live**,
+unlike the polling core above - there was no working credential available
+to open a private test channel this round. They are covered by
+`test_bot.py` against `FakeClient` and a monkeypatched Jellyfin, and
+`search_items`/`items_since` are the same functions the (live-tested)
+polling path already uses, but a search command hitting a real Jellyfin
+server, and the cooldown behaving correctly under a real reconnect, are
+still worth a real run before trusting them the way the rest of this file
+has been trusted.
+
 ## What this deliberately does not do
 
 - **Push instead of poll.** Jellyfin has no first-class webhook in core -
@@ -178,10 +226,24 @@ real instance before trusting either.
 - **Retrying a failed poster separately from its message.** A poster that
   fails to fetch or upload just means that message posts without an
   attachment - the text still goes out, never blocked on the image.
-- **Answering commands, or listening to slim-m's websocket at all.** This
-  bot only ever writes to slim-m; it has nothing to react to.
+- **Listening to slim-m's websocket at all when `SLIMM_COMMAND_CHANNEL` is
+  unset.** The polling loop never has, and does not need to now either.
 - **Catching up a very long outage in one poll.** `MAX_ITEMS_PER_POLL`
   caps how far back a single poll pages. A backlog bigger than that just
   takes more poll cycles to work through - the cursor still only advances
   as far as what actually got posted - rather than this bot ever silently
   dropping the difference.
+- **A per-library cursor**, even with `JELLYFIN_LIBRARY_ROUTES` now
+  routing per library. The single shared cursor and its `posted_items`
+  backstop (above) are unaffected by routing; only which channel a post
+  lands in changed.
+- **Fuzzy or ranked search.** `!jellyfin search` passes the query straight
+  to Jellyfin's own `searchTerm`; whatever ranking or matching Jellyfin
+  itself does is what a caller gets.
+
+## Tests
+
+`python3 test_bot.py` - stdlib plus `slimbots.testing.FakeClient`, no live
+deployment and no real Jellyfin server; Jellyfin calls are monkeypatched.
+Covers grouping/rendering into cards, genre exclusion, library routing, and
+the search/recent/help commands including the cooldown and input bounds.

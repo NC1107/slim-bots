@@ -1,5 +1,7 @@
 # The Jellyfin side is plain HTTP/JSON with no dependency. The slim-m side
-# uses slimbots for auth, the REST call and the attachment upload.
-# Needs the raw-body Client.call added after 0.1.0 - pin to git until a
-# release carries it, then switch to slim-m>=0.2.0 like the other templates.
+# uses slimbots for auth, the REST call, the attachment upload, and (only
+# when SLIMM_COMMAND_CHANNEL is set) AuthorFilter and the limits module.
+# Those two are unreleased as of this commit - 0.3.0, landing in the
+# feat/bot-safeguards-library branch - so this stays pinned to git rather
+# than switching to slim-m>=0.3.0 until that version is actually published.
 slim-m @ git+https://github.com/NC1107/slim-bots.git@main#subdirectory=slimbots
