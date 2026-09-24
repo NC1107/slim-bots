@@ -8,22 +8,43 @@ SURRENDER = "surrender"
 STOOD = "stood"
 
 
-def init_table(conn):
-    conn.execute(
-        """
-        CREATE TABLE IF NOT EXISTS hands (
-            channel_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            hand_index INTEGER NOT NULL,
-            stake INTEGER NOT NULL,
-            player_cards TEXT NOT NULL,
-            dealer_cards TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'active',
-            started_at INTEGER NOT NULL,
-            PRIMARY KEY (channel_id, user_id, hand_index)
-        )
-        """
+_HANDS_SCHEMA = """
+    CREATE TABLE IF NOT EXISTS hands (
+        channel_id TEXT NOT NULL,
+        user_id TEXT NOT NULL,
+        hand_index INTEGER NOT NULL,
+        stake INTEGER NOT NULL,
+        player_cards TEXT NOT NULL,
+        dealer_cards TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'active',
+        started_at INTEGER NOT NULL,
+        PRIMARY KEY (channel_id, user_id, hand_index)
     )
+"""
+
+
+def init_table(conn):
+    _migrate_legacy_hands_table(conn)
+    conn.execute(_HANDS_SCHEMA)
+
+
+def _migrate_legacy_hands_table(conn):
+    """0.2.0's hands had no hand_index/status and a 2-column primary key ALTER TABLE can't widen,
+    so a surviving in-progress hand is carried over by rebuilding the table, not patching it."""
+    tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    if "hands" not in tables:
+        return
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(hands)")}
+    if "hand_index" in columns:
+        return
+    conn.execute("ALTER TABLE hands RENAME TO hands_pre_0_3_0")
+    conn.execute(_HANDS_SCHEMA)
+    conn.execute(
+        "INSERT INTO hands (channel_id, user_id, hand_index, stake, player_cards, dealer_cards, status, started_at) "
+        "SELECT channel_id, user_id, 0, stake, player_cards, dealer_cards, 'active', started_at FROM hands_pre_0_3_0"
+    )
+    conn.execute("DROP TABLE hands_pre_0_3_0")
+    conn.commit()
 
 
 def has_round(conn, channel_id, user_id):

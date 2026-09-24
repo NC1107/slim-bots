@@ -7,6 +7,7 @@ import uuid
 
 from slimbots import Bot, Duration, Embed, RateLimiter, TimeOfDay
 from slimbots.limits import ValidationError, require_len, require_range
+from slimbots.migrations import ensure_columns
 
 import recurrence
 
@@ -23,13 +24,6 @@ DEFAULT_RECUR_HOUR = 9
 
 
 # --- durable state ---
-
-
-def _ensure_column(conn, table, column, declaration):
-    """A light manual migration, so an older database file picks up new columns without a fresh file."""
-    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
-    if column not in existing:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
 
 def init_db(conn):
@@ -52,15 +46,14 @@ def init_db(conn):
         );
         """
     )
-    for column, declaration in (
-        ("recur_kind", "TEXT"),
-        ("recur_interval_seconds", "INTEGER"),
-        ("recur_weekday", "INTEGER"),
-        ("recur_hour", "INTEGER"),
-        ("recur_minute", "INTEGER"),
-        ("recur_tz", "TEXT"),
-    ):
-        _ensure_column(conn, "reminders", column, declaration)
+    ensure_columns(conn, "reminders", {
+        "recur_kind": "TEXT",
+        "recur_interval_seconds": "INTEGER",
+        "recur_weekday": "INTEGER",
+        "recur_hour": "INTEGER",
+        "recur_minute": "INTEGER",
+        "recur_tz": "TEXT",
+    })
     conn.commit()
 
 

@@ -1,6 +1,6 @@
 [project]
 name = "slim-m"
-version = "0.3.0"
+version = "0.4.0"
 description = "A discord.py-shaped bot framework for slim-m: Bot, commands, ctx, a live Space model"
 readme = "README.md"
 requires-python = ">=3.9"

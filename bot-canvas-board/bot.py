@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """bot-canvas-board: a todo board on a channel's Voice Canvas - `!board add/done/move/clear/list`; see README.md."""
 
-from slimbots import ApiError, Bot, Canvas
+import sys
+
+from slimbots import ApiError, Bot
+from slimbots.migrations import ensure_columns
 
 # A note's box is 220x140, the app's own quick-placement default, so a note this bot places renders identically to a hand-drawn one.
 BOARD_X = 0.0
@@ -34,11 +37,44 @@ def init_db(conn):
         );
         """
     )
+    ensure_columns(conn, "items", {"added_by": "TEXT"})
     conn.commit()
 
 
 bot = Bot(prefix="!", require_channels=True, default_data_path="board.db", store_migrate=init_db)
-canvas = None  # set once bot.channel is known, in on_connect
+CANVAS_CHANNEL = bot.setting("CANVAS_CHANNEL")
+
+canvas = None  # set once the canvas channel is resolved, in on_connect
+canvas_channel_name = None
+
+
+def _validated_voice_channel(id_or_name, *, source):
+    channel = bot.space.get_channel(id_or_name)
+    if channel is None:
+        raise RuntimeError(f"{source}={id_or_name!r} does not name a channel this bot can see")
+    if channel.kind != "voice":
+        raise RuntimeError(f"{source}={id_or_name!r} names a {channel.kind} channel - the canvas needs a voice channel")
+    if bot.channels is not None and channel.id not in bot.channels:
+        raise RuntimeError(f"{source}={id_or_name!r} must also be in SLIMM_CHANNELS so its canvas events reach this bot")
+    return channel
+
+
+def resolve_canvas_channel():
+    """CANVAS_CHANNEL is the normal path; an unset one falls back to the single-channel 0.3.0 behaviour."""
+    if CANVAS_CHANNEL:
+        return _validated_voice_channel(CANVAS_CHANNEL, source="CANVAS_CHANNEL")
+    fallback = bot.channel
+    if fallback is None:
+        raise RuntimeError(
+            "set CANVAS_CHANNEL to the voice channel this board draws on - SLIMM_CHANNELS names more "
+            "than one channel here, so there is no single one to fall back to"
+        )
+    print(
+        "warning: CANVAS_CHANNEL is not set - drawing on the one SLIMM_CHANNELS channel like before 0.3.1; "
+        "set CANVAS_CHANNEL to take commands from a separate text channel instead",
+        file=sys.stderr,
+    )
+    return _validated_voice_channel(fallback, source="SLIMM_CHANNELS")
 
 
 async def name_of(author_id):
@@ -186,9 +222,9 @@ async def move_item(ctx, n, to):
 async def list_items(ctx):
     rows = await bot.store.run(active_items)
     if not rows:
-        await ctx.reply("the board is empty")
+        await ctx.reply(f"the board is empty (drawing on #{canvas_channel_name})")
         return
-    lines = []
+    lines = [f"drawing on #{canvas_channel_name}:"]
     for _, slot, text, _, added_by in rows:
         name = await name_of(added_by) if added_by else None
         lines.append(f"#{slot + 1}: {text} (added by {name})" if name else f"#{slot + 1}: {text}")
@@ -242,8 +278,10 @@ async def on_canvas_cleared(frame):
 
 @bot.event
 async def on_connect():
-    global canvas
-    canvas = Canvas(bot.client, bot.channel)
+    global canvas, canvas_channel_name
+    channel = resolve_canvas_channel()
+    canvas_channel_name = channel.name
+    canvas = bot.canvas(channel.id)
     await reconcile()
 
 

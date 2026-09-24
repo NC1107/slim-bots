@@ -96,6 +96,7 @@ Global versus channel-scoped follows the same test as before: an event about a c
 ## The Canvas model
 
 `Canvas(bot.client, channel_id)` wraps one channel's Voice Canvas: `await canvas.place(kind, x=, y=, w=, h=, props=)`, `move(object_id, x=, y=)`, `remove(object_ids)`, `clear(before_seq)`, `restore(target_op)`, `reorder(object_id, z_index)`, and `viewport(min_x=, min_y=, max_x=, max_y=)` for a bounded-rectangle read - `bot-canvas-board` is the worked example (a fixed-size sticky-note board).
+`Canvas` was never tied to "the channel a command came from" - `channel_id` is just whatever you pass it, so a bot can take commands in one channel and draw on a different one's canvas without anything special. `bot.canvas(channel_id)` is the convenience form of the same thing: `bot.canvas(channel_id)` is exactly `Canvas(bot.client, channel_id, bot=bot)`, wired for the live gateway signals (`send_cursor`/`send_stroke_preview`) too, without repeating `bot.client`/`bot=bot` at every call site.
 `clear`/`restore`/`reorder` are the same `POST canvas/ops` endpoint `move`/`remove` already use, just a different `kind` - `clear` needs MANAGE_CANVAS unconditionally and a `before_seq` fence (never optional, so a lost response retried without one cannot wipe an interval it should not); `restore` names a prior `remove`/`clear` op's own id, not an object id; `reorder` takes an explicit `z_index` the caller computes (typically one above/below every value it already knows, for "bring to front"/"send to back") rather than a server-computed delta.
 `on_canvas_object_placed`, `on_canvas_objects_removed` and `on_canvas_cleared` are channel-scoped events - dispatched only for a channel in `channels`, the same gate `message.created` gets, since (unlike the member/role events) these carry a `channel_id` and are not deployment-wide.
 
@@ -140,6 +141,16 @@ A bot with `channels` set gets a persisted, cross-restart `seq` cursor for free,
 The functions passed to `run()` are unchanged from before this - `get_balance(conn, user_id)`, `due_reminders(conn, now)`, and so on all still take a raw `sqlite3.Connection` and run synchronously; `run()` just moves *where* that call happens.
 That is why `bot-casino/test_concurrency.py` did not need to change at all: it drives those same functions directly against its own real connections on real threads, never through `Bot` or `Store`.
 A background sweep that already ran on its own thread (`bot-jellyfin`'s poster refresh used to reach for `asyncio.to_thread` by hand) can just call `bot.store.connection` directly instead, since it was never blocking the event loop in the first place.
+
+## Migrating an existing table
+
+`CREATE TABLE IF NOT EXISTS` only ever creates a table that does not exist yet - a bot's own DB file carried over from an older release keeps its old columns forever unless something adds the new ones.
+`slimbots.migrations.ensure_columns(conn, table, columns)` is that something: `columns` is `{name: "TYPE [NOT NULL DEFAULT ...]"}`, and it adds whatever the table is actually missing, one `ALTER TABLE ... ADD COLUMN` per column, safe to call on every `init_db` (a column already there is left alone).
+Call it after the `CREATE TABLE IF NOT EXISTS` for that table, inside the same `migrate` function passed to `Bot(store_migrate=...)`, the way `bot-reminders` and `bot-canvas-board` do for their own added columns.
+
+`ensure_columns` cannot widen a `PRIMARY KEY` - SQLite's `ALTER TABLE` has no way to change one on an existing table, only add nullable-or-defaulted columns to it.
+A column that needs to join the primary key (`bot-casino`'s `hands.hand_index`, added alongside real multi-hand support) needs the table rebuilt instead: rename the old table, create the new one, `INSERT INTO ... SELECT` the old rows across with a value for the new key column, drop the old table.
+`bot-casino/blackjack.py`'s `_migrate_legacy_hands_table` is the worked example - it only runs when the table exists without `hand_index`, so it is a one-time rebuild, not something every `init_table` call redoes.
 
 ## Async HTTP
 
