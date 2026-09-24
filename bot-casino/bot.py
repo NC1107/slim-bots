@@ -2,7 +2,6 @@
 """bot-casino: chip balance, coinflip, and blackjack (hit/stand/double/split/surrender); see README.md."""
 
 import asyncio
-import os
 import secrets
 import sqlite3
 import time
@@ -10,8 +9,6 @@ import time
 from slimbots import BadArgument, Bot, Embed, Member, RateLimiter
 
 import blackjack
-
-DB_PATH = os.environ.get("SLIMM_DB_PATH", "casino.db")
 
 DAILY_AMOUNT = 500
 DAILY_COOLDOWN_SECONDS = 20 * 3600
@@ -182,7 +179,7 @@ def _normalize_guess(raw):
     raise BadArgument("call `heads`/`h` or `tails`/`t`")
 
 
-bot = Bot(prefix="!", require_channels=True, cursor_path=DB_PATH)
+bot = Bot(prefix="!", require_channels=True, default_data_path="casino.db")
 _command_limiter = RateLimiter(COMMANDS_PER_WINDOW, COMMAND_WINDOW_SECONDS)
 
 
@@ -524,7 +521,7 @@ async def _maintenance():
 
 
 def main():
-    bot.db = open_db(DB_PATH)
+    bot.db = open_db(bot.data_path)
     try:
         raise SystemExit(bot.run() or 0)
     except RuntimeError as err:
