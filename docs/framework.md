@@ -126,6 +126,15 @@ httpx was already a transitive dependency in this environment, so it costs nothi
 `call()` retries a 429 or 5xx with exponential backoff (slim-m sends no `Retry-After`) and never retries a 401/403/other 4xx - a certain outcome, not an uncertain one.
 `raw_body=` sends bytes as-is instead of JSON-encoding `body`, for an attachment upload (`bot-jellyfin`'s poster re-hosting is the worked example).
 
+## Typed REST wrappers
+
+`AsyncClient.send()` returns a `Message` now, not a raw dict: `await msg.edit(content)`, `await msg.delete()`, `await msg.react(emoji)`/`remove_reaction(emoji)`, `await msg.pin()`/`unpin()`, `await msg.vote(option)`, `await msg.open_thread()` (returns a `Channel`).
+`bot-roles`' listing-message edit and `bot-jellyfin`'s poster upload used to be a raw `bot.client.call("PATCH", ...)`/`call("POST", "/attachments?...", raw_body=...)` - both are the named wrapper now (`edit_message`/`upload_attachment`).
+`AsyncClient.upload_attachment(data, filename=)` returns an `Attachment` whose `.id` is exactly what `send`'s `attachment_ids` takes, so there is no raw dict in between.
+`AsyncClient.list_dms()`/`open_dm(user_id)`/`close_dm(user_id)` wrap the DM routes, each returning (or listing) a `DmConversation`; a DM's `channel_id` works with every ordinary channel route, `send` included.
+
+Every one of these is still a thin, hand-written wrapper over one REST call rather than a generated client - it is not route-shaped, it is "one class with the actions people actually reach for bound to it".
+
 ## Safeguards, and how to opt out
 
 All from PR #6's primitives, now built in rather than something a bot must remember to call:

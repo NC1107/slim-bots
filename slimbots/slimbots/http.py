@@ -1,11 +1,13 @@
 """The async REST side of `Bot`, on httpx rather than `Client`'s urllib; see docs/framework.md for why."""
 
 import asyncio
+import urllib.parse
 import uuid
 
 import httpx
 
 from .client import socket_url
+from .models import Attachment, DmConversation, Message
 
 DEFAULT_TIMEOUT = 15.0
 
@@ -146,7 +148,7 @@ class AsyncClient:
         if embeds:
             body["embeds"] = embeds
         try:
-            return await self.call("POST", f"/channels/{channel_id}/messages", body)
+            data = await self.call("POST", f"/channels/{channel_id}/messages", body)
         except ApiError:
             if not embeds or fallback_content is None:
                 raise
@@ -155,4 +157,52 @@ class AsyncClient:
                 body["reply_to_id"] = reply_to_id
             if attachment_ids:
                 body["attachment_ids"] = attachment_ids
-            return await self.call("POST", f"/channels/{channel_id}/messages", body)
+            data = await self.call("POST", f"/channels/{channel_id}/messages", body)
+        return Message(data, client=self, channel_id=channel_id)
+
+    async def edit_message(self, channel_id, message_id, content):
+        return await self.call("PATCH", f"/channels/{channel_id}/messages/{message_id}", {"content": content})
+
+    async def delete_message(self, channel_id, message_id):
+        await self.call("DELETE", f"/channels/{channel_id}/messages/{message_id}")
+
+    async def add_reaction(self, message_id, emoji):
+        await self.call("PUT", f"/messages/{message_id}/reactions/{urllib.parse.quote(emoji, safe='')}")
+
+    async def remove_reaction(self, message_id, emoji):
+        await self.call("DELETE", f"/messages/{message_id}/reactions/{urllib.parse.quote(emoji, safe='')}")
+
+    async def pin_message(self, channel_id, message_id):
+        await self.call("PUT", f"/channels/{channel_id}/messages/{message_id}/pin")
+
+    async def unpin_message(self, channel_id, message_id):
+        await self.call("DELETE", f"/channels/{channel_id}/messages/{message_id}/pin")
+
+    async def list_pinned_messages(self, channel_id, *, limit=None):
+        params = {"limit": limit} if limit else None
+        return await self.call("GET", f"/channels/{channel_id}/pins", params=params)
+
+    async def open_thread(self, channel_id, message_id):
+        return await self.call("POST", f"/channels/{channel_id}/messages/{message_id}/thread")
+
+    async def vote_poll(self, message_id, option):
+        await self.call("PUT", f"/messages/{message_id}/polls/vote", {"option": option})
+
+    async def upload_attachment(self, data, *, filename=None):
+        """Uploads raw bytes and returns an `Attachment` whose `.id` `send`'s `attachment_ids` accepts."""
+        path = "/attachments"
+        if filename:
+            path += f"?filename={urllib.parse.quote(filename, safe='')}"
+        response = await self.call(
+            "POST", path, raw_body=data, headers={"content-type": "application/octet-stream"}
+        )
+        return Attachment(response)
+
+    async def list_dms(self):
+        return [DmConversation(d) for d in await self.call("GET", "/dms")]
+
+    async def open_dm(self, user_id):
+        return DmConversation(await self.call("POST", f"/dms/{user_id}"))
+
+    async def close_dm(self, user_id):
+        await self.call("DELETE", f"/dms/{user_id}")

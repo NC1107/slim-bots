@@ -48,7 +48,7 @@ async def post_listing():
     """Publishes the role listing at startup, editing the previous one in place when it already exists."""
     message_id = listing_message_id()
     try:
-        await bot.client.call("PATCH", f"/channels/{bot.channel}/messages/{message_id}", {"content": listing_text()})
+        await bot.client.edit_message(bot.channel, message_id, listing_text())
     except ApiError as err:
         if not is_not_found(err):
             raise
