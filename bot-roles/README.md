@@ -1,8 +1,10 @@
 # bot-roles
 
 A slim-m bot: `!role <name>` to grab a self-service role, `!role remove
-<name>` to drop it, `!roles` to see what is on offer. At startup it also
-posts (or updates) that same listing in its channel.
+<name>` to drop it, `!role mine` to see which of the offered roles you
+already hold, `!roles` to see what is on offer, and `!roles status` for a
+per-role breakdown of what this bot itself can currently grant. At startup
+it also posts (or updates) that role listing in its channel.
 
 Unlike `bot-ping`, this template is built on the `slimbots` package in
 `../slimbots/`, which covers the plumbing every template but `bot-ping`
@@ -48,13 +50,28 @@ deployment that wants this bot to hand out a role with real permissions has
 to give the bot at least that much itself. If a grant is coming back
 forbidden, check the bot's own roles before assuming the code is broken.
 
-## Do not answer yourself
+`require_manage_roles` and the escalation guard both return the same 403
+body, so a raw error tells you nothing about which one fired. This bot
+tells them apart: it reads its own `permissions` bitmask from `GET /me` to
+know outright whether it holds `MANAGE_ROLES` at all, and if it does, reads
+`GET /roles` (which needs `MANAGE_ROLES` to view, and by that point it has
+it) to name exactly which of a role's bits it still lacks. `!roles status`
+runs the same check on demand for every configured role, so an admin does
+not have to trigger a real 403 first to see the diagnosis. A deployment
+where this bot cannot grant even a zero-permission role - the situation at
+the time this was written, see decision 0028 - shows up as "MANAGE_ROLES is
+missing" rather than a bare refusal.
+
+## Do not answer yourself, or another bot
 
 Like every slim-m bot, this one checks the message author against its own
 id from `GET /me` before acting - see "Answering yourself" in
 `docs/bots/building-bots.md`. It matters more here than in `bot-ping`: this
 bot posts its own role listing in the very channel it listens to, so
 skipping that check would have it react to its own listing message forever.
+It also uses `slimbots.AuthorFilter` to skip another bot's or webhook's
+output the same way `bot-ping` does inline: several bots share `#bots`, and
+none of them may answer another one's output.
 
 ## What this deliberately does not do
 
@@ -93,3 +110,15 @@ skipping that check would have it react to its own listing message forever.
 - **Editing a pending request, role hierarchies, or approval flows.** This
   is a flat, self-service list. A role that should require approval before
   it is handed out is a different, larger bot.
+- **Working around a missing `MANAGE_ROLES` grant itself.** `!roles status`
+  and the escalation messages diagnose the gap accurately; they do not paper
+  over it. Fixing it is an admin action at the deployment level (or, longer
+  term, whatever bot permissioning slim-m settles on) - not something for
+  this bot to route around on its own.
+
+## Tests
+
+`python3 test_bot.py` - stdlib only plus `slimbots.testing.FakeClient`, no
+live deployment. Covers the grant/revoke happy paths, both 403 causes and
+their distinct messages, `!role mine`, `!roles status`, and the bot-ignore
+and self-ignore checks.
