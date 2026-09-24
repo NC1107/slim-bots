@@ -115,6 +115,54 @@ def test_send_uses_given_message_id():
     assert calls[0]["id"] == "fixed-id"
 
 
+def test_send_includes_attachment_ids_only_when_given():
+    client = Client("https://my.space", "slimbot_abc", "ua")
+    calls = []
+    client.call = lambda method, path, body=None: calls.append(body) or {"ok": True}
+    client.send("chan-1", "hi")
+    assert "attachment_ids" not in calls[0]
+    client.send("chan-1", "hi", attachment_ids=["att-1"])
+    assert calls[1]["attachment_ids"] == ["att-1"]
+
+
+def test_call_sends_raw_body_without_json_encoding(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["data"] = request.data
+        seen["headers"] = dict(request.header_items())
+        return FakeResponse({"id": "att-1"})
+
+    monkeypatch.setattr("slimbots.client.urllib.request.urlopen", fake_urlopen)
+    client = Client("https://my.space", "slimbot_abc", "ua")
+    result = client.call(
+        "POST",
+        "/attachments?filename=poster.jpg",
+        raw_body=b"\x89PNG...",
+        headers={"content-type": "application/octet-stream"},
+    )
+
+    assert result == {"id": "att-1"}
+    assert seen["data"] == b"\x89PNG..."
+    assert seen["headers"]["Content-type"] == "application/octet-stream"
+
+
+def test_call_extra_headers_do_not_replace_auth_or_user_agent(monkeypatch):
+    seen = {}
+
+    def fake_urlopen(request, timeout):
+        seen["headers"] = dict(request.header_items())
+        return FakeResponse({"ok": True})
+
+    monkeypatch.setattr("slimbots.client.urllib.request.urlopen", fake_urlopen)
+    client = Client("https://my.space", "slimbot_abc", "slimm-bot-test/1.0")
+    client.call("GET", "/me", headers={"x-extra": "1"})
+
+    assert seen["headers"]["Authorization"] == "Bearer slimbot_abc"
+    assert seen["headers"]["User-agent"] == "slimm-bot-test/1.0"
+    assert seen["headers"]["X-extra"] == "1"
+
+
 def test_is_token_revoked():
     assert is_token_revoked(urllib.error.HTTPError("u", 401, "e", {}, None))
     assert not is_token_revoked(urllib.error.HTTPError("u", 403, "e", {}, None))

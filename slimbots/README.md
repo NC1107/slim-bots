@@ -9,10 +9,11 @@ entire bot surface is: log in with a token, call REST, hold one websocket,
 track a per-scope `seq`. That is what this package covers:
 
 - authentication (`Authorization: Bearer`, a real `User-Agent`, `GET /me`)
-- a REST helper, `Client.call`, for any route a template needs
-- an idempotent `send` that keeps the message id fixed across a retry, and
+- a REST helper, `Client.call`, for any route a template needs, including a
+  raw (non-JSON) body and extra headers for an attachment upload
+- an idempotent `send` that keeps the message id fixed across a retry,
   retries only a genuinely uncertain failure - a network error, a 5xx, or a
-  429 - never a rejected 4xx
+  429 - never a rejected 4xx, and can carry `attachment_ids`
 - the websocket connect and hello handshake (`Connection`)
 - the reconnect loop with exponential backoff, and treating a `401` as
   terminal rather than retryable (`run_forever`)
