@@ -195,6 +195,45 @@ def test_another_bot_is_ignored_by_default():
     assert client.sent == []
 
 
+def test_poll_loop_propagates_a_terminal_jellyfin_auth_error():
+    async def boom():
+        raise jellyfin.JellyfinAuthError("nope")
+
+    original = jellyfin.poll_once
+    jellyfin.poll_once = boom
+    try:
+        raised = False
+        try:
+            asyncio.run(jellyfin.poll_loop())
+        except jellyfin.JellyfinAuthError:
+            raised = True
+        assert raised
+    finally:
+        jellyfin.poll_once = original
+
+
+def test_on_connect_registers_poll_loop_as_a_supervised_background_task():
+    setup()
+    jellyfin._background_started = False
+    original = jellyfin.bootstrap_cursor
+    jellyfin.bootstrap_cursor = lambda conn: None
+
+    async def run():
+        await jellyfin.on_connect()
+        assert len(jellyfin.bot._background_tasks) == 1
+        task = next(iter(jellyfin.bot._background_tasks))
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    try:
+        asyncio.run(run())
+    finally:
+        jellyfin.bootstrap_cursor = original
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

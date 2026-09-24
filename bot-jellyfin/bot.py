@@ -3,7 +3,6 @@
 
 import asyncio
 import json
-import signal
 import sqlite3
 import sys
 import time
@@ -400,16 +399,17 @@ async def poll_once():
 
 
 async def poll_loop():
+    """A terminal JellyfinAuthError or revoked slimm token propagates out - bot.background() treats that as fatal."""
     while True:
         try:
             await poll_once()
         except JellyfinAuthError:
             print("jellyfin api key rejected - exiting", file=sys.stderr)
-            signal.raise_signal(signal.SIGKILL)
+            raise
         except ApiError as err:
             if is_token_revoked(err):
                 print("slimm bot token rejected - exiting", file=sys.stderr)
-                signal.raise_signal(signal.SIGKILL)
+                raise
             print(f"{type(err).__name__}: {err}, retrying next cycle", file=sys.stderr)
         except Exception as err:
             print(f"{type(err).__name__}: {err}, retrying next cycle", file=sys.stderr)
@@ -498,7 +498,7 @@ async def on_connect():
     if _background_started:
         return
     _background_started = True
-    asyncio.create_task(poll_loop())
+    bot.background(poll_loop(), name="jellyfin-poll")
 
 
 def check_jellyfin_config():
