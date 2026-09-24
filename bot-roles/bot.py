@@ -4,12 +4,8 @@
 import os
 import uuid
 
-from slimbots import Bot, Permissions, catchup
+from slimbots import Bot, Permissions
 from slimbots.http import ApiError, is_forbidden, is_not_found
-
-BASE = os.environ.get("SLIMM_URL", "")
-TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
-CHANNEL = os.environ.get("SLIMM_CHANNEL", "")
 
 # Namespace for deriving a stable listing-message id from the channel id, so nothing needs to be persisted to disk.
 LISTING_NAMESPACE = uuid.UUID("d1f6a9d0-0f0f-4b6a-9b0f-2f6b6f0f9a10")
@@ -31,15 +27,13 @@ def parse_roles(spec):
 
 ROLES = parse_roles(os.environ.get("SLIMM_ROLES", ""))
 
-bot = Bot(prefix="!", channels={CHANNEL} if CHANNEL else None)
+bot = Bot(prefix="!", require_channels=True)
 bot.my_permissions = 0
 _role_permissions_cache = {}
-# In-memory only - a role command lost across a restart just costs a retype; see README.md.
-_last_seq = {}
 
 
 def listing_message_id():
-    return str(uuid.uuid5(LISTING_NAMESPACE, CHANNEL))
+    return str(uuid.uuid5(LISTING_NAMESPACE, bot.channel))
 
 
 def listing_text():
@@ -56,11 +50,11 @@ async def post_listing():
     """Publishes the role listing at startup, editing the previous one in place when it already exists."""
     message_id = listing_message_id()
     try:
-        await bot.client.call("PATCH", f"/channels/{CHANNEL}/messages/{message_id}", {"content": listing_text()})
+        await bot.client.call("PATCH", f"/channels/{bot.channel}/messages/{message_id}", {"content": listing_text()})
     except ApiError as err:
         if not is_not_found(err):
             raise
-        await bot.client.send(CHANNEL, listing_text(), message_id=message_id)
+        await bot.client.send(bot.channel, listing_text(), message_id=message_id)
 
 
 async def fetch_role_permissions(role_id):
@@ -183,38 +177,20 @@ async def role_cmd(ctx, first: str, second: str = None):
     await grant(ctx, first)
 
 
-async def _resync():
-    if CHANNEL not in _last_seq:
-        return
-    scopes = [{"channel_id": CHANNEL, "after_seq": _last_seq[CHANNEL]}]
-    for scope in await catchup.sync(bot.client, scopes):
-        for message in scope["messages"]:
-            await bot.process_message(message)
-        if scope["messages"]:
-            _last_seq[CHANNEL] = scope["messages"][-1]["seq"]
-        elif scope["reset"]:
-            _last_seq.pop(CHANNEL, None)
-
-
-@bot.event
-async def on_raw_message(message):
-    seq = message.get("seq")
-    if seq is not None:
-        _last_seq[CHANNEL] = seq
-
-
 @bot.event
 async def on_connect():
     bot.my_permissions = (await bot.client.me()).get("permissions", 0)
     _role_permissions_cache.clear()
-    await _resync()
     await post_listing()
 
 
 def main():
-    if not BASE or not TOKEN or not CHANNEL or not ROLES:
-        raise SystemExit("set SLIMM_URL, SLIMM_BOT_TOKEN, SLIMM_CHANNEL and SLIMM_ROLES")
-    raise SystemExit(bot.run() or 0)
+    if not ROLES:
+        raise SystemExit("set SLIMM_ROLES")
+    try:
+        raise SystemExit(bot.run() or 0)
+    except RuntimeError as err:
+        raise SystemExit(str(err))
 
 
 if __name__ == "__main__":

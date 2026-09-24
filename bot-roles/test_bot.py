@@ -9,7 +9,6 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-os.environ.setdefault("SLIMM_CHANNEL", "c1")
 os.environ.setdefault("SLIMM_ROLES", "member:r-member,helper:r-helper")
 
 import bot as roles  # noqa: E402
@@ -34,13 +33,13 @@ def setup(*, my_permissions=32):  # MANAGE_ROLES
     client.respond("GET", "/members", MEMBERS)
     client.respond("GET", "/roles", ROLE_DEFS)
     client.respond("GET", "/me", {"id": "bot-1", "permissions": my_permissions})
+    roles.bot.channels = {"c1"}
     client.respond("PATCH", f"/channels/c1/messages/{roles.listing_message_id()}", None)
     roles.bot.client = client
     roles.bot.space = Space(client)
     roles.bot.authors = AuthorFilter(client, space=roles.bot.space, ignore_bots=True)
     roles.bot.me_id = "bot-1"
     roles._role_permissions_cache.clear()
-    roles._last_seq.clear()
     asyncio.run(roles.bot.space.refresh_members())
     roles.bot.my_permissions = my_permissions
     return client
