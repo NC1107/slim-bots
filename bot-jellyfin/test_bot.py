@@ -11,10 +11,12 @@ os.environ.setdefault("JELLYFIN_URL", "https://fake-jellyfin.invalid")
 os.environ.setdefault("JELLYFIN_API_KEY", "fake-key")
 
 import bot as jellyfin  # noqa: E402
-from slimbots import Store  # noqa: E402
+import stream_session  # noqa: E402
+import watch_cog  # noqa: E402
+from slimbots import Permissions, Store  # noqa: E402
 from slimbots.authors import AuthorFilter  # noqa: E402
 from slimbots.space import Space  # noqa: E402
-from slimbots.testing import FakeAsyncClient  # noqa: E402
+from slimbots.testing import FakeAsyncClient, FakeVoice, FakeVoiceSession  # noqa: E402
 
 MEMBERS = [{"id": "u1", "username": "nick", "display_name": "Nick", "is_bot": False, "is_webhook": False, "role_ids": []}]
 
@@ -255,6 +257,190 @@ def test_upload_poster_returns_none_when_jellyfin_has_no_image():
         jellyfin.jellyfin_core.jf_get_bytes = original
     assert attachment_id is None
     assert not any(method == "POST" and path.startswith("/attachments") for method, path, _, _ in client.calls)
+
+
+def setup_with_voice(*, can_publish=True):
+    client = setup()
+    jellyfin.bot.voice = FakeVoice(can_publish=can_publish)
+    watch_cog._set_active_session(None)
+    return client
+
+
+def setup_with_manager():
+    client = setup_with_voice()
+    client.respond(
+        "GET", "/roles", [{"id": "role-mgr", "name": "Manager", "permissions": Permissions.MANAGE_CHANNELS, "is_everyone": False}],
+    )
+    client.respond(
+        "GET", "/members",
+        MEMBERS + [{"id": "u2", "username": "mgr", "display_name": "Mgr", "is_bot": False, "is_webhook": False, "role_ids": ["role-mgr"]}],
+    )
+    asyncio.run(jellyfin.bot.space.refresh_roles())
+    asyncio.run(jellyfin.bot.space.refresh_members())
+    return client
+
+
+def movie_for_watch(item_id="m1", name="Inception", runtime_seconds=7200):
+    return {"Id": item_id, "Name": name, "Type": "Movie", "RunTimeTicks": int(runtime_seconds * 10_000_000), "MediaStreams": []}
+
+
+async def _fake_start(self):
+    self._video_source = object()
+    self._audio_source = object()
+
+
+def test_parse_hms_and_format_hms_round_trip():
+    assert stream_session.parse_hms("1:02:03") == 3723
+    assert stream_session.parse_hms("2:03") == 123
+    assert stream_session.parse_hms("45") == 45
+    assert stream_session.format_hms(3723) == "1:02:03"
+    assert stream_session.format_hms(123) == "2:03"
+
+
+def test_parse_hms_rejects_garbage():
+    try:
+        stream_session.parse_hms("not-a-time")
+        raised = False
+    except ValueError:
+        raised = True
+    assert raised
+
+
+def test_frame_byte_size_is_the_i420_layout():
+    assert stream_session.frame_byte_size(1280, 720) == 1280 * 720 * 3 // 2
+
+
+def test_build_stream_url_carries_seek_and_subtitle_params():
+    jellyfin.jellyfin_core.JELLYFIN_URL = "https://fake-jellyfin.invalid"
+    url = jellyfin.jellyfin_core.build_stream_url("item-1", start_seconds=90, subtitle_stream_index=2)
+    assert "StartTimeTicks=900000000" in url
+    assert "SubtitleStreamIndex=2" in url
+    assert "SubtitleMethod=Encode" in url
+
+
+def test_find_subtitle_stream_matches_language_or_display_title():
+    item = {"MediaStreams": [
+        {"Type": "Subtitle", "Index": 3, "Language": "eng", "DisplayTitle": "English"},
+        {"Type": "Subtitle", "Index": 4, "Language": "fre", "DisplayTitle": "French"},
+        {"Type": "Audio", "Index": 1},
+    ]}
+    assert jellyfin.jellyfin_core.find_subtitle_stream(item, "english")["Index"] == 3
+    assert jellyfin.jellyfin_core.find_subtitle_stream(item, "fre")["Index"] == 4
+    assert jellyfin.jellyfin_core.find_subtitle_stream(item, "spanish") is None
+
+
+def test_watch_requires_the_invoker_to_be_in_the_voice_call():
+    client = setup_with_voice()
+    client.respond("GET", "/channels/c1/voice/roster", {"participants": []})
+    original_start = stream_session.WatchSession.start
+    stream_session.WatchSession.start = _fake_start
+    try:
+        process(client, message("!watch inception"))
+    finally:
+        stream_session.WatchSession.start = original_start
+    assert "join this channel's voice call" in client.sent[-1]["content"]
+    assert watch_cog.active_session() is None
+
+
+def test_watch_starts_a_session_when_one_match_is_found():
+    client = setup_with_voice()
+    client.respond("GET", "/channels/c1/voice/roster", {"participants": [{"user_id": "u1", "display_name": "Nick"}]})
+    original_search = jellyfin.jellyfin_core.search_items
+    original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
+    jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
+    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id: movie_for_watch()
+    original_start = stream_session.WatchSession.start
+    stream_session.WatchSession.start = _fake_start
+    try:
+        process(client, message("!watch inception"))
+    finally:
+        jellyfin.jellyfin_core.search_items = original_search
+        jellyfin.jellyfin_core.fetch_item_for_playback = original_fetch
+        stream_session.WatchSession.start = original_start
+    assert "now watching **Inception**" in client.sent[-1]["content"]
+    session = watch_cog.active_session()
+    assert session is not None and session.title == "Inception"
+    watch_cog._set_active_session(None)
+
+
+def test_watch_refuses_a_second_stream_while_one_is_active():
+    client = setup_with_voice()
+    watch_cog._set_active_session(stream_session.WatchSession(jellyfin.bot, "c1", movie_for_watch(), "u1", None))
+    try:
+        process(client, message("!watch inception"))
+        assert "already watching" in client.sent[-1]["content"]
+    finally:
+        watch_cog._set_active_session(None)
+
+
+def test_pause_then_resume_updates_state():
+    client = setup_with_voice()
+    session = stream_session.WatchSession(jellyfin.bot, "c1", movie_for_watch(), "u1", FakeVoiceSession("c1"))
+    watch_cog._set_active_session(session)
+    try:
+        process(client, message("!pause"))
+        assert session.paused
+        process(client, message("!np"))
+        assert client.sent[-1].get("embeds")
+        process(client, message("!resume"))
+        assert not session.paused
+    finally:
+        watch_cog._set_active_session(None)
+
+
+def test_pause_refuses_a_non_starter_non_manager():
+    client = setup_with_voice()
+    session = stream_session.WatchSession(jellyfin.bot, "c1", movie_for_watch(), "someone-else", FakeVoiceSession("c1"))
+    watch_cog._set_active_session(session)
+    try:
+        process(client, message("!pause"))
+        assert "only the person who started this" in client.sent[-1]["content"]
+        assert not session.paused
+    finally:
+        watch_cog._set_active_session(None)
+
+
+def test_stop_allows_a_channel_manager_to_stop_someone_elses_stream():
+    client = setup_with_manager()
+    session = stream_session.WatchSession(jellyfin.bot, "c1", movie_for_watch(), "u1", FakeVoiceSession("c1"))
+    watch_cog._set_active_session(session)
+    try:
+        process(client, {"id": "m2", "author_id": "u2", "channel_id": "c1", "content": "!stop"})
+        assert session.finished
+    finally:
+        watch_cog._set_active_session(None)
+
+
+def test_np_reports_nothing_playing_when_idle():
+    client = setup_with_voice()
+    process(client, message("!np"))
+    assert "nothing is playing" in client.sent[-1]["content"]
+
+
+def test_seek_and_subs_update_the_session():
+    client = setup_with_voice()
+    session = stream_session.WatchSession(jellyfin.bot, "c1", movie_for_watch(runtime_seconds=3600), "u1", FakeVoiceSession("c1"))
+    session.item["MediaStreams"] = [{"Type": "Subtitle", "Index": 3, "Language": "eng", "DisplayTitle": "English"}]
+    watch_cog._set_active_session(session)
+
+    async def fake_seek(self, seconds):
+        if self.duration_seconds:
+            seconds = min(seconds, self.duration_seconds)
+        self._seek_base = max(0.0, seconds)
+        self._segment_started_at = stream_session.time.monotonic()
+
+    original_seek = stream_session.WatchSession.seek
+    stream_session.WatchSession.seek = fake_seek
+    try:
+        process(client, message("!seek 10:00"))
+        assert abs(session.position_seconds - 600) < 1
+        process(client, message("!subs english"))
+        assert session.subtitle_label == "English"
+        process(client, message("!subs off"))
+        assert session.subtitle_label is None
+    finally:
+        stream_session.WatchSession.seek = original_seek
+        watch_cog._set_active_session(None)
 
 
 if __name__ == "__main__":

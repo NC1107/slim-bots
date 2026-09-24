@@ -1,8 +1,9 @@
 # bot-jellyfin
 
 A slim-m bot that watches a Jellyfin server and posts to a channel when
-something new is added (a movie, a batch of episodes, an album), and
-answers `!jellyfin search <query>` / `!jellyfin recent [days]` / `!jellyfin help`.
+something new is added (a movie, a batch of episodes, an album), answers
+`!jellyfin search <query>` / `!jellyfin recent [days]` / `!jellyfin help`,
+and can join a voice channel to run a watch party with `!watch <title>`.
 
 ```bash
 pip install -r requirements.txt
@@ -66,6 +67,52 @@ tested here - there was only the one live server to test against.
 Both real commands share one `cooldown=` on the command itself, and their
 input is bounded (`require_len`/`require_int`) before it ever reaches a
 Jellyfin request.
+
+## Watch party
+
+`!watch <title>` searches Jellyfin the same way `!jellyfin search` does,
+joins the invoker's voice channel through `bot.voice.join()` (`slimbots`;
+see `docs/framework.md`), and streams the result in as a screen share -
+the bot needs `CONNECT` and `SPEAK` in that channel, the same grants a
+human sharing their screen needs. Several matches prompt a numbered pick,
+answered the same way `ctx.confirm` waits for a reply. Only one watch
+party runs per deployment at a time.
+
+- `!watch <title>` - search, join, and start playing.
+- `!pause` / `!resume` - stops or resumes reading the decoded stream;
+  ffmpeg blocks on its own full pipe buffer while paused, so it costs no
+  CPU and resumes exactly where it left off.
+- `!seek <h:mm:ss>` - restarts the transcode at a new position (`mm:ss`
+  and a bare second count also work).
+- `!np` - an embed with title, position, duration, and subtitle state.
+- `!stop` - ends the stream and leaves the call.
+- `!subs <lang|off>` - matches a subtitle track by language code or
+  display title and restarts the transcode with `SubtitleMethod=Encode`
+  burning it in, or clears it with `off`.
+
+`!pause`/`!resume`/`!seek`/`!stop`/`!subs` are refused unless the caller
+either started the stream or holds `MANAGE_CHANNELS`. `!watch` itself
+refuses unless the invoker is already in that channel's voice roster.
+
+The stream stops itself when the movie ends, or when the voice channel
+empties - checked on `on_voice_activity` when the LiveKit webhook (decision
+0032) is configured, and on a 20-second roster poll regardless, so this
+works even on a deployment that has not wired up the webhook.
+
+Video is Jellyfin's own server-side transcode
+(`/Videos/{id}/stream?VideoCodec=h264&AudioCodec=aac...`), decoded by a
+local `ffmpeg` (a system binary - not pip-installed, and not in the
+hash-locked CI requirements since the test suite never spawns it) into
+raw I420 frames letterboxed to `JELLYFIN_STREAM_WIDTH`x`JELLYFIN_STREAM_HEIGHT`
+and PCM audio, published through `bot.voice`'s `SOURCE_SCREENSHARE`/
+`SOURCE_SCREENSHARE_AUDIO` tracks - see `stream_session.py`.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `JELLYFIN_STREAM_WIDTH` | `1280` | The published video width; Jellyfin's own aspect ratio is letterboxed into this. |
+| `JELLYFIN_STREAM_HEIGHT` | `720` | The published video height. |
+| `JELLYFIN_STREAM_FPS` | `30` | The published frame rate. |
+| `JELLYFIN_STREAM_MAX_BITRATE` | `8000000` | The `VideoBitrate` Jellyfin is asked to transcode at, in bits/second. |
 
 ## Other settings
 
@@ -147,6 +194,45 @@ itself is unchanged from the version that was tested live; only its
 integration onto `Bot` (config, the async command loop, the embed) is new
 and only test-covered.
 
+## What was verified for the watch party
+
+Run for real against `slim-m`'s `scripts/e2e.sh` stack (real LiveKit, real
+server, two real headless-Chrome web clients) and a real local Jellyfin
+12.1.0 server with a two-track (H.264 + AAC) test file:
+
+- `!watch`, `!pause`, `!resume`, `!seek`, `!np`, `!subs off`, and `!stop`
+  all worked end to end against the real REST API and were checked at the
+  LiveKit SFU (`ListParticipants`), not just by trusting the bot's own
+  replies: the bot's identity showed `ACTIVE` with unmuted `SCREEN_SHARE`
+  and `SCREEN_SHARE_AUDIO` tracks for the whole session.
+- Both web clients rendered the actual decoded video on their call stage
+  under "Jellyfin's screen" (screenshotted), and the SFU-level track
+  state confirms the paired audio track was live and unmuted throughout.
+- Auto-stop fired correctly both ways: naturally at end of video, and via
+  `!stop` with the starter/`MANAGE_CHANNELS` gate (a third member without
+  either was refused with the expected reply).
+- A live Jellyfin 12.1.0 server's progressive `stream` endpoint silently
+  drops the audio track when `Container=ts` is requested even though the
+  source has an audio stream (`mp4`/`mkv` do not have this problem) -
+  `build_stream_url` uses `mkv` because of this; see its own comment.
+- One client (of two already in the call) did not pick up the bot's very
+  first join - it saw the bot on a second `!watch` a few minutes later
+  with no code change. This reads as a LiveKit-room-event timing edge
+  case (a client's own participant-connected callback, not anything this
+  bot controls) rather than a bug in `stream_session.py`/`watch_cog.py`,
+  but it was not root-caused - see the PR description.
+- CPU on the box this ran on (see the PR description for the exact
+  hardware): `JELLYFIN_STREAM_WIDTH`/`HEIGHT` at the 1280x720 default drew
+  roughly 20% of one core in the bot process (LiveKit's own encode) plus
+  11% in the decoding `ffmpeg`; at 1920x1080 that was roughly 87% plus 25%
+  - the LiveKit-side software encode, not the Jellyfin transcode or the
+  decoding `ffmpeg`, is what 1080p actually costs.
+- Not exercised live: a title with multiple search matches (the numbered
+  picker), `!subs <lang>` actually burning in a subtitle track (the test
+  file carried no subtitle stream), and a deployment where the invoker is
+  in a *different* voice channel than the one named (refused by code
+  inspection and the unit tests, not by a live attempt).
+
 ## What this deliberately does not do
 
 - **Push instead of poll.** Jellyfin has no first-class webhook in core -
@@ -164,3 +250,9 @@ and only test-covered.
 - **Catching up a very long outage in one poll.** `MAX_ITEMS_PER_POLL`
   caps how far back a single poll pages; a bigger backlog just takes more
   cycles, never a silently dropped difference.
+- **More than one watch party per deployment at a time.** `!watch` refuses
+  while `watch_cog`'s module-level session is still active; running two
+  bot-jellyfin processes against the same deployment was never a goal.
+- **Changing the published resolution or frame rate mid-stream.** A
+  `!watch` after a `!stop` is how to switch `JELLYFIN_STREAM_WIDTH` et al.,
+  which are read once at bot startup.

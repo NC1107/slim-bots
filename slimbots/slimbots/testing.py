@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .http import AsyncClient
+from .voice import VoiceError
 
 
 class FakeAsyncClient(AsyncClient):
@@ -59,3 +60,64 @@ class FakeAsyncClient(AsyncClient):
     async def aclose(self) -> None:
         """Closes the real httpx client `AsyncClient.__init__` opened underneath, even though `call` never uses it."""
         await super().aclose()
+
+
+class FakeVoiceSession:
+    """A fake `VoiceSession`: records what a bot published and whether it left, no LiveKit or network involved."""
+
+    def __init__(self, channel_id: str, *, can_publish: bool = True) -> None:
+        self.channel_id = channel_id
+        self.can_publish = can_publish
+        self.rtc: Any = None
+        self.heartbeat_started = False
+        self.published: dict[str, Any] | None = None
+        self.left = False
+
+    def start_heartbeat(self) -> None:
+        self.heartbeat_started = True
+
+    async def publish_screen_share(
+        self, *, width: int, height: int, sample_rate: int = 48000, num_channels: int = 2,
+    ) -> tuple[Any, Any]:
+        if not self.can_publish:
+            raise VoiceError("this token cannot publish - the bot needs SPEAK in this channel")
+        self.published = {
+            "width": width, "height": height, "sample_rate": sample_rate, "num_channels": num_channels,
+        }
+        return FakeVideoSource(), FakeAudioSource()
+
+    async def leave(self) -> None:
+        self.left = True
+
+
+class FakeVideoSource:
+    """Stands in for a real `VideoSource`: `capture_frame` (sync, like the real one) just counts frames."""
+
+    def __init__(self) -> None:
+        self.frame_count = 0
+
+    def capture_frame(self, *_args: Any, **_kwargs: Any) -> None:
+        self.frame_count += 1
+
+
+class FakeAudioSource:
+    """Stands in for a real `AudioSource`: `capture_frame` (async, like the real one) just counts frames."""
+
+    def __init__(self) -> None:
+        self.frame_count = 0
+
+    async def capture_frame(self, *_args: Any, **_kwargs: Any) -> None:
+        self.frame_count += 1
+
+
+class FakeVoice:
+    """A fake `bot.voice`: `join()` hands back a `FakeVoiceSession` instead of a real LiveKit room."""
+
+    def __init__(self, *, can_publish: bool = True) -> None:
+        self.can_publish = can_publish
+        self.sessions: list[FakeVoiceSession] = []
+
+    async def join(self, channel_id: str) -> FakeVoiceSession:
+        session = FakeVoiceSession(channel_id, can_publish=self.can_publish)
+        self.sessions.append(session)
+        return session

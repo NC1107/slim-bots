@@ -25,6 +25,7 @@ from .models import Member
 from .registration import register_commands
 from .space import Space
 from .store import Store
+from .voice import Voice
 
 DEFAULT_USER_AGENT = "slimbots/0.3"
 DEFAULT_CURSOR_DB = "slimbots-cursor.db"
@@ -114,6 +115,7 @@ class Bot:
         self._gateway: Gateway | None = None
         self.store: Store | None = None
         self._extensions: dict[str, ModuleType] = {}
+        self.voice = Voice(self)
         if help_command:
             self._register_default_help()
 
