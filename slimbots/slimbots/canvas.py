@@ -28,6 +28,21 @@ class Canvas:
         body = {"id": op_id or str(uuid.uuid4()), "kind": "remove", "object_ids": list(object_ids)}
         return await self._client.call("POST", f"/channels/{self.channel_id}/canvas/ops", body)
 
+    async def clear(self, before_seq, *, op_id=None):
+        """Removes every live object placed at or below `before_seq`; needs MANAGE_CANVAS unconditionally."""
+        body = {"id": op_id or str(uuid.uuid4()), "kind": "clear", "before_seq": before_seq}
+        return await self._client.call("POST", f"/channels/{self.channel_id}/canvas/ops", body)
+
+    async def restore(self, target_op, *, op_id=None):
+        """Un-deletes exactly what a prior `remove` or `clear` op (`target_op`, its id) touched."""
+        body = {"id": op_id or str(uuid.uuid4()), "kind": "restore", "target_op": target_op}
+        return await self._client.call("POST", f"/channels/{self.channel_id}/canvas/ops", body)
+
+    async def reorder(self, object_id, z_index, *, op_id=None):
+        """Sets one live object's stacking order to an explicit `z_index` - the caller computes the target."""
+        body = {"id": op_id or str(uuid.uuid4()), "kind": "reorder", "object_id": object_id, "z_index": z_index}
+        return await self._client.call("POST", f"/channels/{self.channel_id}/canvas/ops", body)
+
     async def viewport(self, *, min_x, min_y, max_x, max_y, limit=100):
         """One page of objects in a rectangle - a bot's own reconciliation ground truth; see docs/framework.md."""
         params = {"min_x": min_x, "min_y": min_y, "max_x": max_x, "max_y": max_y, "limit": limit}
