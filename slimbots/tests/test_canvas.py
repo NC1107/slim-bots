@@ -35,6 +35,37 @@ async def test_remove_posts_a_remove_op_with_every_id():
     assert body["object_ids"] == ["o1", "o2"]
 
 
+async def test_clear_posts_a_clear_op_with_before_seq():
+    client = FakeAsyncClient()
+    client.respond("POST", "/channels/c1/canvas/ops", None)
+    canvas = Canvas(client, "c1")
+    await canvas.clear(42)
+    body = client.calls[-1][2]
+    assert body["kind"] == "clear"
+    assert body["before_seq"] == 42
+
+
+async def test_restore_posts_a_restore_op_naming_the_target_op():
+    client = FakeAsyncClient()
+    client.respond("POST", "/channels/c1/canvas/ops", None)
+    canvas = Canvas(client, "c1")
+    await canvas.restore("op-1")
+    body = client.calls[-1][2]
+    assert body["kind"] == "restore"
+    assert body["target_op"] == "op-1"
+
+
+async def test_reorder_posts_a_reorder_op_with_the_explicit_z_index():
+    client = FakeAsyncClient()
+    client.respond("POST", "/channels/c1/canvas/ops", None)
+    canvas = Canvas(client, "c1")
+    await canvas.reorder("o1", -5)
+    body = client.calls[-1][2]
+    assert body["kind"] == "reorder"
+    assert body["object_id"] == "o1"
+    assert body["z_index"] == -5
+
+
 async def test_viewport_sends_the_rectangle_as_query_params():
     client = FakeAsyncClient()
     client.respond("GET", "/channels/c1/canvas/objects", {"objects": []})

@@ -90,7 +90,8 @@ Global versus channel-scoped follows the same test as before: an event about a c
 
 ## The Canvas model
 
-`Canvas(bot.client, channel_id)` wraps one channel's Voice Canvas: `await canvas.place(kind, x=, y=, w=, h=, props=)`, `move(object_id, x=, y=)`, `remove(object_ids)`, and `viewport(min_x=, min_y=, max_x=, max_y=)` for a bounded-rectangle read - `bot-canvas-board` is the worked example (a fixed-size sticky-note board).
+`Canvas(bot.client, channel_id)` wraps one channel's Voice Canvas: `await canvas.place(kind, x=, y=, w=, h=, props=)`, `move(object_id, x=, y=)`, `remove(object_ids)`, `clear(before_seq)`, `restore(target_op)`, `reorder(object_id, z_index)`, and `viewport(min_x=, min_y=, max_x=, max_y=)` for a bounded-rectangle read - `bot-canvas-board` is the worked example (a fixed-size sticky-note board).
+`clear`/`restore`/`reorder` are the same `POST canvas/ops` endpoint `move`/`remove` already use, just a different `kind` - `clear` needs MANAGE_CANVAS unconditionally and a `before_seq` fence (never optional, so a lost response retried without one cannot wipe an interval it should not); `restore` names a prior `remove`/`clear` op's own id, not an object id; `reorder` takes an explicit `z_index` the caller computes (typically one above/below every value it already knows, for "bring to front"/"send to back") rather than a server-computed delta.
 `on_canvas_object_placed`, `on_canvas_objects_removed` and `on_canvas_cleared` are channel-scoped events - dispatched only for a channel in `channels`, the same gate `message.created` gets, since (unlike the member/role events) these carry a `channel_id` and are not deployment-wide.
 
 ## Config, settings, channel scoping, and durable cursors - all owned by Bot
