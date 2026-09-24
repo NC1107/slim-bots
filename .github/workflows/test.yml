@@ -1,6 +1,9 @@
 name: test
 
 # Actions are pinned by commit SHA, not tag, so a compromised tag can't run arbitrary code here.
+# Every third-party Python dependency installs from a hash-locked, wheel-only requirements file
+# (regenerate with `pip-compile --generate-hashes`); the local slim-m checkout under test installs
+# with --no-deps right after, since its own dependencies are already satisfied by that lock file.
 on:
   pull_request:
   push:
@@ -18,10 +21,10 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install slimbots with its dev extras
-        working-directory: slimbots
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install -e ".[dev]"
+          python -m pip install --upgrade pip --only-binary=:all:
+          python -m pip install --only-binary=:all: --require-hashes -r slimbots/requirements-ci.lock.txt
+          python -m pip install --only-binary=:all: --no-deps -e "./slimbots[dev]"
       - name: Run the slimbots pytest suite
         working-directory: slimbots
         # These two repo-wide gates (see docs/framework.md's "Removed in 0.3.0") are only meant to
@@ -40,10 +43,11 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install slimbots (local checkout)
+      - name: Install slimbots (local checkout) and every template's shared runtime dependencies
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install ./slimbots
+          python -m pip install --upgrade pip --only-binary=:all:
+          python -m pip install --only-binary=:all: --require-hashes -r bot-templates-requirements.lock.txt
+          python -m pip install --only-binary=:all: --no-deps ./slimbots
       - name: Run every template's own test_bot.py, skipping one not yet ported onto Bot
         run: |
           set -e
@@ -54,11 +58,6 @@ jobs:
               continue
             fi
             echo "::group::$bot"
-            if [ -f "$bot/requirements.txt" ]; then
-              grep -v '^slim-m' "$bot/requirements.txt" > requirements-other.txt || true
-              if [ -s requirements-other.txt ]; then python -m pip install -r requirements-other.txt; fi
-              rm -f requirements-other.txt
-            fi
             (cd "$bot" && python test_bot.py)
             echo "::endgroup::"
           done
@@ -72,8 +71,9 @@ jobs:
           python-version: "3.12"
       - name: Install slimbots (local checkout)
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install ./slimbots
+          python -m pip install --upgrade pip --only-binary=:all:
+          python -m pip install --only-binary=:all: --require-hashes -r bot-templates-requirements.lock.txt
+          python -m pip install --only-binary=:all: --no-deps ./slimbots
       - name: Run bot-casino's real-thread, real-sqlite concurrency suite
         working-directory: bot-casino
         run: python test_concurrency.py
