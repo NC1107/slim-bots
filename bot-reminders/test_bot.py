@@ -205,6 +205,24 @@ def test_another_bot_is_ignored_by_default():
     assert client.sent == []
 
 
+def test_on_ready_starts_both_loops_as_supervised_background_tasks():
+    setup()
+    reminders._background_started = False
+
+    async def run():
+        await reminders.on_ready()
+        assert len(reminders.bot._background_tasks) == 2
+        for task in list(reminders.bot._background_tasks):
+            task.cancel()
+        for task in list(reminders.bot._background_tasks):
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

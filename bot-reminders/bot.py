@@ -396,8 +396,8 @@ async def on_ready():
     if _background_started:
         return
     _background_started = True
-    asyncio.create_task(due_checker())
-    asyncio.create_task(_maintenance())
+    bot.background(due_checker(), name="reminders-due-checker")
+    bot.background(_maintenance(), name="reminders-maintenance")
 
 
 def main():
