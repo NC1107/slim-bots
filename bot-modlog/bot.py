@@ -1,163 +1,133 @@
 #!/usr/bin/env python3
-"""A slim-m bot that mirrors moderation actions into a channel as a readable
-audit trail: timeouts, kicks, restores, and role grants/revokes.
+"""bot-modlog: mirrors timeouts, kicks, restores, and role changes into a channel; see README.md."""
 
-Run it with a bot token from Space settings -> Bots and the channel it
-should post into:
-
-    pip install -r requirements.txt
-    SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... \\
-        SLIMM_LOG_CHANNEL=<channel-uuid> python3 bot.py
-
-`bot-ping/`, `bot-reminders/` and `bot-roles/` all
-watch message traffic. This one watches five events none of them touch:
-`member.timeout`, `member.removed`, `member.restored`, `member.role_changed`
-and `role.changed` (`crates/slimm-server/src/hub/event.rs`'s
-`MemberTimeoutChanged`, `MemberRemoved`, `MemberRestored`,
-`MemberRoleChanged` and `RoleChanged`). All five are deployment-wide: they
-reach every connected session regardless of channel permission, and
-`crates/slimm-server/src/http/ws/authorization.rs` delivers them
-unconditionally, with no `KICK_MEMBERS`/`BAN_MEMBERS`/`MANAGE_ROLES` check at
-all. This bot only holds `VIEW_CHANNEL` and `SEND_MESSAGES` on the one
-channel it posts into, and that turns out to be enough to see every
-moderation action in the whole deployment - proven live against a bot token
-holding none of those four bits.
-
-Auth, the REST call, the websocket handshake and the reconnect loop with
-backoff come from the `slimbots` package (`../slimbots/`) - the same
-plumbing every template but `bot-ping` shares. Everything below this point
-is this bot's own event-handling logic, which the library has no opinion on.
-
-What the wire frames do not say, and what this bot has to work around:
-
-- **`member.role_changed` carries no direction.** The wire type
-  (`ServerFrame::MemberRoleChanged { user_id, role_id }`) does not say
-  whether the role was granted or revoked, and neither does the internal
-  `Event` it comes from. This bot infers it by fetching the member's current
-  `role_ids` (`GET /users/{id}`, which any authenticated caller may read) and
-  diffing against what it last saw for that user. The first time a user is
-  seen there is nothing to diff against, so that one report reads "now
-  holds" rather than "granted" - a startup cost paid once per user, not a
-  recurring gap.
-- **A role's name is not always resolvable.** `GET /roles` - the only route
-  that lists every role by id - requires `MANAGE_ROLES`
-  (`crates/slimm-server/src/http/roles.rs`), which this bot deliberately does
-  not hold. A role name usually still resolves anyway, because
-  `GET /users/{id}` returns each member's `roles` (names) alongside
-  `role_ids`, positionally matched, and this bot builds its id-to-name map
-  from that as a side effect of resolving `member.role_changed`. A
-  `role.changed` for a role this bot has never seen held by anyone it has
-  looked up - most commonly a brand new, still-empty role, or one just
-  deleted - logs the bare id instead, with a one-line note why. This is not
-  a workaround for a bug: `GET /roles` also exposes each role's raw
-  permission bits, and gating the one route that hands those out is the
-  intended boundary.
-- **No reason ever reaches the wire.** A timeout or removal's `reason` lives
-  in `moderation_audit_log` and only comes back over `GET /reports/history`,
-  which requires `MANAGE_MESSAGES` - also deliberately not held here. This
-  bot's log says who and when, never why.
-- **There is no catching up.** None of these five events carry a `seq`, so
-  there is nothing to persist as a cursor and no `/sync` scope that could
-  ever replay one - this bot does not reach for `slimbots.cursor` at all,
-  because there is nothing it could store that `/sync` would ever answer for
-  these event types. The one route that could serve as a catch-up feed,
-  `GET /reports/history`, needs `MANAGE_MESSAGES`; this bot calls it once at
-  startup anyway and logs plainly whether it got a real page back or a 403,
-  rather than silently doing nothing either way. If it is down when a kick
-  happens, that kick is not in the log when it comes back, and nothing about
-  the reconnect says so - no gap marker, no missed-events count, nothing.
-  Contrast this with `bot-reminders/`, where a dropped socket is
-  invisible to the *feature* precisely because `seq` and `/sync` make it
-  invisible to the *bot*. Here it is invisible to the bot too, which is the
-  finding: for this event family, "eventually consistent" is not the
-  right description, because there is no later event that carries what was
-  missed. A moderation log built this way is a *live* feed with a silent,
-  permanent hole for every reconnect gap, not an eventually-complete one.
-  Anyone who needs a true audit trail should read `GET /reports/history`
-  with a moderator's own credential instead of trusting a bot's transcript.
-
-Like every other example here, a frame this bot does not recognise is
-ignored, and there is no cursor to persist across a process restart - only
-the in-memory name/role cache, which simply starts cold again.
-
-One more thing found live, worth naming: timing this bot's own account out
-makes its very next log post fail. A timeout blocks `SEND_MESSAGES`
-immediately, before the member even hears about it, so the message
-reporting "you were timed out" can itself land inside the timeout window and
-come back `403`. `listen()` catches that per-frame rather than letting it
-kill the socket - a reconnect here is strictly worse, since it risks the
-one thing this bot cannot recover from: missing whatever else happens during
-the gap that follows. This bot also deliberately does not use `Client.send`'s
-built-in retry for its own log posts: retrying a log line under one fixed id
-is right for a reply to a specific command, but there is nothing here worth
-deduplicating against, since two genuinely different events could produce
-identical text.
-"""
-
-import asyncio
-import os
-import sys
-import urllib.error
+import sqlite3
+import time
 import uuid
+from datetime import datetime, timezone
 
-from slimbots import Client, Connection, run_forever
+from slimbots import ApiError, Bot, Embed
+from slimbots.http import is_forbidden
 
-BASE = os.environ.get("SLIMM_URL", "").rstrip("/")
-TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
-LOG_CHANNEL = os.environ.get("SLIMM_LOG_CHANNEL", "")
-USER_AGENT = "slimm-bot-modlog/1.0"
-WATCHED_TYPES = {
-    "member.timeout",
-    "member.removed",
-    "member.restored",
-    "member.role_changed",
-    "role.changed",
-}
+# A reconnect faster than this is not worth a channel post - most drops are a blip that missed nothing worth naming.
+GAP_NOTICE_THRESHOLD_SECONDS = 5
+MAX_GAPS_SHOWN = 10
 
-# user_id -> display_name, filled lazily and never invalidated (a mid-run rename keeps the old name).
-_names = {}
+bot = Bot(prefix="!", require_channels=True, default_data_path="modlog.db")
+bot.db = None
+
 # user_id -> set of role_ids last observed, used to infer a member.role_changed event's direction.
 _last_roles = {}
-# role_id -> role name, learned only from member profiles; see the docstring's GET /roles note.
+# role_id -> role name, learned only from member profiles (GET /roles needs MANAGE_ROLES, deliberately not held).
 _role_names = {}
+# Wall-clock time this bot last knew for certain it was connected - None until the first successful connect.
+_last_seen_at = None
 
 
-def post(client, text):
-    """Posts a log line with a fresh id every call; see the module docstring
-    on why this bypasses `Client.send`'s idempotency."""
-    client.call("POST", f"/channels/{LOG_CHANNEL}/messages", {"id": str(uuid.uuid4()), "content": text})
+def init_db(conn):
+    conn.executescript(
+        """
+        CREATE TABLE IF NOT EXISTS events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts INTEGER NOT NULL,
+            kind TEXT NOT NULL,
+            text TEXT NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS gaps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            reconnected_at INTEGER NOT NULL,
+            downtime_seconds INTEGER NOT NULL
+        );
+        """
+    )
+    conn.commit()
 
 
-def resolve_member(client, user_id):
-    """Fetches a member's current display name and roles, seeding both the
-    name cache and the role-name map as a side effect. `None` if the account
-    is gone outright (never true for a mere removal from the Space, only for
-    an actually deleted account)."""
+def format_duration(seconds):
+    seconds = int(seconds)
+    if seconds < 60:
+        return f"{seconds}s"
+    minutes, seconds = divmod(seconds, 60)
+    if minutes < 60:
+        return f"{minutes}m"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"{hours}h{minutes}m" if minutes else f"{hours}h"
+    days, hours = divmod(hours, 24)
+    return f"{days}d{hours}h" if hours else f"{days}d"
+
+
+def format_until(until_ms):
+    """`until` is Unix milliseconds; render the wall-clock time and a human duration together."""
+    until_s = until_ms / 1000
+    when = datetime.fromtimestamp(until_s, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    remaining = until_s - time.time()
+    if remaining <= 0:
+        return f"until {when} (already past)"
+    return f"until {when} ({format_duration(remaining)} from now)"
+
+
+def record_event(kind, text):
+    bot.db.execute("INSERT INTO events (ts, kind, text) VALUES (?, ?, ?)", (int(time.time()), kind, text))
+    bot.db.commit()
+
+
+async def post(kind, text):
+    """Posts a log line under a fresh id every call - two different events can produce identical text,
+    so there is nothing here worth deduplicating against the way a command reply is."""
+    embed = Embed(footer=kind)
+    await bot.client.send(bot.channel, text, message_id=str(uuid.uuid4()), embeds=[embed.to_wire()], fallback_content=text)
+    record_event(kind, text)
+
+
+def note_alive():
+    global _last_seen_at
+    _last_seen_at = time.time()
+
+
+async def report_reconnect_gap():
+    """Posts and records downtime since the last frame seen, unless this is the first connect or the gap was too short."""
+    global _last_seen_at
+    if _last_seen_at is None:
+        return
+    downtime = int(time.time() - _last_seen_at)
+    if downtime < GAP_NOTICE_THRESHOLD_SECONDS:
+        return
+    bot.db.execute("INSERT INTO gaps (reconnected_at, downtime_seconds) VALUES (?, ?)", (int(time.time()), downtime))
+    bot.db.commit()
+    await post(
+        "gap",
+        f"reconnected after approximately {format_duration(downtime)} offline - moderation events during that "
+        "gap are not recorded here (`!modlog permissions` says what would close it)",
+    )
+
+
+async def resolve_member(user_id):
+    """Fetches a member's current roles, seeding the role-name map; None if the account is gone outright."""
     try:
-        user = client.call("GET", f"/users/{user_id}")
-    except urllib.error.HTTPError as err:
-        if err.code == 404:
+        member = await bot.space.fetch_member(user_id)
+    except ApiError as err:
+        if err.status == 404:
             return None
         raise
-    _names[user_id] = user["display_name"]
-    for role_id, name in zip(user["role_ids"], user["roles"]):
+    for role_id, name in zip(member.role_ids, member.roles):
         _role_names[role_id] = name
-    return user
+    return member
 
 
 def name_of(user_id):
-    return _names.get(user_id, user_id)
+    member = bot.space.members.get(user_id)
+    return member.display_name if member else user_id
 
 
 def role_name_of(role_id):
     return _role_names.get(role_id)
 
 
-def handle_role_change(client, user_id, role_id):
-    """`member.role_changed` never says grant or revoke; infer it from the
-    member's current role set against what was last observed for them."""
-    user = resolve_member(client, user_id)
-    current = set(user["role_ids"]) if user else set()
+async def handle_role_change(user_id, role_id):
+    """`member.role_changed` never says grant or revoke; infer it from the member's role set against what was last seen."""
+    member = await resolve_member(user_id)
+    current = set(member.role_ids) if member else set()
     previous = _last_roles.get(user_id)
     _last_roles[user_id] = current
     label = role_name_of(role_id) or f"role {role_id}"
@@ -169,94 +139,139 @@ def handle_role_change(client, user_id, role_id):
     elif role_id not in current and role_id in previous:
         verb = "was revoked from"
     else:
-        # Two changes to this role collapsed between our two reads.
-        verb = "role membership changed for"
-    post(client, f"{name_of(user_id)} {verb} {label}")
+        verb = "role membership changed for"  # two changes to this role collapsed between our two reads
+    await post("member.role_changed", f"{name_of(user_id)} {verb} {label}")
 
 
-def handle_role_definition_change(client, role_id):
+async def show_stats(ctx):
+    rows = bot.db.execute("SELECT kind, COUNT(*) FROM events WHERE kind != 'gap' GROUP BY kind ORDER BY kind").fetchall()
+    if not rows:
+        await ctx.reply("nothing recorded yet.")
+        return
+    total = sum(count for _, count in rows)
+    lines = [f"{total} event(s) recorded locally since this bot's database was created:"]
+    lines.extend(f"- {kind}: {count}" for kind, count in rows)
+    lines.append("this is only what this bot itself saw live, never a substitute for a real audit trail.")
+    await ctx.reply("\n".join(lines))
+
+
+async def show_gaps(ctx):
+    rows = bot.db.execute(
+        "SELECT reconnected_at, downtime_seconds FROM gaps ORDER BY id DESC LIMIT ?", (MAX_GAPS_SHOWN,)
+    ).fetchall()
+    if not rows:
+        await ctx.reply("no reconnect gaps recorded.")
+        return
+    lines = [f"last {len(rows)} known gap(s), most recent first:"]
+    for reconnected_at, downtime in rows:
+        when = datetime.fromtimestamp(reconnected_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+        lines.append(f"- reconnected {when} after ~{format_duration(downtime)} offline")
+    lines.append("moderation events during any of these gaps are permanently missing from this log.")
+    await ctx.reply("\n".join(lines))
+
+
+async def show_permissions(ctx):
+    await ctx.reply(
+        "I hold only VIEW_CHANNEL and SEND_MESSAGES on this channel. Two more would change what I can do:\n"
+        "- MANAGE_MESSAGES: GET /reports/history becomes readable, which is the reason text behind a timeout "
+        "or removal, and a way to actually backfill a reconnect gap instead of leaving it permanent.\n"
+        "- MANAGE_ROLES: GET /roles becomes readable, so a role's name resolves even for one nobody currently "
+        "holds, instead of only through a member profile that happens to carry it."
+    )
+
+
+@bot.command(name="modlog", help="stats/gaps/permissions - this bot's own local transcript", usage="<stats|gaps|permissions>")
+async def modlog_cmd(ctx, sub: str):
+    sub = sub.lower()
+    if sub == "stats":
+        await show_stats(ctx)
+    elif sub == "gaps":
+        await show_gaps(ctx)
+    elif sub == "permissions":
+        await show_permissions(ctx)
+    else:
+        await ctx.reply("try `!modlog stats`, `!modlog gaps`, or `!modlog permissions`")
+
+
+@bot.event
+async def on_frame(frame):
+    note_alive()
+
+
+@bot.event
+async def on_member_timeout(frame):
+    user_id = frame["user_id"]
+    await resolve_member(user_id)
+    until = frame.get("until")
+    if until is None:
+        await post("member.timeout", f"{name_of(user_id)}'s timeout was lifted")
+    else:
+        await post("member.timeout", f"{name_of(user_id)} was timed out {format_until(until)}")
+
+
+@bot.event
+async def on_member_removed(frame):
+    user_id = frame["user_id"]
+    await resolve_member(user_id)
+    await post("member.removed", f"{name_of(user_id)} was removed from the Space")
+
+
+@bot.event
+async def on_member_restored(frame):
+    user_id = frame["user_id"]
+    await resolve_member(user_id)
+    await post("member.restored", f"{name_of(user_id)} was let back into the Space")
+
+
+@bot.event
+async def on_member_role_changed(frame):
+    await handle_role_change(frame["user_id"], frame["role_id"])
+
+
+@bot.event
+async def on_role_changed(frame):
+    role_id = frame["role_id"]
     name = role_name_of(role_id)
     if name is not None:
-        post(client, f"role '{name}' ({role_id}) changed - created, renamed, re-permissioned, or deleted")
+        await post("role.changed", f"role '{name}' ({role_id}) changed - created, renamed, re-permissioned, or deleted")
     else:
-        post(
-            client,
-            f"role {role_id} changed, but its name cannot be resolved here - "
-            "GET /roles needs MANAGE_ROLES, which this bot does not hold",
+        await post(
+            "role.changed",
+            f"role {role_id} changed, but its name cannot be resolved here - GET /roles needs MANAGE_ROLES, "
+            "which this bot does not hold",
         )
 
 
-def handle_frame(client, frame):
-    kind = frame.get("type")
-    if kind == "member.timeout":
-        user_id = frame["user_id"]
-        resolve_member(client, user_id)
-        until = frame.get("until")
-        if until is None:
-            post(client, f"{name_of(user_id)}'s timeout was lifted")
-        else:
-            post(client, f"{name_of(user_id)} was timed out")
-    elif kind == "member.removed":
-        user_id = frame["user_id"]
-        resolve_member(client, user_id)
-        post(client, f"{name_of(user_id)} was removed from the Space")
-    elif kind == "member.restored":
-        user_id = frame["user_id"]
-        resolve_member(client, user_id)
-        post(client, f"{name_of(user_id)} was let back into the Space")
-    elif kind == "member.role_changed":
-        handle_role_change(client, frame["user_id"], frame["role_id"])
-    elif kind == "role.changed":
-        handle_role_definition_change(client, frame["role_id"])
-
-
-def announce_catchup_capability(client):
-    """Proves, out loud, whether this bot could ever backfill a reconnect
-    gap - rather than silently having no opinion either way."""
+async def announce_catchup_capability():
+    """Proves, out loud, whether this bot could ever backfill a reconnect gap - rather than silently having no opinion."""
     try:
-        client.call("GET", "/reports/history?limit=1")
+        await bot.client.call("GET", "/reports/history?limit=1")
         print("catch-up available: /reports/history is readable", flush=True)
-    except urllib.error.HTTPError as err:
-        if err.code == 403:
-            print(
-                "no catch-up available: /reports/history needs MANAGE_MESSAGES, "
-                "which this bot does not hold - a reconnect gap in the "
-                "moderation log is permanent",
-                flush=True,
-            )
-        else:
+    except ApiError as err:
+        if not is_forbidden(err):
             raise
+        print(
+            "no catch-up available: /reports/history needs MANAGE_MESSAGES, which this bot does not hold - "
+            "a reconnect gap in the moderation log is permanent",
+            flush=True,
+        )
 
 
-async def attempt(client, reset_delay):
-    me = client.me()["id"]
-    print(f"connected as {me}", flush=True)
-    announce_catchup_capability(client)
-
-    async with await Connection.open(client) as socket:
-        print("listening", flush=True)
-        reset_delay()
-
-        async for frame in socket.frames():
-            # Ignore a frame type we do not know; see bot-ping's docstring.
-            if frame.get("type") not in WATCHED_TYPES:
-                continue
-            try:
-                handle_frame(client, frame)
-            except urllib.error.HTTPError as err:
-                # See the module docstring's note on this bot's own timeout.
-                print(f"could not log {frame.get('type')}: http {err.code}", file=sys.stderr)
+@bot.event
+async def on_connect():
+    await announce_catchup_capability()
+    await report_reconnect_gap()
+    note_alive()
 
 
-async def main():
-    if not BASE or not TOKEN or not LOG_CHANNEL:
-        print("set SLIMM_URL, SLIMM_BOT_TOKEN and SLIMM_LOG_CHANNEL", file=sys.stderr)
-        return 2
-
-    client = Client(BASE, TOKEN, USER_AGENT)
-
-    return await run_forever(lambda reset_delay: attempt(client, reset_delay))
+def main():
+    bot.db = sqlite3.connect(bot.data_path)
+    init_db(bot.db)
+    try:
+        raise SystemExit(bot.run() or 0)
+    except RuntimeError as err:
+        raise SystemExit(str(err))
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()) or 0)
+    main()

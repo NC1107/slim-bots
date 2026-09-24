@@ -3,22 +3,41 @@
 A slim-m bot that mirrors moderation actions into a channel: timeouts,
 kicks, restores, role grants, role revokes, and role definition changes.
 
-Unlike `bot-ping`, this template is built on the `slimbots` package in
-`../slimbots/`, which covers the plumbing every template but `bot-ping`
-shares - auth, the REST call, the websocket handshake, and the reconnect
-loop. `bot-ping` stays free of it on purpose; see its own README.
+Built on the `slimbots` `Bot` framework - see `../docs/framework.md`. The
+five moderation events map onto `@bot.event` handlers (`on_member_timeout`,
+`on_member_removed`, `on_member_restored`, `on_member_role_changed`,
+`on_role_changed`) instead of a manual frame-type dispatch, `!modlog` is
+one `@bot.command` instead of a trigger regex per subcommand, and `Bot`
+itself owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS` and the seq
+cursor - this script only opens its own tables at `bot.data_path` (from
+`SLIMM_DB_PATH`), never importing `os` itself. `bot-ping` stays free of
+the library on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt
 SLIMM_URL=https://your.space \
 SLIMM_BOT_TOKEN=slimbot_... \
-SLIMM_LOG_CHANNEL=<channel-uuid> \
+SLIMM_CHANNELS=<channel-uuid> \
 python3 bot.py
 ```
 
-`SLIMM_LOG_CHANNEL` is the one channel this bot posts into. It needs only
-`VIEW_CHANNEL` and `SEND_MESSAGES` there - see "What your bot may do" in
+`SLIMM_CHANNELS` should name exactly one channel here - `bot.channel` is
+the one this bot posts into. It needs only `VIEW_CHANNEL` and
+`SEND_MESSAGES` there - see "What your bot may do" in
 `docs/bots/building-bots.md` for how to grant a bot a channel overwrite.
+`SLIMM_DB_PATH` (default `modlog.db`) holds this bot's own local transcript,
+reconnect-gap history, and (shared with `Bot`) the seq cursor for its own
+command traffic - never a substitute for `GET /reports/history`.
+
+## Commands
+
+- `!modlog stats` - counts of every event this bot has logged locally, by
+  kind, since its database was created. Explicitly labelled as this bot's
+  own transcript, not an audit trail.
+- `!modlog gaps` - the last several reconnect gaps this bot noticed, each a
+  permanent hole in the log rather than something a later event fills in.
+- `!modlog permissions` - exactly what `MANAGE_MESSAGES` and `MANAGE_ROLES`
+  would each add, on demand.
 
 ## What this proves about permissions
 
@@ -62,16 +81,23 @@ showing what a permission-poor bot can and cannot do, not asking for more.
   role this bot had not yet seen granted to anyone logs as a bare id, with
   the reason stated in the log line itself, not silently.
 
-## The gap that cannot be closed
+## The gap that cannot be closed - now visible, not just documented
 
 None of these five events carry a `seq`, so there is no cursor to persist
-and no `/sync` scope that could ever replay one. Reproduced live: the bot
-was killed, a timeout was applied and lifted and a role was created,
-granted, revoked and deleted while it was down, and the bot was brought
-back up. Its log shows nothing between the last event before the kill and
-the first event after the restart - not a gap marker, not a "you may have
-missed something," nothing. The one route that could answer "what happened
-while I was gone" is `GET /reports/history`, gated behind `MANAGE_MESSAGES`.
+and no `/sync` scope that could ever replay one. A moderation action during
+a dropped socket is gone from the log for good - `GET /reports/history`,
+gated behind `MANAGE_MESSAGES`, is the only route that could ever answer
+"what happened while I was gone."
+
+What changed: this bot used to note that fact once, to its own stdout, at
+startup. Now, on every reconnect after a previous successful connection
+(never the very first connect, which is not a gap), it posts how long it
+was offline right in the log and records it for `!modlog gaps` to answer
+later. The downtime estimate runs from the last frame this bot actually saw
+(via the framework's `on_frame`, which fires for any frame at all, not just
+the five watched types) to the moment the new connection is confirmed live -
+a decent estimate, never exact, since nothing on the wire says precisely
+when the drop happened.
 
 This is different from `bot-reminders/`'s reconnect story. There, a
 dropped socket is invisible to the *bot* precisely because `seq` and
@@ -127,8 +153,18 @@ decision 0028, not something to route around here.
   delete.** `role.changed` fires for all four and says only the id. Naming
   which one happened would need `GET /roles` (`MANAGE_ROLES`) plus a
   before/after diff, and this bot does not hold that permission on purpose.
-- **Persist anything across a restart.** The name and role-name caches are
-  in memory only and start cold again; see the module docstring.
+- **Persist the name and role-name caches.** Only `events` and `gaps` live
+  in `SLIMM_DB_PATH`; the in-memory lookups are cheap to rebuild from the
+  next few events and simply start cold again after a restart.
 - **Watch more than these five events.** Reactions, threads, polls, pins,
   and canvas activity all have their own event types and are out of scope
   here - see the other bots here and slim-m's `docs/bots/building-bots.md`.
+
+## Output
+
+Every log line's `content` is still the plain-text sentence a reader can
+skim; a real `Embed` (footer only, naming the event kind, e.g.
+`member.removed`) rides alongside it, for a client that wants to group or
+filter the feed by kind without parsing the sentence. See
+`../docs/framework.md`'s embeds section for the fallback an older server
+gets instead.
