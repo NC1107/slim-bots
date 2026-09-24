@@ -510,7 +510,7 @@ async def on_ready():
     if _maintenance_started:
         return
     _maintenance_started = True
-    asyncio.create_task(_maintenance())
+    bot.background(_maintenance(), name="casino-maintenance")
 
 
 async def _maintenance():

@@ -240,6 +240,23 @@ def test_another_bot_is_ignored_by_default():
     assert client.sent == []
 
 
+def test_on_ready_starts_maintenance_as_a_supervised_background_task():
+    setup()
+    casino._maintenance_started = False
+
+    async def run():
+        await casino.on_ready()
+        assert len(casino.bot._background_tasks) == 1
+        task = next(iter(casino.bot._background_tasks))
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:
