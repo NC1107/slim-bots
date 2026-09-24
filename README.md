@@ -14,7 +14,9 @@ Read that first. Then pick the template closest to what you want.
 with retries, the websocket handshake, the reconnect loop with backoff, and
 the `seq`-cursor/`/sync` helpers. It is not a typed model of slim-m's API -
 no `Channel` or `Message` objects, no cache - because slim-m's bot surface is
-small enough that this is the whole plumbing layer needed. See its own
+small enough that this is the whole plumbing layer needed. `slimbots.testing`
+also has `FakeClient`, for unit-testing a bot's command handlers with no live
+deployment - `bot-reminders/test_bot.py` is a worked example. See its own
 README for what it covers and why it is hand-written rather than generated.
 
 `bot-ping` stays free of it on purpose: it is the one template that shows

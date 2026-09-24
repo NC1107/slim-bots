@@ -1,6 +1,6 @@
 [project]
 name = "slim-m"
-version = "0.1.0"
+version = "0.2.0"
 description = "Shared plumbing for slim-m bots: auth, REST, retries, websocket reconnect, seq cursors"
 readme = "README.md"
 requires-python = ">=3.9"
