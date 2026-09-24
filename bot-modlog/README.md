@@ -6,23 +6,27 @@ kicks, restores, role grants, role revokes, and role definition changes.
 Built on the `slimbots` `Bot` framework - see `../docs/framework.md`. The
 five moderation events map onto `@bot.event` handlers (`on_member_timeout`,
 `on_member_removed`, `on_member_restored`, `on_member_role_changed`,
-`on_role_changed`) instead of a manual frame-type dispatch, and `!modlog`
-is one `@bot.command` instead of a trigger regex per subcommand. `bot-ping`
-stays free of the library on purpose; see its own README.
+`on_role_changed`) instead of a manual frame-type dispatch, `!modlog` is
+one `@bot.command` instead of a trigger regex per subcommand, and `Bot`
+itself owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS` and the seq
+cursor - this script only reads `SLIMM_DB_PATH`, its own business config.
+`bot-ping` stays free of the library on purpose; see its own README.
 
 ```bash
 pip install -r requirements.txt
 SLIMM_URL=https://your.space \
 SLIMM_BOT_TOKEN=slimbot_... \
-SLIMM_LOG_CHANNEL=<channel-uuid> \
+SLIMM_CHANNELS=<channel-uuid> \
 python3 bot.py
 ```
 
-`SLIMM_LOG_CHANNEL` is the one channel this bot posts into. It needs only
-`VIEW_CHANNEL` and `SEND_MESSAGES` there - see "What your bot may do" in
+`SLIMM_CHANNELS` should name exactly one channel here - `bot.channel` is
+the one this bot posts into. It needs only `VIEW_CHANNEL` and
+`SEND_MESSAGES` there - see "What your bot may do" in
 `docs/bots/building-bots.md` for how to grant a bot a channel overwrite.
-`SLIMM_DB_PATH` (default `modlog.db`) holds this bot's own local transcript
-and reconnect-gap history - never a substitute for `GET /reports/history`.
+`SLIMM_DB_PATH` (default `modlog.db`) holds this bot's own local transcript,
+reconnect-gap history, and (shared with `Bot`) the seq cursor for its own
+command traffic - never a substitute for `GET /reports/history`.
 
 ## Commands
 
@@ -154,3 +158,12 @@ decision 0028, not something to route around here.
 - **Watch more than these five events.** Reactions, threads, polls, pins,
   and canvas activity all have their own event types and are out of scope
   here - see the other bots here and slim-m's `docs/bots/building-bots.md`.
+
+## Output
+
+Every log line's `content` is still the plain-text sentence a reader can
+skim; a real `Embed` (footer only, naming the event kind, e.g.
+`member.removed`) rides alongside it, for a client that wants to group or
+filter the feed by kind without parsing the sentence. See
+`../docs/framework.md`'s embeds section for the fallback an older server
+gets instead.

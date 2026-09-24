@@ -7,19 +7,16 @@ import time
 import uuid
 from datetime import datetime, timezone
 
-from slimbots import ApiError, Bot, catchup, cursor
+from slimbots import ApiError, Bot, Embed
 from slimbots.http import is_forbidden
 
-BASE = os.environ.get("SLIMM_URL", "")
-TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
-LOG_CHANNEL = os.environ.get("SLIMM_LOG_CHANNEL", "")
 DB_PATH = os.environ.get("SLIMM_DB_PATH", "modlog.db")
 
 # A reconnect faster than this is not worth a channel post - most drops are a blip that missed nothing worth naming.
 GAP_NOTICE_THRESHOLD_SECONDS = 5
 MAX_GAPS_SHOWN = 10
 
-bot = Bot(prefix="!", channels={LOG_CHANNEL} if LOG_CHANNEL else None)
+bot = Bot(prefix="!", require_channels=True, cursor_path=DB_PATH)
 bot.db = None
 
 # user_id -> set of role_ids last observed, used to infer a member.role_changed event's direction.
@@ -47,7 +44,6 @@ def init_db(conn):
         """
     )
     conn.commit()
-    cursor.init_table(conn)
 
 
 def format_duration(seconds):
@@ -82,7 +78,8 @@ def record_event(kind, text):
 async def post(kind, text):
     """Posts a log line under a fresh id every call - two different events can produce identical text,
     so there is nothing here worth deduplicating against the way a command reply is."""
-    await bot.client.send(LOG_CHANNEL, text, message_id=str(uuid.uuid4()))
+    embed = Embed(footer=kind)
+    await bot.client.send(bot.channel, text, message_id=str(uuid.uuid4()), embeds=[embed.to_wire()], fallback_content=text)
     record_event(kind, text)
 
 
@@ -263,40 +260,20 @@ async def announce_catchup_capability():
         )
 
 
-async def _resync_commands():
-    """`message.created` on LOG_CHANNEL carries a seq, unlike the moderation events above, so this half can catch up."""
-    after = cursor.get(bot.db, LOG_CHANNEL)
-    scope = (await catchup.sync(bot.client, [{"channel_id": LOG_CHANNEL, "after_seq": after}]))[0]
-    for message in scope["messages"]:
-        await bot.process_message(message)
-    if scope["messages"]:
-        cursor.set(bot.db, LOG_CHANNEL, scope["messages"][-1]["seq"])
-    elif scope["reset"]:
-        await catchup.bootstrap(bot.client, bot.db, LOG_CHANNEL)
-
-
-@bot.event
-async def on_raw_message(message):
-    seq = message.get("seq")
-    if seq is not None:
-        cursor.set(bot.db, LOG_CHANNEL, seq)
-
-
 @bot.event
 async def on_connect():
     await announce_catchup_capability()
-    await catchup.bootstrap(bot.client, bot.db, LOG_CHANNEL)
-    await _resync_commands()
     await report_reconnect_gap()
     note_alive()
 
 
 def main():
-    if not BASE or not TOKEN or not LOG_CHANNEL:
-        raise SystemExit("set SLIMM_URL, SLIMM_BOT_TOKEN and SLIMM_LOG_CHANNEL")
     bot.db = sqlite3.connect(DB_PATH)
     init_db(bot.db)
-    raise SystemExit(bot.run() or 0)
+    try:
+        raise SystemExit(bot.run() or 0)
+    except RuntimeError as err:
+        raise SystemExit(str(err))
 
 
 if __name__ == "__main__":

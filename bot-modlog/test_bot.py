@@ -10,7 +10,6 @@ import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-os.environ.setdefault("SLIMM_LOG_CHANNEL", "c1")
 
 import bot as modlog  # noqa: E402
 from slimbots.authors import AuthorFilter  # noqa: E402
@@ -27,6 +26,7 @@ def message(author_id, content, msg_id="m1"):
 def setup():
     modlog.bot.db = sqlite3.connect(":memory:")
     modlog.init_db(modlog.bot.db)
+    modlog.bot.channels = {"c1"}
     modlog._last_roles.clear()
     modlog._role_names.clear()
     client = FakeAsyncClient(me_id="bot-1")
@@ -70,6 +70,7 @@ def test_member_removed_is_logged():
     client.respond("GET", "/users/u1", {**MEMBERS[0]})
     dispatch_frame({"type": "member.removed", "user_id": "u1"})
     assert "was removed from the Space" in client.sent[-1]["content"]
+    assert client.sent[-1]["embeds"] == [{"footer": {"text": "member.removed"}}]
 
 
 def test_role_change_first_sighting_reads_now_holds():
