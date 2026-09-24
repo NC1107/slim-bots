@@ -16,9 +16,13 @@ python3 bot.py
 
 Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
 `Bot` owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS` and the seq
-cursor for the `!jellyfin` command surface; every `JELLYFIN_*` variable and
-`SLIMM_DB_PATH` are this bot's own business config, since the framework has
-no opinion on Jellyfin. The Jellyfin side is plain HTTP/JSON via `urllib`,
+cursor for the `!jellyfin` command surface; every `JELLYFIN_*` variable is
+read through `bot.setting()` (two of them, `JELLYFIN_URL`/`JELLYFIN_API_KEY`,
+as `required=True`, so a missing one is reported the same clear way as a
+missing `SLIMM_URL`) and `bot.data_path` (from `SLIMM_DB_PATH`) is where
+its own tables live - this script never imports `os` itself, since the
+framework has no opinion on Jellyfin beyond owning that plumbing. The
+Jellyfin side is plain HTTP/JSON via `urllib`,
 run off the event loop with `asyncio.to_thread` rather than rewritten onto
 `httpx`: it is called at most once per `JELLYFIN_POLL_SECONDS` from the poll
 loop, and cooldown-guarded from a command, so blocking it briefly costs

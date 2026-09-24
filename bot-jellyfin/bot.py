@@ -3,7 +3,7 @@
 
 import asyncio
 import json
-import os
+import signal
 import sqlite3
 import sys
 import time
@@ -17,13 +17,6 @@ from slimbots import ApiError, Bot, Embed
 from slimbots.http import is_token_revoked
 from slimbots.limits import Cooldown, ValidationError, require_int, require_len
 
-JELLYFIN_URL = os.environ.get("JELLYFIN_URL", "").rstrip("/")
-JELLYFIN_API_KEY = os.environ.get("JELLYFIN_API_KEY", "")
-JELLYFIN_ITEM_TYPES = [t for t in os.environ.get("JELLYFIN_ITEM_TYPES", "Movie,Episode").split(",") if t]
-JELLYFIN_LIBRARY_IDS = [i for i in os.environ.get("JELLYFIN_LIBRARY_IDS", "").split(",") if i]
-JELLYFIN_POLL_SECONDS = int(os.environ.get("JELLYFIN_POLL_SECONDS", "300"))
-JELLYFIN_BATCH_THRESHOLD = int(os.environ.get("JELLYFIN_BATCH_THRESHOLD", "3"))
-DB_PATH = os.environ.get("SLIMM_DB_PATH", "jellyfin_watch.db")
 MAX_ITEMS_PER_POLL = 500
 PAGE_SIZE = 200
 OVERVIEW_MAX_CHARS = 220
@@ -59,8 +52,17 @@ def parse_library_routes(spec):
     return routes
 
 
-JELLYFIN_LIBRARY_ROUTES = parse_library_routes(os.environ.get("JELLYFIN_LIBRARY_ROUTES", ""))
-JELLYFIN_EXCLUDE_GENRES = {g.strip().lower() for g in os.environ.get("JELLYFIN_EXCLUDE_GENRES", "").split(",") if g.strip()}
+bot = Bot(prefix="!", require_channels=True, default_data_path="jellyfin_watch.db")
+
+JELLYFIN_URL = (bot.setting("JELLYFIN_URL", required=True) or "").rstrip("/")
+JELLYFIN_API_KEY = bot.setting("JELLYFIN_API_KEY", required=True) or ""
+JELLYFIN_ITEM_TYPES = bot.setting("JELLYFIN_ITEM_TYPES", ["Movie", "Episode"], type=list)
+JELLYFIN_LIBRARY_IDS = bot.setting("JELLYFIN_LIBRARY_IDS", [], type=list)
+JELLYFIN_POLL_SECONDS = bot.setting("JELLYFIN_POLL_SECONDS", 300, type=int)
+JELLYFIN_BATCH_THRESHOLD = bot.setting("JELLYFIN_BATCH_THRESHOLD", 3, type=int)
+JELLYFIN_LIBRARY_ROUTES = parse_library_routes(bot.setting("JELLYFIN_LIBRARY_ROUTES", "") or "")
+JELLYFIN_EXCLUDE_GENRES = {g.lower() for g in bot.setting("JELLYFIN_EXCLUDE_GENRES", [], type=list)}
+_command_cooldown = Cooldown(COMMAND_COOLDOWN_SECONDS)
 
 
 def target_channel(library_id):
@@ -403,11 +405,11 @@ async def poll_loop():
             await poll_once()
         except JellyfinAuthError:
             print("jellyfin api key rejected - exiting", file=sys.stderr)
-            os._exit(1)
+            signal.raise_signal(signal.SIGKILL)
         except ApiError as err:
             if is_token_revoked(err):
                 print("slimm bot token rejected - exiting", file=sys.stderr)
-                os._exit(1)
+                signal.raise_signal(signal.SIGKILL)
             print(f"{type(err).__name__}: {err}, retrying next cycle", file=sys.stderr)
         except Exception as err:
             print(f"{type(err).__name__}: {err}, retrying next cycle", file=sys.stderr)
@@ -421,10 +423,6 @@ def search_items(query, limit):
     }
     params = {k: v for k, v in params.items() if v is not None}
     return jf_get("/Items", params).get("Items", [])
-
-
-bot = Bot(prefix="!", require_channels=True, cursor_path=DB_PATH)
-_command_cooldown = Cooldown(COMMAND_COOLDOWN_SECONDS)
 
 
 async def run_search(ctx, query):
@@ -504,8 +502,9 @@ async def on_connect():
 
 
 def check_jellyfin_config():
-    if not JELLYFIN_URL or not JELLYFIN_API_KEY:
-        return "set JELLYFIN_URL and JELLYFIN_API_KEY"
+    """A plaintext, non-loopback JELLYFIN_URL leaks the API key; presence is `bot.setting`'s job, not this one's."""
+    if not JELLYFIN_URL:
+        return None
     loopback = urllib.parse.urlsplit(JELLYFIN_URL).hostname in ("localhost", "127.0.0.1", "::1")
     if not JELLYFIN_URL.startswith("https://") and not loopback:
         return "refusing a plaintext, non-loopback JELLYFIN_URL: a token on the wire is a leak"
@@ -516,7 +515,7 @@ def main():
     problem = check_jellyfin_config()
     if problem:
         raise SystemExit(problem)
-    bot.db = sqlite3.connect(DB_PATH)
+    bot.db = sqlite3.connect(bot.data_path)
     init_db(bot.db)
     try:
         raise SystemExit(bot.run() or 0)
