@@ -1,12 +1,11 @@
 # slimbots
 
-Shared plumbing for slim-m bot templates in this repo.
+A discord.py-shaped bot framework for slim-m: `Bot()`, `@bot.command`, `ctx`, and a live `Space` model, plus the safeguards seven real bots each used to rebuild by hand (bot-ignore, cooldowns, permission gates, clean lifecycle).
 
-This is not a typed model of slim-m's API. There is no `Channel` class, no
-`Message` object, no cache, no event hierarchy - the kind of thing a
-discord.js-shaped SDK would give you for a few hundred endpoints. slim-m's
-entire bot surface is: log in with a token, call REST, hold one websocket,
-track a per-scope `seq`. That is what this package covers:
+See [`../docs/framework.md`](../docs/framework.md) for the full shape and the reasoning behind it - async HTTP, identity, command registration, the embed seam.
+`../bot-casino/` is the reference port built on it.
+
+The pre-0.3 sync primitives are still here, unchanged, for the templates not yet ported to `Bot`:
 
 - authentication (`Authorization: Bearer`, a real `User-Agent`, `GET /me`)
 - a REST helper, `Client.call`, for any route a template needs, including a
@@ -21,36 +20,26 @@ track a per-scope `seq`. That is what this package covers:
 - refusing to carry a token over plain `ws://` to anything but a loopback
   address (`socket_url`)
 
-It deliberately does **not** give you a typed route client, a cache, or an
-event-object hierarchy. See `docs/bots/building-bots.md` in slim-m for the
-protocol this wraps, and `bot-ping/` in this repo for the same protocol
-written out with nothing hidden - it stays free of this package on purpose,
-so there is always one template that shows the whole thing in one file.
+See `docs/bots/building-bots.md` in slim-m for the protocol underneath all
+of this, and `bot-ping/` in this repo for that protocol written out with
+nothing hidden - it stays free of this package on purpose, so there is
+always one template that shows the whole thing in one file.
 
 ## Testing a bot built on this
 
-`slimbots.testing.FakeClient` is a `Client` that never touches the network,
-for unit-testing a bot's command handlers - the thing every template but
-this package's own tests had no way to do without a live deployment. It
-records every call in `.calls`, auto-answers a message send and records it
-separately in `.sent` (the one route every template calls on every command),
-and raises immediately on anything else the bot under test calls that was
-not stubbed with `respond(method, path, response)`, so a forgotten stub
-fails the test loudly instead of hanging.
+`slimbots.testing` has two fakes that never touch the network: `FakeAsyncClient` for a `Bot` (drive it with `await bot.process_message(...)` to exercise argument conversion, cooldowns, permission gates and the bot-ignore default), and `FakeClient` for the pre-0.3 sync templates.
+Both record every call in `.calls`, auto-answer a message send into `.sent`, and raise immediately on anything else the code under test calls that was not stubbed first with `respond(method, path, response_or_exception)` - so a forgotten stub fails the test loudly instead of hanging.
 
 ```python
-from slimbots.testing import FakeClient
+from slimbots.testing import FakeAsyncClient
 
-client = FakeClient(me_id="bot-1")
-handle_message(client, conn, "bot-1", "chan-1", {"author_id": "u1", "content": "!ping", "id": "m1"})
+client = FakeAsyncClient(me_id="bot-1")
+await bot.process_message({"author_id": "u1", "channel_id": "c1", "content": "!ping", "id": "m1"})
 assert client.sent[0]["content"] == "pong"
 ```
 
-It is not imported by `slimbots/__init__.py`, so it costs nothing for a
-template that never writes a test. `bot-reminders/test_bot.py` is a worked
-example against a real template's handlers. It is not a mock of slim-m's
-API - concurrency and money-safety still need a real sqlite connection and
-real threads racing it, the way `bot-casino/test_concurrency.py` does.
+Neither is imported by `slimbots/__init__.py`, so it costs nothing for a bot that never writes a test.
+Neither is a mock of slim-m's own validation or concurrency - money-safety still needs a real sqlite connection and real threads racing it, the way `bot-casino/test_concurrency.py` does.
 
 ## Hand-written, not generated
 

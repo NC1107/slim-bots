@@ -1,29 +1,64 @@
-"""Shared plumbing for slim-m bot templates.
-
-This is not a client library for slim-m's API in the discord.js sense: there
-is no typed model of a channel or a message, no cache, and no object for
-every route. slim-m's bot surface is small - log in with a token, call REST,
-hold one websocket, track a per-scope `seq` - and that surface is what this
-package covers, nothing more.
-
-See `docs/bots/building-bots.md` in the slim-m repo for the protocol itself.
-`bot-ping` in this repo stays free of this package on purpose, so there is
-still one file that shows the whole protocol with nothing hidden.
-"""
+"""A discord.py-shaped bot framework for slim-m; see docs/framework.md."""
 
 from . import cursor
+from .bot import Bot
 from .client import Client, is_not_found, is_token_revoked, socket_url
+from .commands import Command
+from .context import Context
+from .embeds import Embed
+from .exceptions import (
+    BadArgument,
+    CheckFailure,
+    CommandError,
+    CommandNotFound,
+    CommandOnCooldown,
+    MissingPermissions,
+    MissingRequiredArgument,
+    SlimBotsError,
+)
+from .http import ApiError
+from .http import AsyncClient as AsyncApiClient
+from .limits import Cooldown, Quota, RateLimiter, ValidationError, require_int, require_len, require_range
+from .models import Channel, Member, Role
+from .permissions import Permissions
 from .retry import call_with_retry
 from .runner import run_forever
+from .space import Space
 from .ws import Connection
 
 __all__ = [
+    "ApiError",
+    "AsyncApiClient",
+    "BadArgument",
+    "Bot",
+    "Channel",
+    "CheckFailure",
     "Client",
+    "Command",
+    "CommandError",
+    "CommandNotFound",
+    "CommandOnCooldown",
     "Connection",
+    "Context",
+    "Cooldown",
+    "Embed",
+    "Member",
+    "MissingPermissions",
+    "MissingRequiredArgument",
+    "Permissions",
+    "Quota",
+    "RateLimiter",
+    "Role",
+    "SlimBotsError",
+    "Space",
+    "ValidationError",
     "call_with_retry",
     "cursor",
     "is_not_found",
     "is_token_revoked",
+    "require_int",
+    "require_len",
+    "require_range",
     "run_forever",
     "socket_url",
 ]
