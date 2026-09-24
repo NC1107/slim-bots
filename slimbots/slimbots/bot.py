@@ -9,7 +9,7 @@ import sys
 
 from . import catchup, cursor
 from .authors import AuthorFilter
-from .commands import Command, build_help_text
+from .commands import Command, Group, build_help_text
 from .context import Context
 from .exceptions import CommandError
 from .gateway import Gateway
@@ -43,7 +43,7 @@ class Bot:
 
     def __init__(self, prefix="!", *, url=None, token=None, user_agent=DEFAULT_USER_AGENT,
                  ignore_bots=True, base_delay=1.0, max_delay=60.0, help_command=True,
-                 channels=None, require_channels=False, cursor_path=None):
+                 channels=None, require_channels=False, cursor_path=None, default_data_path=None):
         self.prefix = prefix
         self._url = url
         self._token = token
@@ -54,6 +54,9 @@ class Bot:
         self.channels = set(channels) if channels else None
         self.require_channels = require_channels
         self.cursor_path = cursor_path
+        self.default_data_path = default_data_path
+        self.data_path = os.environ.get("SLIMM_DB_PATH") or default_data_path
+        self._setting_errors = []
         self.commands = {}
         self._unique_commands = []
         self._listeners = {}
@@ -71,6 +74,21 @@ class Bot:
         self._global_checks.append(func)
         return func
 
+    def setting(self, name, default=None, *, type=str, required=False):
+        """One config value from the environment, converted by `type`; a missing `required` one is reported at `start()`."""
+        raw = os.environ.get(name)
+        if not raw:
+            if required:
+                self._setting_errors.append(name)
+            return default
+        if type is int:
+            return int(raw)
+        if type is float:
+            return float(raw)
+        if type is list:
+            return [item.strip() for item in raw.split(",") if item.strip()]
+        return raw
+
     def command(self, name=None, *, aliases=(), help=None, usage=None, cooldown=None, requires=None, check=None):
         def decorator(func):
             self.add_command(Command(
@@ -78,6 +96,16 @@ class Bot:
                 usage=usage, cooldown=cooldown, requires=requires, check=check,
             ))
             return func
+        return decorator
+
+    def group(self, name=None, *, aliases=(), help=None, cooldown=None, requires=None, check=None):
+        def decorator(func):
+            grp = Group(
+                func, name=name or func.__name__, aliases=aliases, help=help,
+                cooldown=cooldown, requires=requires, check=check,
+            )
+            self.add_command(grp)
+            return grp
         return decorator
 
     def add_command(self, command):
@@ -274,6 +302,7 @@ class Bot:
             missing.append("SLIMM_BOT_TOKEN")
         if self.require_channels and not self.channels:
             missing.append("SLIMM_CHANNELS")
+        missing.extend(self._setting_errors)
         if missing:
             raise RuntimeError(f"set {', '.join(missing)}")
 
@@ -281,7 +310,7 @@ class Bot:
         self.space = Space(self.client)
         self.authors = AuthorFilter(self.client, space=self.space, ignore_bots=self.ignore_bots)
         if self.channels:
-            path = self.cursor_path or os.environ.get("SLIMM_CURSOR_DB") or DEFAULT_CURSOR_DB
+            path = self.cursor_path or self.data_path or os.environ.get("SLIMM_CURSOR_DB") or DEFAULT_CURSOR_DB
             self._cursor_conn = sqlite3.connect(path, isolation_level=None)
             cursor.init_table(self._cursor_conn)
         try:

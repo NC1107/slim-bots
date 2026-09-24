@@ -8,20 +8,24 @@ MAX_USAGE_LEN = 80
 
 
 def registration_body(prefix, commands):
-    """Every registered name and alias as its own composer entry, capped at the server's limits."""
+    """Every registered name and alias as its own composer entry; a group still counts as just one."""
     entries = []
     for command in commands:
         for name in command.names:
             if len(entries) >= MAX_REGISTERED_COMMANDS:
                 break
-            description = (command.help or command.name)[:MAX_DESCRIPTION_LEN]
-            entry = {"name": name, "description": description}
-            if command.usage:
-                entry["usage"] = command.usage[:MAX_USAGE_LEN]
-            if command.requires is not None:
-                entry["permission"] = int(command.requires)
-            entries.append(entry)
+            entries.append(_entry(command, name))
     return {"prefix": prefix, "commands": entries}
+
+
+def _entry(command, name):
+    description = (command.help or command.name)[:MAX_DESCRIPTION_LEN]
+    entry = {"name": name, "description": description}
+    if command.usage:
+        entry["usage"] = command.usage[:MAX_USAGE_LEN]
+    if command.requires is not None:
+        entry["permission"] = int(command.requires)
+    return entry
 
 
 async def register_commands(client, *, prefix, commands):
