@@ -8,7 +8,7 @@ PROTOCOL = 1
 
 
 class Gateway:
-    """An open, hello-shaken slim-m websocket connection for an `AsyncApiClient`."""
+    """An open, hello-shaken slim-m websocket connection for an `AsyncClient`."""
 
     def __init__(self, socket):
         self._socket = socket

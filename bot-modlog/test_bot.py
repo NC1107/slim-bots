@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Command-and-event tests against slimbots.testing.FakeAsyncClient.
-
-Run it directly, no test framework needed: python3 test_bot.py
-"""
+"""Command-and-event tests against FakeAsyncClient; run directly: python3 test_bot.py."""
 
 import asyncio
 import os
