@@ -22,6 +22,12 @@ def test_a_missing_bit_is_denied():
     assert not Permissions.contains(Permissions.SEND_MESSAGES, Permissions.MANAGE_ROLES)
 
 
+def test_names_lists_every_set_bit():
+    bits = Permissions.MANAGE_ROLES | Permissions.BAN_MEMBERS
+    assert Permissions.names(bits) == ["BAN_MEMBERS", "MANAGE_ROLES"]
+    assert Permissions.names(Permissions.NONE) == []
+
+
 def test_cooldown_resets_after_the_window():
     clock = {"t": 0.0}
     cd = Cooldown(5, clock=lambda: clock["t"])

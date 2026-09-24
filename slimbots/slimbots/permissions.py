@@ -30,3 +30,11 @@ class Permissions:
         if bits & cls.ADMINISTRATOR:
             return True
         return (bits & permission) == permission
+
+    @classmethod
+    def names(cls, bits):
+        """Sorted names of every bit set in `bits` - for a "you're missing X" reply, never a route."""
+        return sorted(
+            name for name, value in vars(cls).items()
+            if name.isupper() and name != "NONE" and isinstance(value, int) and bits & value
+        )
