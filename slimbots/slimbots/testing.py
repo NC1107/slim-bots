@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from .http import AsyncClient
+from .voice import VoiceError
 
 
 class FakeAsyncClient(AsyncClient):
@@ -78,8 +79,6 @@ class FakeVoiceSession:
     async def publish_screen_share(
         self, *, width: int, height: int, sample_rate: int = 48000, num_channels: int = 2,
     ) -> tuple[Any, Any]:
-        from .voice import VoiceError
-
         if not self.can_publish:
             raise VoiceError("this token cannot publish - the bot needs SPEAK in this channel")
         self.published = {

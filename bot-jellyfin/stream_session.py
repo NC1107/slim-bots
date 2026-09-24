@@ -9,6 +9,8 @@ import shutil
 import tempfile
 import time
 
+from slimbots import Embed
+
 import jellyfin_core
 
 AUDIO_SAMPLE_RATE = 48000
@@ -281,8 +283,6 @@ class WatchSession:
                 return
 
     def now_playing_embed(self):
-        from slimbots import Embed
-
         embed = Embed(title=self.title)
         embed.add_field("position", format_hms(self.position_seconds), inline=True)
         if self.duration_seconds:
