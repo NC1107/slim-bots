@@ -1,7 +1,11 @@
 """A per-channel `seq` cursor in sqlite; see `catchup` for the async `/sync` calls built on it."""
 
+from __future__ import annotations
 
-def init_table(conn, table="cursors"):
+import sqlite3
+
+
+def init_table(conn: sqlite3.Connection, table: str = "cursors") -> None:
     conn.execute(
         f"CREATE TABLE IF NOT EXISTS {table} "
         "(channel_id TEXT PRIMARY KEY, after_seq INTEGER NOT NULL)"
@@ -9,14 +13,14 @@ def init_table(conn, table="cursors"):
     conn.commit()
 
 
-def get(conn, channel_id, table="cursors"):
+def get(conn: sqlite3.Connection, channel_id: str, table: str = "cursors") -> int | None:
     row = conn.execute(
         f"SELECT after_seq FROM {table} WHERE channel_id = ?", (channel_id,)
     ).fetchone()
     return row[0] if row else None
 
 
-def set(conn, channel_id, seq, table="cursors"):
+def set(conn: sqlite3.Connection, channel_id: str, seq: int, table: str = "cursors") -> None:
     """Advances the stored cursor to `seq`, never backwards - a frame handled twice must not move it earlier."""
     conn.execute(
         f"INSERT INTO {table} (channel_id, after_seq) VALUES (?, ?) "

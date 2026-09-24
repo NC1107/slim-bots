@@ -6,7 +6,7 @@ import urllib.parse
 LOOPBACK_HOSTS = ("localhost", "127.0.0.1", "::1")
 
 
-def socket_url(base):
+def socket_url(base: str) -> str:
     """The WebSocket URL for `base`, refusing to carry a token in plaintext outside loopback."""
     parts = urllib.parse.urlsplit(base)
     if parts.scheme == "https":

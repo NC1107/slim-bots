@@ -1,18 +1,25 @@
 """Resolving whether a message's author is automated; see docs/framework.md."""
 
+from __future__ import annotations
+
 import sys
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .http import AsyncClient
+    from .space import Space
 
 
 class AuthorFilter:
     """Caches each author id's automated-or-not verdict for the process lifetime."""
 
-    def __init__(self, client, *, space=None, ignore_bots=True):
+    def __init__(self, client: AsyncClient, *, space: Space | None = None, ignore_bots: bool = True) -> None:
         self._client = client
         self._space = space
         self.ignore_bots = ignore_bots
-        self._automated = {}
+        self._automated: dict[str, bool] = {}
 
-    async def is_automated(self, user_id):
+    async def is_automated(self, user_id: str) -> bool:
         if user_id in self._automated:
             return self._automated[user_id]
         cached = self._space.members.get(user_id) if self._space is not None else None

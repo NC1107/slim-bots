@@ -1,5 +1,7 @@
 """`Duration` and `TimeOfDay`: argument types `Command._convert` recognizes beyond int/float/str/Member."""
 
+from __future__ import annotations
+
 _DURATION_UNIT_SECONDS = {"s": 1, "m": 60, "h": 3600, "d": 86400}
 
 
@@ -7,7 +9,7 @@ class Duration(int):
     """A count of seconds parsed from `10m`, `2h30m`, `1d`; behaves as a plain int once converted."""
 
     @classmethod
-    def parse(cls, token):
+    def parse(cls, token: str) -> Duration | None:
         total = 0
         rest = token
         matched_anything = False
@@ -27,12 +29,12 @@ class Duration(int):
 class TimeOfDay:
     """A wall-clock `HH:MM`, with no date or timezone attached."""
 
-    def __init__(self, hour, minute):
+    def __init__(self, hour: int, minute: int) -> None:
         self.hour = hour
         self.minute = minute
 
     @classmethod
-    def parse(cls, token):
+    def parse(cls, token: str) -> TimeOfDay | None:
         hour_text, sep, minute_text = token.partition(":")
         if not sep or not hour_text.isdigit() or not minute_text.isdigit():
             return None
@@ -41,5 +43,5 @@ class TimeOfDay:
             return None
         return cls(hour, minute)
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return f"TimeOfDay({self.hour:02d}:{self.minute:02d})"

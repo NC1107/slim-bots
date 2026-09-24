@@ -2,11 +2,15 @@
 reconnect, command dispatch, and `run()`.
 """
 
+from __future__ import annotations
+
 import asyncio
 import importlib
 import os
 import sqlite3
 import sys
+from types import ModuleType
+from typing import Any, Awaitable, Callable, Coroutine
 
 from . import catchup, cursor
 from . import events as ev
@@ -17,6 +21,7 @@ from .exceptions import CommandError, CommandNotFound
 from .gateway import Gateway
 from .http import ApiError, AsyncClient, is_forbidden, is_token_revoked
 from .lifecycle import guard_dispatch, run_with_shutdown
+from .models import Member
 from .registration import register_commands
 from .space import Space
 from .store import Store
@@ -24,9 +29,11 @@ from .store import Store
 DEFAULT_USER_AGENT = "slimbots/0.3"
 DEFAULT_CURSOR_DB = "slimbots-cursor.db"
 
+EventFrame = tuple[str, "type[Any] | None"]
+
 # Deployment-wide (or DM/user-scoped) frame types: (handler name, payload class or None for the raw frame).
 # See docs/framework.md on why there is no on_member_join.
-_GLOBAL_EVENT_FRAMES = {
+_GLOBAL_EVENT_FRAMES: dict[str, EventFrame] = {
     "member.removed": ("on_member_removed", None),
     "member.restored": ("on_member_restored", None),
     "member.role_changed": ("on_member_role_changed", None),
@@ -44,7 +51,7 @@ _GLOBAL_EVENT_FRAMES = {
 }
 
 # Channel-scoped frame types - dispatched only for a channel in `channels`, the same gate message.created gets.
-_CHANNEL_EVENT_FRAMES = {
+_CHANNEL_EVENT_FRAMES: dict[str, EventFrame] = {
     "canvas.object.placed": ("on_canvas_object_placed", None),
     "canvas.objects.removed": ("on_canvas_objects_removed", None),
     "canvas.cleared": ("on_canvas_cleared", None),
@@ -71,10 +78,13 @@ _CHANNEL_EVENT_FRAMES = {
 class Bot:
     """Owns everything a bot script would otherwise wire up by hand."""
 
-    def __init__(self, prefix="!", *, url=None, token=None, user_agent=DEFAULT_USER_AGENT,
-                 ignore_bots=True, base_delay=1.0, max_delay=60.0, help_command=True,
-                 channels=None, require_channels=False, cursor_path=None, default_data_path=None,
-                 store_migrate=None):
+    def __init__(
+        self, prefix: str = "!", *, url: str | None = None, token: str | None = None,
+        user_agent: str = DEFAULT_USER_AGENT, ignore_bots: bool = True, base_delay: float = 1.0,
+        max_delay: float = 60.0, help_command: bool = True, channels: set[str] | list[str] | None = None,
+        require_channels: bool = False, cursor_path: str | None = None, default_data_path: str | None = None,
+        store_migrate: Callable[[Any], None] | None = None,
+    ) -> None:
         self.prefix = prefix
         self._url = url
         self._token = token
@@ -82,62 +92,65 @@ class Bot:
         self.ignore_bots = ignore_bots
         self.base_delay = base_delay
         self.max_delay = max_delay
-        self.channels = set(channels) if channels else None
+        self.channels: set[str] | None = set(channels) if channels else None
         self.require_channels = require_channels
         self.cursor_path = cursor_path
         self.default_data_path = default_data_path
         self.data_path = os.environ.get("SLIMM_DB_PATH") or default_data_path
         self._store_migrate = store_migrate
-        self._setting_errors = []
-        self.commands = {}
-        self._unique_commands = []
-        self._listeners = {}
-        self._global_checks = []
-        self.client = None
-        self.space = None
-        self.authors = None
-        self.me_id = None
-        self._cursor_conn = None
-        self._background_tasks = set()
-        self._fatal_error = None
-        self._main_task = None
-        self._gateway = None
-        self.store = None
-        self._extensions = {}
+        self._setting_errors: list[str] = []
+        self.commands: dict[str, Command] = {}
+        self._unique_commands: list[Command] = []
+        self._listeners: dict[str, list[Callable[..., Awaitable[Any]]]] = {}
+        self._global_checks: list[Callable[[Context], Awaitable[str | None]]] = []
+        self.client: AsyncClient | None = None
+        self.space: Space | None = None
+        self.authors: AuthorFilter | None = None
+        self.me_id: str | None = None
+        self._cursor_conn: sqlite3.Connection | None = None
+        self._background_tasks: set[asyncio.Task[Any]] = set()
+        self._fatal_error: BaseException | None = None
+        self._main_task: asyncio.Task[Any] | None = None
+        self._gateway: Gateway | None = None
+        self.store: Store | None = None
+        self._extensions: dict[str, ModuleType] = {}
         if help_command:
             self._register_default_help()
 
-    def load_extension(self, module):
+    def load_extension(self, module: str | ModuleType) -> ModuleType:
         """Imports `module` (a name, or an already-imported module) and calls its `setup(bot)`; see docs/framework.md."""
         name = module if isinstance(module, str) else module.__name__
         if name in self._extensions:
             return self._extensions[name]
         if isinstance(module, str):
             module = importlib.import_module(module)
-        module.setup(self)
+        module.setup(self)  # type: ignore[attr-defined]
         self._extensions[name] = module
         return module
 
-    async def open_store(self, *, migrate=None, path=None):
+    async def open_store(self, *, migrate: Callable[[Any], None] | None = None, path: str | None = None) -> Store:
         """Opens (or returns the already-open) thread-offloaded `Store` at `path` or `self.data_path`."""
         if self.store is None:
-            self.store = Store(path or self.data_path, migrate=migrate)
+            resolved_path = path or self.data_path
+            if resolved_path is None:
+                raise RuntimeError("open_store needs a path - pass path=, or set default_data_path/SLIMM_DB_PATH")
+            self.store = Store(resolved_path, migrate=migrate)
             await self.store.open()
         return self.store
 
-    def check(self, func):
+    def check(self, func: Callable[[Context], Awaitable[str | None]]) -> Callable[[Context], Awaitable[str | None]]:
         """Registers an async predicate run before every command; a truthy string return refuses with that reply."""
         self._global_checks.append(func)
         return func
 
-    def background(self, coro, *, name=None):
+    def background(self, coro: Coroutine[Any, Any, Any], *, name: str | None = None) -> asyncio.Task[Any]:
         """Runs `coro` as a supervised task: held strongly, cancelled on shutdown, and a real exception stops the bot."""
         task = asyncio.create_task(coro, name=name)
         self._background_tasks.add(task)
         task.add_done_callback(self._on_background_done)
         return task
 
-    def _on_background_done(self, task):
+    def _on_background_done(self, task: asyncio.Task[Any]) -> None:
         self._background_tasks.discard(task)
         if task.cancelled():
             return
@@ -153,7 +166,7 @@ class Bot:
         if self._main_task is not None:
             self._main_task.cancel()
 
-    def setting(self, name, default=None, *, type=str, required=False):
+    def setting(self, name: str, default: Any = None, *, type: type = str, required: bool = False) -> Any:
         """One config value from the environment, converted by `type`; a missing `required` one is reported at `start()`."""
         raw = os.environ.get(name)
         if not raw:
@@ -169,10 +182,11 @@ class Bot:
         return raw
 
     def command(
-        self, name=None, *, aliases=(), help=None, usage=None,
-        cooldown=None, cooldown_bucket="user", requires=None, check=None,
-    ):
-        def decorator(func):
+        self, name: str | None = None, *, aliases: tuple[str, ...] = (), help: str | None = None, usage: str | None = None,
+        cooldown: float | None = None, cooldown_bucket: str = "user", requires: str | None = None,
+        check: Callable[[Context], Any] | None = None,
+    ) -> Callable[[Callable[..., Awaitable[Any]]], Callable[..., Awaitable[Any]]]:
+        def decorator(func: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
             self.add_command(Command(
                 func, name=name or func.__name__, aliases=aliases, help=help, usage=usage,
                 cooldown=cooldown, cooldown_bucket=cooldown_bucket, requires=requires, check=check,
@@ -180,8 +194,12 @@ class Bot:
             return func
         return decorator
 
-    def group(self, name=None, *, aliases=(), help=None, cooldown=None, cooldown_bucket="user", requires=None, check=None):
-        def decorator(func):
+    def group(
+        self, name: str | None = None, *, aliases: tuple[str, ...] = (), help: str | None = None,
+        cooldown: float | None = None, cooldown_bucket: str = "user", requires: str | None = None,
+        check: Callable[[Context], Any] | None = None,
+    ) -> Callable[[Callable[..., Awaitable[Any]]], Group]:
+        def decorator(func: Callable[..., Awaitable[Any]]) -> Group:
             grp = Group(
                 func, name=name or func.__name__, aliases=aliases, help=help,
                 cooldown=cooldown, cooldown_bucket=cooldown_bucket, requires=requires, check=check,
@@ -190,7 +208,7 @@ class Bot:
             return grp
         return decorator
 
-    def add_command(self, command):
+    def add_command(self, command: Command) -> None:
         for name in command.names:
             if name in self.commands:
                 raise ValueError(f"command name/alias `{name}` is already registered")
@@ -198,29 +216,31 @@ class Bot:
         self._unique_commands.append(command)
 
     @property
-    def channel(self):
+    def channel(self) -> str | None:
         """The one configured channel, when `channels` names exactly one; None otherwise."""
         if self.channels and len(self.channels) == 1:
             return next(iter(self.channels))
         return None
 
-    def get_command(self, name):
+    def get_command(self, name: str) -> Command | None:
         return self.commands.get(name)
 
-    def unique_commands(self):
+    def unique_commands(self) -> list[Command]:
         return list(self._unique_commands)
 
-    def event(self, func=None, *, name=None):
-        def decorator(f):
+    def event(self, func: Callable[..., Awaitable[Any]] | None = None, *, name: str | None = None) -> Any:
+        def decorator(f: Callable[..., Awaitable[Any]]) -> Callable[..., Awaitable[Any]]:
             self._listeners.setdefault(name or f.__name__, []).append(f)
             return f
         return decorator(func) if func else decorator
 
-    async def wait_for(self, event, *, check=None, timeout=None):
+    async def wait_for(
+        self, event: str, *, check: Callable[..., bool] | None = None, timeout: float | None = None,
+    ) -> Any:
         """Waits for the next `event` (an `on_*` name) where `check(*args)` is true; raises `asyncio.TimeoutError`."""
-        future = asyncio.get_running_loop().create_future()
+        future: asyncio.Future[Any] = asyncio.get_running_loop().create_future()
 
-        async def listener(*args):
+        async def listener(*args: Any) -> None:
             if check is not None and not check(*args):
                 return
             if not future.done():
@@ -232,16 +252,17 @@ class Bot:
         finally:
             self._listeners[event].remove(listener)
 
-    def _register_default_help(self):
+    def _register_default_help(self) -> None:
         @self.command(name="help", help="Show this list, or one command's usage")
-        async def help_command(ctx, command_name: str = None):
+        async def help_command(ctx: Context, command_name: str | None = None) -> None:
             await ctx.reply(build_help_text(self, command_name=command_name))
 
-    async def _dispatch_event(self, name, *args):
+    async def _dispatch_event(self, name: str, *args: Any) -> None:
         for handler in self._listeners.get(name, []):
             await guard_dispatch(handler, *args)
 
-    async def _resolve_author(self, author_id):
+    async def _resolve_author(self, author_id: str) -> Member | None:
+        assert self.space is not None, "_resolve_author needs an open connection"
         member = self.space.members.get(author_id)
         if member is not None:
             return member
@@ -250,9 +271,10 @@ class Bot:
         except ApiError:
             return None
 
-    async def process_message(self, message):
+    async def process_message(self, message: dict[str, Any]) -> None:
         """One `message.created` payload: the bot-ignore default, command
         parsing, argument conversion, and dispatch to the matched handler."""
+        assert self.authors is not None, "process_message needs an open connection"
         author_id = message.get("author_id")
         if not author_id or author_id == self.me_id:
             return
@@ -335,17 +357,18 @@ class Bot:
                 return
             await self._dispatch_typed(*channel_event, frame)
 
-    async def _dispatch_typed(self, name, payload_cls, frame):
+    async def _dispatch_typed(self, name: str, payload_cls: type[Any] | None, frame: dict[str, Any]) -> None:
         """Wraps `frame` in `payload_cls` unless it is `None` (the pre-typed events keep the raw frame dict)."""
         payload = payload_cls(frame) if payload_cls else frame
         await guard_dispatch(self._dispatch_event, name, payload)
 
-    def _note_seq(self, channel_id, seq):
-        if self._cursor_conn is not None and seq is not None:
+    def _note_seq(self, channel_id: str | None, seq: int | None) -> None:
+        if self._cursor_conn is not None and seq is not None and channel_id is not None:
             cursor.set(self._cursor_conn, channel_id, seq)
 
-    async def _catch_up(self):
+    async def _catch_up(self) -> None:
         """Replays any `/sync` backlog for `channels` through `process_message`, persisting the cursor as it goes."""
+        assert self.client is not None, "_catch_up needs start() to have run"
         if not self.channels or self._cursor_conn is None:
             return
         for channel_id in self.channels:
@@ -360,7 +383,8 @@ class Bot:
             elif scope["reset"]:
                 await catchup.bootstrap(self.client, self._cursor_conn, channel_id)
 
-    async def _connect_once(self, reset_delay):
+    async def _connect_once(self, reset_delay: Callable[[], None]) -> None:
+        assert self.client is not None and self.space is not None, "_connect_once needs start() to have run"
         self.me_id = (await self.client.me())["id"]
         await self.space.refresh_channels()
         try:
