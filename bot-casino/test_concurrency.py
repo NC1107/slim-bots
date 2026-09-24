@@ -1,20 +1,5 @@
 #!/usr/bin/env python3
-"""Proves, rather than assumes, that the money primitives in `bot.py` are
-safe under real concurrency - not just "one coroutine processes one command
-at a time," which is true of this bot's own event loop but says nothing
-about the database layer those primitives actually rely on.
-
-Each check below opens several genuinely separate sqlite connections (real
-OS threads, each with its own connection object, same file) and hammers one
-account from all of them at once, the way two overlapping `/sync` replays,
-a future multi-process deployment, or just bad luck could. It asserts on
-the money, not on the code path: total chips in play must never change from
-a bet or a transfer, and a balance must never go negative.
-
-Run it directly, no test framework needed:
-
-    python3 test_concurrency.py
-"""
+"""Proves the money primitives are safe under real, multi-threaded sqlite concurrency; see README.md."""
 
 import os
 import random
@@ -42,9 +27,7 @@ def cleanup(path):
 
 
 def open_conn(path):
-    """A fresh connection per thread - sqlite3 connections are not meant to
-    be shared across threads, and the point of this test is separate
-    connections racing, matching how two real bot processes would collide."""
+    """A fresh connection per thread - real separate connections racing, not one connection shared unsafely."""
     conn = sqlite3.connect(path, timeout=30, isolation_level=None)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=5000")
@@ -60,9 +43,7 @@ def run_concurrently(fns):
 
 
 def test_concurrent_flip_all_never_overspends():
-    """Fifty threads each race a `!flip all` for the same account. Whatever
-    order they land in, each one's stake must be resolved and reserved
-    atomically - no two of them may ever see and spend the same chip."""
+    """Fifty threads race a `!flip all` for one account; no two may ever see and spend the same chip."""
     path = fresh_db("flip-all")
     setup = open_conn(path)
     bot.init_db(setup)
@@ -98,10 +79,7 @@ def test_concurrent_flip_all_never_overspends():
 
 
 def test_concurrent_transfers_never_create_or_destroy_money():
-    """Two threads each try to give away most of one account's balance to a
-    different recipient at the same time. Together they ask for more than
-    the sender has, so at most one may succeed - and total money held across
-    both possible recipients plus the sender must be exactly conserved."""
+    """Two transfers together overdraw the sender; at most one may succeed, and the total stays conserved."""
     path = fresh_db("transfer")
     setup = open_conn(path)
     bot.init_db(setup)
@@ -143,10 +121,7 @@ def test_concurrent_transfers_never_create_or_destroy_money():
 
 
 def test_duplicate_request_id_is_charged_once():
-    """Simulates the actual replay this guards against: a crash between
-    committing a bet and advancing the sync cursor means the next `/sync`
-    redelivers the same message. Two threads racing the identical
-    request_id must produce exactly one balance change, not two."""
+    """Simulates a crash-and-replay: ten threads racing the identical request_id apply exactly once."""
     path = fresh_db("dedupe")
     setup = open_conn(path)
     bot.init_db(setup)
@@ -184,11 +159,7 @@ def test_duplicate_request_id_is_charged_once():
 
 
 def test_random_mixed_load_conserves_total_money():
-    """No scripted race this time - a pile of threads doing random flips and
-    gives against a handful of shared accounts at once, then checking that
-    the one invariant that must always hold, held: total chips in every
-    account plus every amount destroyed by a loss equals what was minted by
-    daily claims and wins. Money in, money out, nothing lost to a race."""
+    """Random flips and gives across shared accounts; total chips plus losses must equal what was minted."""
     path = fresh_db("mixed")
     setup = open_conn(path)
     bot.init_db(setup)

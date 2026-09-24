@@ -1,37 +1,5 @@
 #!/usr/bin/env python3
-"""A slim-m bot in one file: it answers `!ping` with `pong`.
-
-Run it with a bot token from Space settings -> Bots:
-
-    pip install websockets
-    SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... python3 bot.py
-
-What it demonstrates is the whole shape of a bot, and nothing else:
-
-1. a bot authenticates with `Authorization: Bearer <token>` like any client
-2. it mints a single-use ticket from POST /auth/ws-ticket
-3. it opens the WebSocket, says hello with that ticket, and reads events
-4. it answers with an ordinary POST to the messages route
-
-There is no bot-specific protocol anywhere in that list. A bot is a member with
-a long-lived credential, so every call here is a call a person's client makes
-too - which is the point of decision 0028 and the reason this file is short.
-
-A frame type this does not recognise is ignored rather than treated as an error.
-New event types get added over time, and a bot that dies on one it has never
-heard of breaks on somebody else's upgrade.
-
-Deliberately minimal, and these are the corners it cuts. It keeps no cursor, so
-it only sees what arrives while it is connected rather than catching up on
-restart; a bot that must not miss anything reads `seq` and calls /sync. It
-reconnects with a flat delay rather than backing off. It answers every channel
-it can see rather than being told which.
-
-Every other template in this repo builds on the `slimbots` package
-(`../slimbots/`) for this same plumbing. This one deliberately does not, so
-there is always one file that shows the whole protocol with nothing hidden
-behind an import - see `README.md` for why that stays true on purpose.
-"""
+"""The whole slim-m bot protocol in one file, nothing hidden behind an import; see README.md."""
 
 import asyncio
 import json
@@ -67,12 +35,7 @@ def call(method, path, body=None):
 
 
 def send(channel_id, content):
-    """Post a message.
-
-    The id is ours and makes the send idempotent within the channel, so a retry
-    after an uncertain failure cannot double-post. Never vary the content between
-    attempts under one id: the server replays what it first stored.
-    """
+    """Posts a message under a fresh id, making a retry after an uncertain failure safe."""
     return call(
         "POST",
         f"/channels/{channel_id}/messages",
@@ -81,13 +44,7 @@ def send(channel_id, content):
 
 
 def socket_url(base):
-    """The WebSocket URL for `base`, refusing to carry a token in plaintext.
-
-    An https deployment becomes wss. Plain http is allowed only for a loopback
-    address, because that is a developer running a server on their own machine;
-    anywhere else it would put a long-lived bot credential on the wire in the
-    clear, and a token is the one thing a bot cannot afford to leak.
-    """
+    """The WebSocket URL for `base`, refusing to carry a token in plaintext outside loopback."""
     parts = urllib.parse.urlsplit(base)
     if parts.scheme == "https":
         return urllib.parse.urlunsplit(("wss", parts.netloc, "/ws", "", ""))
@@ -101,11 +58,7 @@ def socket_url(base):
 
 
 def should_answer(message, me):
-    """Whether this message is a `!ping` from somebody other than us.
-
-    The author check is what stops the bot answering itself forever. Every bot
-    that posts in a channel it also listens to needs one.
-    """
+    """Whether this message is a `!ping` from somebody other than us."""
     if message.get("author_id") == me:
         return False
     return (message.get("content") or "").strip().lower().startswith(TRIGGER)
@@ -131,7 +84,7 @@ async def listen():
 
         async for raw in socket:
             frame = json.loads(raw)
-            # Ignore a frame type we do not know; see this module's docstring.
+            # Ignore a frame type we do not know; see README.md.
             if frame.get("type") != "message.created":
                 continue
             message = frame.get("message") or {}

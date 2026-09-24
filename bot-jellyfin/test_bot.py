@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-"""Grouping/cursor unit tests, plus command-layer tests against FakeAsyncClient with jf_get monkeypatched.
-
-Run it directly, no test framework needed: python3 test_bot.py
-"""
+"""Grouping/cursor tests, plus command-layer tests with jf_get monkeypatched; run directly: python3 test_bot.py."""
 
 import asyncio
 import os
