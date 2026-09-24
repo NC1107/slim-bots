@@ -2,8 +2,11 @@
 
 A slim-m bot that keeps a todo board on a channel's Voice Canvas:
 `!board add <text>` places a sticky note, `!board done <n>` removes it,
-`!board move <n> <slot>` repositions it, and `!board` (or `!board list`)
-shows what is up.
+`!board move <n> <slot>` repositions it, `!board clear yes` wipes the whole
+board, and `!board` (or `!board list`) shows what is up, crediting whoever
+added each note. `!board help`, or anything starting with `!board` that
+does not match a known command, gets a one-line usage reminder back instead
+of silence.
 
 Unlike `bot-ping`, this template is built on the `slimbots` package in
 `../slimbots/`, which covers the plumbing every template but `bot-ping`
@@ -73,3 +76,23 @@ docstring in `bot.py`:
 - **Everything `bot-reminders` already covers**: exponential backoff,
   channel scoping via `SLIMM_CHANNEL`, and a terminal 401 on a revoked
   token. See its own README.
+
+## Safeguards
+
+- **A length bound on note text** (`MAX_TEXT_LENGTH`, 240 characters): a note
+  is a fixed 220x140 box, so text well past what that box could show is
+  refused before it ever reaches the canvas API, not silently truncated.
+- **A confirmation on `!board clear`.** Bare `!board clear` says how many
+  items it would remove and does nothing; only `!board clear yes` actually
+  removes them. Wiping every item on a shared board deserves more friction
+  than any other command here.
+- **It never answers another bot.** `slimbots.AuthorFilter` skips every
+  automated author, not just itself, so several bots sharing a channel
+  cannot loop through this one.
+
+## Tests
+
+`python3 test_bot.py` - stdlib only plus `slimbots.testing.FakeClient`, no
+live deployment and no real canvas. Covers add/done/move/clear, the length
+bound, the board-full and empty-board cases, the help fallback, and the
+bot/self-ignore checks.

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """A slim-m bot that keeps a todo board on a channel's Voice Canvas:
 `!board add <text>` places a sticky note, `!board done <n>` removes it,
-`!board move <n> <slot>` repositions it, and `!board` lists what is up.
+`!board move <n> <slot>` repositions it, `!board clear yes` wipes the whole
+board, and `!board` lists what is up, crediting whoever added each note.
 
 Run it with a bot token from Space settings -> Bots, holding `SEND_MESSAGES`,
 `VIEW_CHANNEL` and `USE_CANVAS` on the one channel it watches:
@@ -81,6 +82,23 @@ What this deliberately does not do:
 - **Everything `bot-reminders` already covers and this bot does not repeat
   differently**: exponential backoff, `SLIMM_CHANNEL` scoping, and a
   terminal 401. See its own docstring.
+
+## Safeguards added without losing any of the above
+
+- **A length bound on note text.** `MAX_TEXT_LENGTH` refuses text past what a
+  fixed 220x140 box could ever show usefully, before it ever reaches the
+  canvas API - not a platform limit, just this bot declining to place
+  something it already knows will overflow its own box.
+- **A confirmation on `!board clear`.** Bare `!board clear` explains what it
+  would do and how many items it would remove, and does nothing; only
+  `!board clear yes` actually removes them. One command wiping every item on
+  a shared board deserved more friction than every other command here.
+- **A usage hint instead of silence.** Anything starting with `!board` that
+  does not match a known command - `!board add` with no text, a typo, a bare
+  `!board help` - gets `HELP_TEXT` back rather than nothing at all.
+- **It never answers another bot.** `slimbots.AuthorFilter` skips every
+  automated author, not just itself, so several bots sharing a channel
+  cannot loop through this one's replies.
 """
 
 import asyncio
@@ -106,11 +124,25 @@ NOTE_W = 220.0
 NOTE_H = 140.0
 GAP = 20.0
 MAX_SLOTS = 20
+# A note is a fixed 220x140 box; text past this is going to overflow it regardless of what the canvas itself allows.
+MAX_TEXT_LENGTH = 240
 
 TRIGGER_ADD = re.compile(r"^!board\s+add\s+(\S[\s\S]*)$", re.IGNORECASE)
 TRIGGER_DONE = re.compile(r"^!board\s+done\s+(\d+)\s*$", re.IGNORECASE)
 TRIGGER_MOVE = re.compile(r"^!board\s+move\s+(\d+)\s+(\d+)\s*$", re.IGNORECASE)
+TRIGGER_CLEAR = re.compile(r"^!board\s+clear(?:\s+(yes))?\s*$", re.IGNORECASE)
+TRIGGER_HELP = re.compile(r"^!board\s+help\s*$", re.IGNORECASE)
 TRIGGER_LIST = re.compile(r"^!board(?:\s+list)?\s*$", re.IGNORECASE)
+TRIGGER_ANY = re.compile(r"^!board\b", re.IGNORECASE)
+
+HELP_TEXT = (
+    "commands: `!board` to list, `!board add <text>`, `!board done <n>`, "
+    "`!board move <n> <slot>`, `!board clear yes` (removes everything - needs the "
+    "confirmation word)."
+)
+
+# user_id -> display_name, resolved once per author and reused; a later rename keeps the old name.
+_names = {}
 
 
 def init_db(conn):
@@ -121,12 +153,25 @@ def init_db(conn):
             slot INTEGER NOT NULL,
             text TEXT NOT NULL,
             seq INTEGER NOT NULL,
-            active INTEGER NOT NULL DEFAULT 1
+            active INTEGER NOT NULL DEFAULT 1,
+            added_by TEXT
         );
         """
     )
     conn.commit()
     cursor.init_table(conn)
+
+
+def name_of(client, author_id):
+    """A display name for crediting who added an item, resolved once and
+    reused. `None` if the lookup fails - a name is a nice-to-have on a note,
+    never worth blocking the note over."""
+    if author_id not in _names:
+        try:
+            _names[author_id] = client.call("GET", f"/users/{author_id}")["display_name"]
+        except Exception:
+            return None
+    return _names[author_id]
 
 
 def slot_y(slot):
@@ -135,7 +180,7 @@ def slot_y(slot):
 
 def active_items(conn):
     return conn.execute(
-        "SELECT id, slot, text, seq FROM items WHERE active = 1 ORDER BY slot"
+        "SELECT id, slot, text, seq, added_by FROM items WHERE active = 1 ORDER BY slot"
     ).fetchall()
 
 
@@ -177,7 +222,7 @@ def reconcile(client, conn):
         text = obj["props"].get("text", "")
         seen_ids.add(obj["id"])
         conn.execute(
-            "INSERT INTO items (id, slot, text, seq, active) VALUES (?, ?, ?, ?, 1) "
+            "INSERT INTO items (id, slot, text, seq, active, added_by) VALUES (?, ?, ?, ?, 1, NULL) "
             "ON CONFLICT(id) DO UPDATE SET slot = excluded.slot, seq = excluded.seq, active = 1",
             (obj["id"], slot, text, obj["seq"]),
         )
@@ -188,7 +233,14 @@ def reconcile(client, conn):
     return me
 
 
-def add_item(client, conn, channel_id, request_message_id, text):
+def add_item(client, conn, channel_id, request_message_id, author_id, text):
+    if len(text) > MAX_TEXT_LENGTH:
+        client.send(
+            channel_id,
+            f"that's {len(text)} characters, {MAX_TEXT_LENGTH} max - a note is a fixed-size box.",
+            reply_to_id=request_message_id,
+        )
+        return
     slot = free_slot(conn)
     if slot is None:
         client.send(channel_id, f"board is full ({MAX_SLOTS} items)", reply_to_id=request_message_id)
@@ -208,8 +260,8 @@ def add_item(client, conn, channel_id, request_message_id, text):
         },
     )
     conn.execute(
-        "INSERT INTO items (id, slot, text, seq, active) VALUES (?, ?, ?, ?, 1)",
-        (item_id, slot, text, placed["seq"]),
+        "INSERT INTO items (id, slot, text, seq, active, added_by) VALUES (?, ?, ?, ?, 1, ?)",
+        (item_id, slot, text, placed["seq"], author_id),
     )
     conn.commit()
     client.send(channel_id, f"added as #{slot + 1}: {text}", reply_to_id=request_message_id)
@@ -229,6 +281,29 @@ def done_item(client, conn, channel_id, request_message_id, n):
     conn.execute("UPDATE items SET active = 0 WHERE id = ?", (item_id,))
     conn.commit()
     client.send(channel_id, f"done: {text}", reply_to_id=request_message_id)
+
+
+def clear_board(client, conn, channel_id, request_message_id, confirmed):
+    rows = active_items(conn)
+    if not rows:
+        client.send(channel_id, "the board is already empty", reply_to_id=request_message_id)
+        return
+    if not confirmed:
+        client.send(
+            channel_id,
+            f"this removes all {len(rows)} item(s) on the board - resend as `!board clear yes` to confirm.",
+            reply_to_id=request_message_id,
+        )
+        return
+    item_ids = [row[0] for row in rows]
+    client.call(
+        "POST",
+        f"/channels/{CHANNEL}/canvas/ops",
+        {"id": str(uuid.uuid4()), "kind": "remove", "object_ids": item_ids},
+    )
+    conn.executemany("UPDATE items SET active = 0 WHERE id = ?", [(item_id,) for item_id in item_ids])
+    conn.commit()
+    client.send(channel_id, f"cleared {len(item_ids)} item(s).", reply_to_id=request_message_id)
 
 
 def move_item(client, conn, channel_id, request_message_id, n, to):
@@ -266,11 +341,16 @@ def list_items(client, conn, channel_id, request_message_id):
     if not rows:
         client.send(channel_id, "the board is empty", reply_to_id=request_message_id)
         return
-    lines = [f"#{slot + 1}: {text}" for _, slot, text, _ in rows]
+    lines = []
+    for _, slot, text, _, added_by in rows:
+        name = name_of(client, added_by) if added_by else None
+        lines.append(f"#{slot + 1}: {text} (added by {name})" if name else f"#{slot + 1}: {text}")
     client.send(channel_id, "\n".join(lines), reply_to_id=request_message_id)
 
 
 def handle_message(client, conn, me, authors, message):
+    """The author check stops the bot answering itself; `authors.should_handle`
+    stops it answering another bot in the fleet the same way bot-ping does."""
     author_id = message.get("author_id")
     if not authors.should_handle(author_id, me):
         return
@@ -279,18 +359,24 @@ def handle_message(client, conn, me, authors, message):
     request_message_id = message.get("id")
 
     if match := TRIGGER_ADD.match(content):
-        add_item(client, conn, channel_id, request_message_id, match.group(1))
+        add_item(client, conn, channel_id, request_message_id, author_id, match.group(1))
     elif match := TRIGGER_DONE.match(content):
         done_item(client, conn, channel_id, request_message_id, int(match.group(1)))
     elif match := TRIGGER_MOVE.match(content):
         move_item(client, conn, channel_id, request_message_id, int(match.group(1)), int(match.group(2)))
+    elif match := TRIGGER_CLEAR.match(content):
+        clear_board(client, conn, channel_id, request_message_id, confirmed=match.group(1) is not None)
+    elif TRIGGER_HELP.match(content):
+        client.send(channel_id, HELP_TEXT, reply_to_id=request_message_id)
     elif TRIGGER_LIST.match(content):
         list_items(client, conn, channel_id, request_message_id)
+    elif TRIGGER_ANY.match(content):
+        client.send(channel_id, HELP_TEXT, reply_to_id=request_message_id)
 
 
 def handle_canvas_removed(conn, before_seq, object_ids):
     ids = set(object_ids)
-    for item_id, _, _, seq in active_items(conn):
+    for item_id, _, _, seq, _ in active_items(conn):
         if item_id in ids or (before_seq is not None and seq <= before_seq):
             conn.execute("UPDATE items SET active = 0 WHERE id = ?", (item_id,))
     conn.commit()
