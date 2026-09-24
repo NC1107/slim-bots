@@ -1,22 +1,25 @@
 from slimbots import Bot, CommandNotFound
+from slimbots.authors import AuthorFilter
+from slimbots.space import Space
 from slimbots.testing import FakeAsyncClient
 
+MEMBERS = [{"id": "u1", "username": "nick", "display_name": "Nick", "is_bot": False, "is_webhook": False, "role_ids": []}]
 
-async def test_a_stray_prefix_stays_silent_with_no_handler_registered():
+
+async def setup():
     client = FakeAsyncClient(me_id="bot-1")
-    from slimbots.authors import AuthorFilter
-    from slimbots.space import Space
-
-    client.respond(
-        "GET", "/members",
-        [{"id": "u1", "username": "nick", "display_name": "Nick", "is_bot": False, "is_webhook": False, "role_ids": []}],
-    )
+    client.respond("GET", "/members", MEMBERS)
     bot = Bot(prefix="!")
     bot.client = client
     bot.space = Space(client)
     bot.authors = AuthorFilter(client, space=bot.space, ignore_bots=True)
     bot.me_id = "bot-1"
     await bot.space.refresh_members()
+    return bot, client
+
+
+async def test_a_stray_prefix_stays_silent_with_no_handler_registered():
+    bot, client = await setup()
     client.calls.clear()
 
     await bot.process_message({"id": "m1", "author_id": "u1", "channel_id": "c1", "content": "!nonsense"})
@@ -25,21 +28,7 @@ async def test_a_stray_prefix_stays_silent_with_no_handler_registered():
 
 
 async def test_a_registered_handler_receives_ctx_and_a_command_not_found_error():
-    client = FakeAsyncClient(me_id="bot-1")
-    from slimbots.authors import AuthorFilter
-    from slimbots.space import Space
-
-    client.respond(
-        "GET", "/members",
-        [{"id": "u1", "username": "nick", "display_name": "Nick", "is_bot": False, "is_webhook": False, "role_ids": []}],
-    )
-    bot = Bot(prefix="!")
-    bot.client = client
-    bot.space = Space(client)
-    bot.authors = AuthorFilter(client, space=bot.space, ignore_bots=True)
-    bot.me_id = "bot-1"
-    await bot.space.refresh_members()
-
+    bot, client = await setup()
     seen = []
 
     @bot.event
@@ -56,21 +45,7 @@ async def test_a_registered_handler_receives_ctx_and_a_command_not_found_error()
 
 
 async def test_a_real_command_never_fires_command_not_found():
-    client = FakeAsyncClient(me_id="bot-1")
-    from slimbots.authors import AuthorFilter
-    from slimbots.space import Space
-
-    client.respond(
-        "GET", "/members",
-        [{"id": "u1", "username": "nick", "display_name": "Nick", "is_bot": False, "is_webhook": False, "role_ids": []}],
-    )
-    bot = Bot(prefix="!")
-    bot.client = client
-    bot.space = Space(client)
-    bot.authors = AuthorFilter(client, space=bot.space, ignore_bots=True)
-    bot.me_id = "bot-1"
-    await bot.space.refresh_members()
-
+    bot, client = await setup()
     seen = []
 
     @bot.event
