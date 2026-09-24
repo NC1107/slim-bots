@@ -1,122 +1,37 @@
 #!/usr/bin/env python3
-"""A slim-m bot with a per-person chip balance, two games, transfers, and a
-leaderboard: `!daily`, `!balance`, `!give`, `!flip`, `!blackjack`/`!hit`/
-`!stand`, `!leaderboard`, `!help`.
-
-Run it with a bot token from Space settings -> Bots, and the ids of the
-channels it should watch:
-
-    pip install -r requirements.txt
-    SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... \\
-        SLIMM_CHANNELS=<channel-uuid>,<channel-uuid> python3 bot.py
-
-This borrows its shape directly from the other templates: auth, the REST
-call, the websocket handshake, the cursor and the reconnect backoff all come
-from the `slimbots` package (`../slimbots/`), the same plumbing every
-template but `bot-ping` shares - `bot-reminders`'s shape exactly, since that
-is where the cursor and `/sync` catch-up pattern is documented. The
-command-trigger style is `bot-roles`'s. What is new here is that every
-command either moves money or reports it, so the money-safety design is the
-point of this file.
-
-**Where chips come from.** `!daily` is the only unconditional source: a flat
-500 chips, claimable once every 20 hours per account. 20 hours rather than a
-strict calendar day so claiming a little early one day does not permanently
-shift someone's clock forward into "always a few minutes late"; it still
-caps at roughly once a day. Nothing else creates chips except a bet actually
-winning, and nothing removes chips except a bet actually losing or a
-transfer moving them to someone else - see "Where the house edge goes"
-below for why that matters.
-
-**Two games, deliberately different.** `!flip` is instant and binary: call
-heads or tails, find out immediately. `!blackjack` has a real decision in
-it (`!hit` or `!stand`, repeatedly, against a dealer showing only one card)
-and a hand can span several messages, so it is the one that needs durable
-per-hand state, not just a per-account balance.
-
-**The house edge, and where it goes.** There is no house account. A win
-credits more than was staked; a loss destroys what was staked. Nothing
-holds the difference. What keeps the total chip supply from wandering off
-under normal play is that every game has a negative expected value for the
-player (see the README for the exact numbers), so on average more is
-destroyed by losses than is created by wins. This is also the anti-farming
-control: a fair (zero-edge) coin flip has zero expected value too, so it
-would not mint money on average either, but a house edge is the honest way
-to say plainly "the games are not free money," and it is what stops
-`!flip all` from being a viable way to grind the leaderboard.
-
-**Concurrency.** Every balance mutation happens inside a `BEGIN IMMEDIATE`
-sqlite transaction, which takes sqlite's write lock immediately rather than
-on first write, so a second writer blocks until the first commits or rolls
-back rather than interleaving with it. `!flip all` resolves "all" to a
-balance *inside* that transaction, and the debit itself is a single
-conditional `UPDATE ... WHERE balance >= ?` whose row count says whether it
-happened - there is no separate read-then-write window for a second
-`!flip all` to land in. `test_concurrency.py` hammers this with real
-concurrent sqlite connections rather than assuming the transaction is
-enough; see its own docstring.
-
-**A cursor, an idempotency guard, and backoff.** The `seq` cursor is
-`slimbots.cursor`, the same module `bot-reminders` uses. On top of it, every
-money-moving command
-first does `INSERT OR IGNORE INTO processed_requests` keyed on the
-triggering message's own id, inside the same transaction as the balance
-change, and skips the command entirely if that insert found the row already
-there. `bot-reminders` does not need this: a lost reminder is a promise
-broken silently, but nothing in it can be *replayed* into a double effect.
-A bet can. If this process crashes after committing a bet's balance change
-but before its cursor write lands, `/sync` on the next connection replays
-that same message, and without the guard it would be charged twice. Backoff
-is exponential, 1s doubling to 60s, matching `bot-reminders`.
-
-What this deliberately leaves out is documented in the README, not here -
-that section is written for someone deciding whether to build on this, and
-belongs where they will actually go looking.
-"""
+"""bot-casino: chip balance, coinflip, and blackjack (hit/stand/double/split/surrender); see README.md."""
 
 import asyncio
 import os
-import re
 import secrets
 import sqlite3
 import sys
 import time
-import urllib.error
-import uuid
 
-from slimbots import Client, Connection, cursor, run_forever
+from slimbots import BadArgument, Bot, Member, RateLimiter, catchup, cursor
 
-BASE = os.environ.get("SLIMM_URL", "").rstrip("/")
+import blackjack
+
+BASE = os.environ.get("SLIMM_URL", "")
 TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
 CHANNELS = {c for c in os.environ.get("SLIMM_CHANNELS", "").split(",") if c}
 DB_PATH = os.environ.get("SLIMM_DB_PATH", "casino.db")
-MEMBER_CACHE_SECONDS = 60
-# urllib's default UA is blocked by a CDN before it ever reaches slim-m.
-USER_AGENT = "slimm-bot-casino/1.0"
 
 DAILY_AMOUNT = 500
 DAILY_COOLDOWN_SECONDS = 20 * 3600
 FLIP_PAYOUT_NUM = 19  # win returns 1.9x the stake, floored to a whole chip
 FLIP_PAYOUT_DEN = 10
+MAX_AMOUNT = 1_000_000_000_000  # well under sqlite's 64-bit ceiling; see README.md
+COMMANDS_PER_WINDOW = 12
+COMMAND_WINDOW_SECONDS = 10
+PROCESSED_REQUEST_RETENTION_SECONDS = 30 * 24 * 3600
+PRUNE_INTERVAL_SECONDS = 3600
 
 RANKS = ["2", "3", "4", "5", "6", "7", "8", "9", "10", "J", "Q", "K", "A"]
 SUITS = ["H", "D", "C", "S"]
 
-TRIGGER_BALANCE = re.compile(r"^!(?:balance|bal)\s*$", re.IGNORECASE)
-TRIGGER_DAILY = re.compile(r"^!daily\s*$", re.IGNORECASE)
-TRIGGER_LEADERBOARD = re.compile(r"^!(?:leaderboard|top)\s*$", re.IGNORECASE)
-TRIGGER_HELP = re.compile(r"^!help\s*$", re.IGNORECASE)
-TRIGGER_GIVE = re.compile(r"^!give\s+(\d+)\s+@?(\S+)\s*$", re.IGNORECASE)
-TRIGGER_FLIP = re.compile(r"^!flip\s+(all|\d+)\s+(heads|tails|h|t)\s*$", re.IGNORECASE)
-TRIGGER_BLACKJACK = re.compile(r"^!(?:blackjack|bj)\s+(all|\d+)\s*$", re.IGNORECASE)
-TRIGGER_HIT = re.compile(r"^!hit\s*$", re.IGNORECASE)
-TRIGGER_STAND = re.compile(r"^!stand\s*$", re.IGNORECASE)
 
-_member_cache = {}
-_member_cache_at = 0.0
-
-
-# --- durable state ---------------------------------------------------------
+# --- durable state; test_concurrency.py imports these by name, unchanged ---
 
 
 def open_db(path):
@@ -139,18 +54,15 @@ def init_db(conn):
             request_id TEXT PRIMARY KEY,
             handled_at INTEGER NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS hands (
-            channel_id TEXT NOT NULL,
-            user_id TEXT NOT NULL,
-            stake INTEGER NOT NULL,
-            player_cards TEXT NOT NULL,
-            dealer_cards TEXT NOT NULL,
-            started_at INTEGER NOT NULL,
-            PRIMARY KEY (channel_id, user_id)
-        );
         """
     )
+    blackjack.init_table(conn)
     cursor.init_table(conn)
+
+
+def prune_processed_requests(conn, cutoff):
+    conn.execute("DELETE FROM processed_requests WHERE handled_at < ?", (cutoff,))
+    conn.commit()
 
 
 def begin(conn):
@@ -158,9 +70,7 @@ def begin(conn):
 
 
 def try_consume_request(conn, request_id):
-    """Records `request_id` as handled, returning False if it already was.
-    Called first thing inside every money-moving command's transaction, so a
-    replayed message (see the module docstring) is a no-op the second time."""
+    """First call inside every money-moving command's transaction; False means already handled."""
     cur = conn.execute(
         "INSERT OR IGNORE INTO processed_requests (request_id, handled_at) VALUES (?, ?)",
         (request_id, int(time.time())),
@@ -169,11 +79,6 @@ def try_consume_request(conn, request_id):
 
 
 def begin_idempotent(conn, request_id):
-    """Opens the transaction every money-moving command starts with, and
-    consumes `request_id` inside it. Returns False, with the transaction
-    already rolled back, if this exact request was already handled - the
-    caller should just return in that case, same as a fresh command that
-    turned out to be a no-op."""
     begin(conn)
     if try_consume_request(conn, request_id):
         return True
@@ -195,20 +100,15 @@ def get_balance(conn, user_id):
 
 
 def resolve_amount(conn, user_id, spec):
-    """`spec` is `"all"` or a digit string, guaranteed by the trigger regex.
-    Reading the balance for `"all"` only inside an open transaction is what
-    keeps two concurrent `!flip all` from both resolving the same stake."""
+    """`spec` is `"all"` or a digit string. Reading the balance for "all" only
+    inside an open transaction keeps two concurrent all-in bets from resolving the same stake."""
     if spec == "all":
         return get_balance(conn, user_id)
     return int(spec)
 
 
 def try_debit(conn, user_id, amount):
-    """Atomically subtracts `amount` if, and only if, the balance covers it.
-    The check and the write are the same statement, so there is no window
-    between reading a balance and spending it for a second writer to land
-    in - that window is exactly what would let two concurrent bets both
-    succeed against a balance that only covers one of them."""
+    """Atomic subtract-if-covered; the check and the write are one statement."""
     ensure_account(conn, user_id)
     cur = conn.execute(
         "UPDATE accounts SET balance = balance - ? WHERE user_id = ? AND balance >= ?",
@@ -217,29 +117,20 @@ def try_debit(conn, user_id, amount):
     return cur.rowcount == 1
 
 
-def debit_or_refuse(client, conn, channel_id, author_id, request_id, amount):
-    """Tries `try_debit` inside the open transaction; on failure, rolls back
-    and tells the caller they are short - the refusal every bet shares."""
-    if try_debit(conn, author_id, amount):
-        return True
-    conn.execute("ROLLBACK")
-    client.send(channel_id, "you don't have that many chips", reply_to_id=request_id)
-    return False
-
-
 def credit(conn, user_id, amount):
     ensure_account(conn, user_id)
     conn.execute("UPDATE accounts SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
 
 
-def has_hand(conn, channel_id, user_id):
-    row = conn.execute(
-        "SELECT 1 FROM hands WHERE channel_id = ? AND user_id = ?", (channel_id, user_id)
-    ).fetchone()
-    return row is not None
+async def debit_or_refuse(ctx, conn, amount):
+    if try_debit(conn, ctx.author.id, amount):
+        return True
+    conn.execute("ROLLBACK")
+    await ctx.reply("you don't have that many chips")
+    return False
 
 
-# --- cards -------------------------------------------------------------
+# --- cards ---
 
 
 def draw_card():
@@ -279,164 +170,130 @@ def format_duration(seconds):
     return f"{seconds}s"
 
 
-# --- member lookup, for !give -------------------------------------------
+def _parse_amount_spec(spec):
+    if spec.lower() == "all":
+        return "all"
+    if spec.isdigit():
+        return spec
+    raise BadArgument("amount must be a whole number of chips, or `all`")
 
 
-def refresh_members(client):
-    """Walks the whole member list into a username -> (id, display_name)
-    cache. Usernames are unique and stable, unlike display names, which is
-    why `!give` resolves on them rather than on what someone happens to be
-    showing at the moment - see "Identity" in the task brief this bot was
-    built against."""
-    global _member_cache, _member_cache_at
-    cache = {}
-    after = None
-    while True:
-        path = "/members?limit=200" + (f"&after={after}" if after else "")
-        page = client.call("GET", path)
-        if not page:
-            break
-        for profile in page:
-            cache[profile["username"].lower()] = (profile["id"], profile["display_name"])
-        if len(page) < 200:
-            break
-        after = page[-1]["id"]
-    _member_cache = cache
-    _member_cache_at = time.time()
+def _normalize_guess(raw):
+    raw = raw.lower()
+    if raw in ("heads", "h"):
+        return "heads"
+    if raw in ("tails", "t"):
+        return "tails"
+    raise BadArgument("call `heads`/`h` or `tails`/`t`")
 
 
-def resolve_recipient(client, spec):
-    """Username (case-insensitive) or a raw user id, `@`-stripped by the
-    trigger regex already. Returns `(user_id, display_name)` or None."""
-    global _member_cache_at
-    if time.time() - _member_cache_at > MEMBER_CACHE_SECONDS:
-        refresh_members(client)
-    hit = _member_cache.get(spec.lower())
-    if hit is None:
-        refresh_members(client)
-        hit = _member_cache.get(spec.lower())
-    if hit is not None:
-        return hit
-    try:
-        uuid.UUID(spec)
-    except ValueError:
-        return None
-    try:
-        profile = client.call("GET", f"/users/{spec}")
-    except urllib.error.HTTPError as err:
-        if err.code == 404:
-            return None
-        raise
-    return profile["id"], profile["display_name"]
+bot = Bot(prefix="!", channels=CHANNELS or None)
+_command_limiter = RateLimiter(COMMANDS_PER_WINDOW, COMMAND_WINDOW_SECONDS)
 
 
-# --- commands ------------------------------------------------------------
+@bot.check
+async def rate_limit(ctx):
+    """A burst allowance against a script, not a play-speed cap on a person; see README.md."""
+    return _command_limiter.check(ctx.author.id)
 
 
-def handle_balance(client, conn, channel_id, author_id, request_id):
-    client.send(channel_id, f"balance: {get_balance(conn, author_id)} chips", reply_to_id=request_id)
+@bot.command(aliases=["bal"], help="See your balance")
+async def balance(ctx):
+    await ctx.reply(f"balance: {get_balance(bot.db, ctx.author.id)} chips")
 
 
-def handle_daily(client, conn, channel_id, author_id, request_id):
-    if not begin_idempotent(conn, request_id):
+@bot.command(help="Claim your daily chips")
+async def daily(ctx):
+    conn = bot.db
+    if not begin_idempotent(conn, ctx.message["id"]):
         return
-    ensure_account(conn, author_id)
-    balance, last_daily = conn.execute(
-        "SELECT balance, last_daily FROM accounts WHERE user_id = ?", (author_id,)
+    ensure_account(conn, ctx.author.id)
+    balance_, last_daily = conn.execute(
+        "SELECT balance, last_daily FROM accounts WHERE user_id = ?", (ctx.author.id,)
     ).fetchone()
     now = int(time.time())
     remaining = DAILY_COOLDOWN_SECONDS - (now - last_daily)
     if remaining > 0:
         conn.execute("ROLLBACK")
-        reply = f"already claimed - try again in {format_duration(remaining)}"
-        client.send(channel_id, reply, reply_to_id=request_id)
+        await ctx.reply(f"already claimed - try again in {format_duration(remaining)}")
         return
     conn.execute(
         "UPDATE accounts SET balance = balance + ?, last_daily = ? WHERE user_id = ?",
-        (DAILY_AMOUNT, now, author_id),
+        (DAILY_AMOUNT, now, ctx.author.id),
     )
     conn.execute("COMMIT")
-    reply = f"claimed {DAILY_AMOUNT} chips. balance: {balance + DAILY_AMOUNT}"
-    client.send(channel_id, reply, reply_to_id=request_id)
+    await ctx.reply(f"claimed {DAILY_AMOUNT} chips. balance: {balance_ + DAILY_AMOUNT}")
 
 
-def handle_leaderboard(client, conn, channel_id, request_id):
-    rows = conn.execute(
+@bot.command(aliases=["top"], help="Top 10 balances")
+async def leaderboard(ctx):
+    rows = bot.db.execute(
         "SELECT user_id, balance FROM accounts WHERE balance > 0 ORDER BY balance DESC LIMIT 10"
     ).fetchall()
     if not rows:
-        client.send(channel_id, "nobody has any chips yet - `!daily` to start", reply_to_id=request_id)
+        await ctx.reply("nobody has any chips yet - `!daily` to start")
         return
-    ids = ",".join(user_id for user_id, _ in rows)
-    profiles = {profile["id"]: profile["display_name"] for profile in client.call("GET", f"/users?ids={ids}")}
     lines = ["chip leaderboard:"]
-    lines.extend(
-        f"{i}. {profiles.get(user_id, user_id[:8])} - {balance}"
-        for i, (user_id, balance) in enumerate(rows, 1)
-    )
-    client.send(channel_id, "\n".join(lines), reply_to_id=request_id)
+    for i, (user_id, bal) in enumerate(rows, 1):
+        member = bot.space.members.get(user_id)
+        name = member.display_name if member else user_id[:8]
+        lines.append(f"{i}. {name} - {bal}")
+    await ctx.reply("\n".join(lines))
 
 
-def handle_help(client, channel_id, request_id):
-    lines = [
-        "commands:",
-        "`!daily` - claim your daily chips",
-        "`!balance` - see your balance",
-        "`!give <amount> <username>` - send chips to someone",
-        "`!flip <amount|all> <heads|tails>` - coinflip, about a 5% house edge",
-        "`!blackjack <amount|all>` - deal a hand, then `!hit` or `!stand`",
-        "`!leaderboard` - top balances",
-    ]
-    client.send(channel_id, "\n".join(lines), reply_to_id=request_id)
-
-
-def handle_give(client, conn, channel_id, author_id, request_id, amount, target_spec):
+@bot.command(help="Send chips to someone", usage="<amount> <username>")
+async def give(ctx, amount: int, member: Member):
     if amount < 1:
-        client.send(channel_id, "give at least 1 chip", reply_to_id=request_id)
+        await ctx.reply("give at least 1 chip")
         return
-    target = resolve_recipient(client, target_spec)
-    if target is None:
-        client.send(channel_id, f"no member called `{target_spec}` here", reply_to_id=request_id)
+    if amount > MAX_AMOUNT:
+        await ctx.reply(f"keep a single transfer under {MAX_AMOUNT} chips")
         return
-    target_id, target_name = target
-    if target_id == author_id:
-        client.send(channel_id, "you can't send chips to yourself", reply_to_id=request_id)
+    if member.id == ctx.author.id:
+        await ctx.reply("you can't send chips to yourself")
         return
-    if not begin_idempotent(conn, request_id):
+    if member.is_bot or member.is_webhook:
+        await ctx.reply("bots don't play, so they don't take chips either")
         return
-    ensure_account(conn, target_id)
-    if not debit_or_refuse(client, conn, channel_id, author_id, request_id, amount):
+    conn = bot.db
+    if not begin_idempotent(conn, ctx.message["id"]):
         return
-    credit(conn, target_id, amount)
+    ensure_account(conn, member.id)
+    if not await debit_or_refuse(ctx, conn, amount):
+        return
+    credit(conn, member.id, amount)
     conn.execute("COMMIT")
-    client.send(
-        channel_id,
-        f"sent {amount} chips to {target_name}. your balance: {get_balance(conn, author_id)}",
-        reply_to_id=request_id,
-    )
+    await ctx.reply(f"sent {amount} chips to {member.display_name}. your balance: {get_balance(conn, ctx.author.id)}")
 
 
-def handle_flip(client, conn, channel_id, author_id, request_id, amount_spec, guess):
-    if not begin_idempotent(conn, request_id):
+@bot.command(help="Coinflip, about a 5% house edge", usage="<amount|all> <heads|tails>")
+async def flip(ctx, amount_spec: str, guess: str):
+    amount_spec = _parse_amount_spec(amount_spec)
+    guess = _normalize_guess(guess)
+    conn = bot.db
+    if not begin_idempotent(conn, ctx.message["id"]):
         return
-    amount = resolve_amount(conn, author_id, amount_spec)
+    amount = resolve_amount(conn, ctx.author.id, amount_spec)
     if amount < 1:
         conn.execute("ROLLBACK")
-        client.send(channel_id, "you have no chips to flip - `!daily` first", reply_to_id=request_id)
+        await ctx.reply("you have no chips to flip - `!daily` first")
         return
-    if not debit_or_refuse(client, conn, channel_id, author_id, request_id, amount):
+    if amount > MAX_AMOUNT:
+        conn.execute("ROLLBACK")
+        await ctx.reply(f"keep a single flip under {MAX_AMOUNT} chips")
+        return
+    if not await debit_or_refuse(ctx, conn, amount):
         return
     landed = secrets.choice(("heads", "tails"))
     payout = (amount * FLIP_PAYOUT_NUM) // FLIP_PAYOUT_DEN if landed == guess else 0
     if payout:
-        credit(conn, author_id, payout)
+        credit(conn, ctx.author.id, payout)
     conn.execute("COMMIT")
-    balance = get_balance(conn, author_id)
+    bal = get_balance(conn, ctx.author.id)
     if payout:
-        reply = f"the coin lands on {landed} - you called it, +{payout - amount} chips. balance: {balance}"
+        await ctx.reply(f"the coin lands on {landed} - you called it, +{payout - amount} chips. balance: {bal}")
     else:
-        reply = f"the coin lands on {landed} - you called {guess}, -{amount} chips. balance: {balance}"
-    client.send(channel_id, reply, reply_to_id=request_id)
+        await ctx.reply(f"the coin lands on {landed} - you called {guess}, -{amount} chips. balance: {bal}")
 
 
 def _resolve_natural(player_natural, dealer_natural, amount):
@@ -449,19 +306,26 @@ def _resolve_natural(player_natural, dealer_natural, amount):
     return "dealer has blackjack - you lose", 0
 
 
-def handle_blackjack_start(client, conn, channel_id, author_id, request_id, amount_spec):
-    if not begin_idempotent(conn, request_id):
+@bot.command(name="blackjack", aliases=["bj"], help="Deal a hand, then hit/stand/double/split/surrender", usage="<amount|all>")
+async def deal_blackjack(ctx, amount_spec: str):
+    amount_spec = _parse_amount_spec(amount_spec)
+    conn = bot.db
+    if not begin_idempotent(conn, ctx.message["id"]):
         return
-    if has_hand(conn, channel_id, author_id):
+    if blackjack.has_round(conn, ctx.channel_id, ctx.author.id):
         conn.execute("ROLLBACK")
-        client.send(channel_id, "finish your hand first - `!hit` or `!stand`", reply_to_id=request_id)
+        await ctx.reply("finish your hand first - `!hit`, `!stand`, `!double`, `!split` or `!surrender`")
         return
-    amount = resolve_amount(conn, author_id, amount_spec)
+    amount = resolve_amount(conn, ctx.author.id, amount_spec)
     if amount < 1:
         conn.execute("ROLLBACK")
-        client.send(channel_id, "you have no chips to bet - `!daily` first", reply_to_id=request_id)
+        await ctx.reply("you have no chips to bet - `!daily` first")
         return
-    if not debit_or_refuse(client, conn, channel_id, author_id, request_id, amount):
+    if amount > MAX_AMOUNT:
+        conn.execute("ROLLBACK")
+        await ctx.reply(f"keep a single bet under {MAX_AMOUNT} chips")
+        return
+    if not await debit_or_refuse(ctx, conn, amount):
         return
     player = [draw_card(), draw_card()]
     dealer = [draw_card(), draw_card()]
@@ -470,174 +334,234 @@ def handle_blackjack_start(client, conn, channel_id, author_id, request_id, amou
     if player_natural or dealer_natural:
         outcome, payout = _resolve_natural(player_natural, dealer_natural, amount)
         if payout:
-            credit(conn, author_id, payout)
+            credit(conn, ctx.author.id, payout)
         conn.execute("COMMIT")
-        balance = get_balance(conn, author_id)
-        reply = (
-            f"you: {render_hand(player)}\ndealer: {render_hand(dealer)}\n"
-            f"{outcome}\nbalance: {balance}"
-        )
-        client.send(channel_id, reply, reply_to_id=request_id)
+        bal = get_balance(conn, ctx.author.id)
+        await ctx.reply(f"you: {render_hand(player)}\ndealer: {render_hand(dealer)}\n{outcome}\nbalance: {bal}")
         return
-    conn.execute(
-        "INSERT INTO hands (channel_id, user_id, stake, player_cards, dealer_cards, started_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (channel_id, author_id, amount, ",".join(player), ",".join(dealer), int(time.time())),
-    )
+    blackjack.start_round(conn, ctx.channel_id, ctx.author.id, amount, player, dealer)
     conn.execute("COMMIT")
-    reply = f"you: {render_hand(player)}\ndealer: {dealer[0]} ??\n`!hit` or `!stand`"
-    client.send(channel_id, reply, reply_to_id=request_id)
+    await ctx.reply(f"you: {render_hand(player)}\ndealer: {dealer[0]} ??\n`!hit`, `!stand`, `!double`, `!split` or `!surrender`")
 
 
-def handle_hit(client, conn, channel_id, author_id, request_id):
-    if not begin_idempotent(conn, request_id):
-        return
-    row = conn.execute(
-        "SELECT player_cards, dealer_cards FROM hands WHERE channel_id = ? AND user_id = ?",
-        (channel_id, author_id),
-    ).fetchone()
-    if row is None:
+async def _active_hand_or_refuse(ctx, conn):
+    """The guard every mid-hand command (hit/stand/double/split/surrender) shares."""
+    hand = blackjack.active_hand(conn, ctx.channel_id, ctx.author.id)
+    if hand is None:
         conn.execute("ROLLBACK")
-        reply = "you don't have a hand going - `!blackjack <amount>` to start one"
-        client.send(channel_id, reply, reply_to_id=request_id)
+        await ctx.reply("you don't have a hand going - `!blackjack <amount>` to start one")
+    return hand
+
+
+def _play_dealer_hand(dealer_cards):
+    while hand_total(dealer_cards) < 17:
+        dealer_cards.append(draw_card())
+    return dealer_cards
+
+
+def _resolve_vs_dealer(stake, player_total, dealer_total):
+    if dealer_total > 21 or dealer_total < player_total:
+        return "win", stake * 2
+    if dealer_total > player_total:
+        return "dealer wins", 0
+    return "push", stake
+
+
+async def _finish_hand(ctx, conn):
+    """Called once a hand is bust/surrendered/stood; points at the next split
+    hand still waiting, or settles the whole round against the dealer once every hand is decided."""
+    next_hand = blackjack.active_hand(conn, ctx.channel_id, ctx.author.id)
+    if next_hand is not None:
+        next_index, _, next_player, _ = next_hand
+        conn.execute("COMMIT")
+        await ctx.reply(f"hand {next_index + 1}: {render_hand(next_player)}\n`!hit`, `!stand`, `!double` or `!surrender` for this hand")
         return
-    player_raw, dealer_raw = row
-    player = player_raw.split(",")
+
+    rounds = blackjack.round_hands(conn, ctx.channel_id, ctx.author.id)
+    multi = len(rounds) > 1
+    needs_dealer = any(status == blackjack.STOOD for _, _, _, _, status in rounds)
+    dealer_cards = _play_dealer_hand(rounds[0][3]) if needs_dealer else rounds[0][3]
+    dealer_total = hand_total(dealer_cards)
+
+    lines = []
+    for idx, stake, player_cards, _, status in rounds:
+        label = f"hand {idx + 1}: " if multi else "you: "
+        if status == blackjack.BUST:
+            lines.append(f"{label}{render_hand(player_cards)} - bust")
+        elif status == blackjack.SURRENDER:
+            lines.append(f"{label}{render_hand(player_cards)} - surrendered, {stake // 2} chips back")
+        else:
+            outcome, payout = _resolve_vs_dealer(stake, hand_total(player_cards), dealer_total)
+            if payout:
+                credit(conn, ctx.author.id, payout)
+            lines.append(f"{label}{render_hand(player_cards)} - {outcome}")
+    if needs_dealer:
+        lines.append(f"dealer: {render_hand(dealer_cards)}")
+    blackjack.clear_round(conn, ctx.channel_id, ctx.author.id)
+    conn.execute("COMMIT")
+    lines.append(f"balance: {get_balance(conn, ctx.author.id)}")
+    await ctx.reply("\n".join(lines))
+
+
+@bot.command(help="Take another card")
+async def hit(ctx):
+    conn = bot.db
+    if not begin_idempotent(conn, ctx.message["id"]):
+        return
+    hand = await _active_hand_or_refuse(ctx, conn)
+    if hand is None:
+        return
+    hand_index, _, player, _ = hand
     player.append(draw_card())
     if hand_total(player) > 21:
-        dealer = dealer_raw.split(",")
-        conn.execute("DELETE FROM hands WHERE channel_id = ? AND user_id = ?", (channel_id, author_id))
-        conn.execute("COMMIT")
-        balance = get_balance(conn, author_id)
-        reply = f"you: {render_hand(player)} - bust\ndealer had: {' '.join(dealer)}\nbalance: {balance}"
-        client.send(channel_id, reply, reply_to_id=request_id)
+        blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, player_cards=player, status=blackjack.BUST)
+        await _finish_hand(ctx, conn)
         return
-    conn.execute(
-        "UPDATE hands SET player_cards = ? WHERE channel_id = ? AND user_id = ?",
-        (",".join(player), channel_id, author_id),
-    )
+    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, player_cards=player)
     conn.execute("COMMIT")
-    client.send(channel_id, f"you: {render_hand(player)}\n`!hit` or `!stand`", reply_to_id=request_id)
+    await ctx.reply(f"you: {render_hand(player)}\n`!hit` or `!stand`")
 
 
-def handle_stand(client, conn, channel_id, author_id, request_id):
-    if not begin_idempotent(conn, request_id):
+@bot.command(help="Stop drawing and settle the hand")
+async def stand(ctx):
+    conn = bot.db
+    if not begin_idempotent(conn, ctx.message["id"]):
         return
-    row = conn.execute(
-        "SELECT stake, player_cards, dealer_cards FROM hands WHERE channel_id = ? AND user_id = ?",
-        (channel_id, author_id),
-    ).fetchone()
-    if row is None:
+    hand = await _active_hand_or_refuse(ctx, conn)
+    if hand is None:
+        return
+    hand_index, _, _, _ = hand
+    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, status=blackjack.STOOD)
+    await _finish_hand(ctx, conn)
+
+
+@bot.command(aliases=["dbl"], help="Double your stake and take exactly one more card")
+async def double(ctx):
+    conn = bot.db
+    if not begin_idempotent(conn, ctx.message["id"]):
+        return
+    hand = await _active_hand_or_refuse(ctx, conn)
+    if hand is None:
+        return
+    hand_index, stake, player, _ = hand
+    if not blackjack.can_double(player):
         conn.execute("ROLLBACK")
-        reply = "you don't have a hand going - `!blackjack <amount>` to start one"
-        client.send(channel_id, reply, reply_to_id=request_id)
+        await ctx.reply("you can only double on your first two cards")
         return
-    stake, player_raw, dealer_raw = row
-    player = player_raw.split(",")
-    dealer = dealer_raw.split(",")
-    player_total = hand_total(player)
-    while hand_total(dealer) < 17:
-        dealer.append(draw_card())
-    dealer_total = hand_total(dealer)
-    if dealer_total > 21 or dealer_total < player_total:
-        outcome, payout = "you win", stake * 2
-    elif dealer_total > player_total:
-        outcome, payout = "dealer wins", 0
-    else:
-        outcome, payout = "push", stake
-    if payout:
-        credit(conn, author_id, payout)
-    conn.execute("DELETE FROM hands WHERE channel_id = ? AND user_id = ?", (channel_id, author_id))
+    if not await debit_or_refuse(ctx, conn, stake):
+        return
+    player.append(draw_card())
+    status = blackjack.BUST if hand_total(player) > 21 else blackjack.STOOD
+    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, player_cards=player, stake=stake * 2, status=status)
+    await _finish_hand(ctx, conn)
+
+
+@bot.command(help="Split a pair into two independent hands")
+async def split(ctx):
+    conn = bot.db
+    if not begin_idempotent(conn, ctx.message["id"]):
+        return
+    hand = await _active_hand_or_refuse(ctx, conn)
+    if hand is None:
+        return
+    hand_index, stake, player, dealer = hand
+    already_split = len(blackjack.round_hands(conn, ctx.channel_id, ctx.author.id)) > 1
+    if not blackjack.can_split(hand_index, player, already_split, card_value):
+        conn.execute("ROLLBACK")
+        await ctx.reply("that hand can't be split - two cards of the same value, and only once")
+        return
+    if not await debit_or_refuse(ctx, conn, stake):
+        return
+    first = [player[0], draw_card()]
+    second = [player[1], draw_card()]
+    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, 0, player_cards=first)
+    blackjack.insert_split_hand(conn, ctx.channel_id, ctx.author.id, 1, stake, second, dealer)
     conn.execute("COMMIT")
-    balance = get_balance(conn, author_id)
-    reply = f"you: {render_hand(player)}\ndealer: {render_hand(dealer)}\n{outcome}\nbalance: {balance}"
-    client.send(channel_id, reply, reply_to_id=request_id)
+    await ctx.reply(
+        f"split into two hands\nhand 1: {render_hand(first)}\nhand 2: {render_hand(second)}\n"
+        f"dealer: {dealer[0]} ??\nplaying hand 1 - `!hit`, `!stand` or `!double`"
+    )
 
 
-def handle_message(client, conn, me, channel_id, message):
-    author_id = message.get("author_id")
-    if author_id is None or author_id == me:
+@bot.command(aliases=["surr"], help="Forfeit half your stake and end the hand")
+async def surrender(ctx):
+    conn = bot.db
+    if not begin_idempotent(conn, ctx.message["id"]):
         return
-    content = (message.get("content") or "").strip()
-    request_id = message.get("id")
-    if not request_id:
+    hand = await _active_hand_or_refuse(ctx, conn)
+    if hand is None:
         return
-
-    if TRIGGER_BALANCE.match(content):
-        handle_balance(client, conn, channel_id, author_id, request_id)
-    elif TRIGGER_DAILY.match(content):
-        handle_daily(client, conn, channel_id, author_id, request_id)
-    elif TRIGGER_LEADERBOARD.match(content):
-        handle_leaderboard(client, conn, channel_id, request_id)
-    elif TRIGGER_HELP.match(content):
-        handle_help(client, channel_id, request_id)
-    elif match := TRIGGER_GIVE.match(content):
-        handle_give(client, conn, channel_id, author_id, request_id, int(match.group(1)), match.group(2))
-    elif match := TRIGGER_FLIP.match(content):
-        guess = "heads" if match.group(2).lower().startswith("h") else "tails"
-        handle_flip(client, conn, channel_id, author_id, request_id, match.group(1), guess)
-    elif match := TRIGGER_BLACKJACK.match(content):
-        handle_blackjack_start(client, conn, channel_id, author_id, request_id, match.group(1))
-    elif TRIGGER_HIT.match(content):
-        handle_hit(client, conn, channel_id, author_id, request_id)
-    elif TRIGGER_STAND.match(content):
-        handle_stand(client, conn, channel_id, author_id, request_id)
+    hand_index, stake, player, _ = hand
+    already_split = len(blackjack.round_hands(conn, ctx.channel_id, ctx.author.id)) > 1
+    if not blackjack.can_surrender(hand_index, player, already_split):
+        conn.execute("ROLLBACK")
+        await ctx.reply("surrender is only offered on your first two cards, before any split")
+        return
+    refund = stake // 2
+    if refund:
+        credit(conn, ctx.author.id, refund)
+    blackjack.update_hand(conn, ctx.channel_id, ctx.author.id, hand_index, status=blackjack.SURRENDER)
+    await _finish_hand(ctx, conn)
 
 
-# --- connection lifecycle --------------------------------------------------
+# --- connection lifecycle ---
 
 
-def resync(client, conn):
-    """Catches up every scoped channel over `/sync` before the socket opens,
-    so a command sent while the previous session was offline is not lost."""
+async def _resync():
+    conn = bot.db
     scopes = [{"channel_id": c, "after_seq": cursor.get(conn, c)} for c in CHANNELS]
-    me = client.me()["id"]
-    for scope in cursor.sync(client, scopes):
+    for scope in await catchup.sync(bot.client, scopes):
         channel_id = scope["channel_id"]
         for message in scope["messages"]:
-            handle_message(client, conn, me, channel_id, message)
+            await bot.process_message(message)
         if scope["messages"]:
             cursor.set(conn, channel_id, scope["messages"][-1]["seq"])
         elif scope["reset"]:
-            cursor.bootstrap(client, conn, channel_id)
+            await catchup.bootstrap(bot.client, conn, channel_id)
 
 
-async def attempt(client, conn, reset_delay):
-    me = client.me()["id"]
-    print(f"connected as {me}", flush=True)
-
+@bot.event
+async def on_connect():
     for channel_id in CHANNELS:
-        cursor.bootstrap(client, conn, channel_id)
-    resync(client, conn)
-
-    async with await Connection.open(client) as socket:
-        print("listening", flush=True)
-        reset_delay()
-
-        async for frame in socket.frames():
-            # Ignore a frame type we do not know; see bot-ping's docstring.
-            if frame.get("type") != "message.created":
-                continue
-            channel_id = frame.get("channel_id")
-            if channel_id not in CHANNELS:
-                continue
-            message = frame.get("message") or {}
-            handle_message(client, conn, me, channel_id, message)
-            seq = message.get("seq")
-            if seq is not None:
-                cursor.set(conn, channel_id, seq)
+        await catchup.bootstrap(bot.client, bot.db, channel_id)
+    await _resync()
 
 
-async def main():
+@bot.event
+async def on_raw_message(message):
+    """Persists the seq cursor for every in-scope message, command or not."""
+    channel_id = message.get("channel_id")
+    seq = message.get("seq")
+    if channel_id in CHANNELS and seq is not None:
+        cursor.set(bot.db, channel_id, seq)
+
+
+_maintenance_started = False
+
+
+@bot.event
+async def on_ready():
+    global _maintenance_started
+    if _maintenance_started:
+        return
+    _maintenance_started = True
+    asyncio.create_task(_maintenance())
+
+
+async def _maintenance():
+    """Prunes processed_requests hourly; the row only needs to survive one reconnect gap."""
+    while True:
+        await asyncio.sleep(PRUNE_INTERVAL_SECONDS)
+        prune_processed_requests(bot.db, int(time.time()) - PROCESSED_REQUEST_RETENTION_SECONDS)
+
+
+def main():
     if not BASE or not TOKEN or not CHANNELS:
         print("set SLIMM_URL, SLIMM_BOT_TOKEN and SLIMM_CHANNELS", file=sys.stderr)
-        return 2
-
-    client = Client(BASE, TOKEN, USER_AGENT)
-    conn = open_db(DB_PATH)
-
-    return await run_forever(lambda reset_delay: attempt(client, conn, reset_delay))
+        raise SystemExit(2)
+    bot.db = open_db(DB_PATH)
+    raise SystemExit(bot.run() or 0)
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()) or 0)
+    main()
