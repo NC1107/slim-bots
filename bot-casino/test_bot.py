@@ -46,11 +46,11 @@ def script_cards(cards):
     def fake_draw():
         return remaining.pop(0)
 
-    casino.draw_card = fake_draw
+    casino.casino_core.draw_card = fake_draw
 
 
 def restore_draw_card(original):
-    casino.draw_card = original
+    casino.casino_core.draw_card = original
 
 
 def process(client, *messages):
@@ -154,7 +154,7 @@ def test_flip_loses():
 def test_blackjack_natural_win_pays_three_to_two():
     client = setup()
     casino.credit(casino.bot.store.connection, "u1", 100)
-    original = casino.draw_card
+    original = casino.casino_core.draw_card
     script_cards(["AH", "KH", "2C", "5D"])
     try:
         process(client, message("u1", "!blackjack 10", "m1"))
@@ -167,7 +167,7 @@ def test_blackjack_natural_win_pays_three_to_two():
 def test_blackjack_hit_then_bust():
     client = setup()
     casino.credit(casino.bot.store.connection, "u1", 100)
-    original = casino.draw_card
+    original = casino.casino_core.draw_card
     script_cards(["7H", "8H", "2C", "5D", "KC"])
     try:
         process(client, message("u1", "!blackjack 10", "m1"), message("u1", "!hit", "m2"))
@@ -180,7 +180,7 @@ def test_blackjack_hit_then_bust():
 def test_blackjack_double_doubles_the_stake():
     client = setup()
     casino.credit(casino.bot.store.connection, "u1", 100)
-    original = casino.draw_card
+    original = casino.casino_core.draw_card
     script_cards(["5H", "6H", "2C", "5D", "KC", "QC"])
     try:
         process(client, message("u1", "!blackjack 10", "m1"), message("u1", "!double", "m2"))
@@ -193,7 +193,7 @@ def test_blackjack_double_doubles_the_stake():
 def test_blackjack_split_creates_two_hands():
     client = setup()
     casino.credit(casino.bot.store.connection, "u1", 100)
-    original = casino.draw_card
+    original = casino.casino_core.draw_card
     script_cards(["8H", "8D", "2C", "5D", "3H", "4H"])
     try:
         process(client, message("u1", "!blackjack 10", "m1"), message("u1", "!split", "m2"))
@@ -206,7 +206,7 @@ def test_blackjack_split_creates_two_hands():
 def test_blackjack_surrender_refunds_half():
     client = setup()
     casino.credit(casino.bot.store.connection, "u1", 100)
-    original = casino.draw_card
+    original = casino.casino_core.draw_card
     script_cards(["9H", "6H", "2C", "5D"])
     try:
         process(client, message("u1", "!blackjack 10", "m1"), message("u1", "!surrender", "m2"))

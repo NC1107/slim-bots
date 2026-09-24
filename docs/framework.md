@@ -165,6 +165,22 @@ Every one of these is still a thin, hand-written wrapper over one REST call rath
 `await ctx.confirm(prompt, timeout=30)` is the one most commands want: it replies with `prompt` plus `(yes/no)`, waits for the same author's next message in the same channel via `wait_for("on_raw_message", ...)`, and returns `True`/`False` - a timeout answers `False`, the safe default for anything a confirmation is guarding.
 `bot-canvas-board`'s `!board clear` is the worked example: it used to require retyping `!board clear yes` to confirm; it now asks and waits for a real reply.
 
+## Splitting a bot across files
+
+`bot.load_extension(module)` imports `module` (a name, or an already-imported module object) and calls its `setup(bot)` once - loading the same extension twice is a no-op the second time, keyed by module name.
+An extension is a plain module with a `setup(bot)` function that declares commands and events the same way `bot.py` itself does, just against the `bot` it is handed instead of a module-level global:
+
+```python
+# economy.py
+def setup(bot):
+    @bot.command(aliases=["bal"], help="See your balance")
+    async def balance(ctx):
+        ...
+```
+
+An extension module should never import the bot's own entry-point module (`bot.py`) - most of these bots are run as `python3 bot.py`, which makes `bot.py` `__main__`, not an importable module named `bot`; anything that then does `import bot` loads and re-executes a second, separate copy of it instead of reusing the running one.
+Shared logic (constants, sqlite helpers, pure functions) that both the entry point and its extensions need belongs in its own small module that neither depends on the other to import - `bot-casino`'s `casino_core.py` and `blackjack.py` are the worked example.
+
 ## Safeguards, and how to opt out
 
 All from PR #6's primitives, now built in rather than something a bot must remember to call:
