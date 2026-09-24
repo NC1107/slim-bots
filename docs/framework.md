@@ -72,6 +72,11 @@ There is deliberately no `on_member_join` in this framework.
 slim-m's wire protocol has no such event: `crates/slimm-server/src/http/ws/frames.rs` carries `member.removed`, `member.restored`, `member.timeout`, `member.role_changed` and `role.changed`, and nothing for a join.
 Faking one from roster diffs would be a lie about what the wire actually says, so `on_member_removed`, `on_member_restored`, `on_member_timeout`, `on_member_role_changed` and `on_role_changed` are the real, honest set.
 
+## The Canvas model
+
+`Canvas(bot.client, channel_id)` wraps one channel's Voice Canvas: `await canvas.place(kind, x=, y=, w=, h=, props=)`, `move(object_id, x=, y=)`, `remove(object_ids)`, and `viewport(min_x=, min_y=, max_x=, max_y=)` for a bounded-rectangle read - `bot-canvas-board` is the worked example (a fixed-size sticky-note board).
+`on_canvas_object_placed`, `on_canvas_objects_removed` and `on_canvas_cleared` are channel-scoped events - dispatched only for a channel in `channels`, the same gate `message.created` gets, since (unlike the member/role events) these carry a `channel_id` and are not deployment-wide.
+
 ## Config, channel scoping, and durable cursors - all owned by Bot
 
 `Bot()` reads `SLIMM_URL`/`SLIMM_BOT_TOKEN` itself, and `SLIMM_CHANNELS` (comma-separated ids) too when `channels=` is not passed explicitly - a bot script never needs `import os` just to read these three.

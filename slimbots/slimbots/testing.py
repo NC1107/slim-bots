@@ -96,8 +96,9 @@ class FakeAsyncClient(AsyncClient):
             self._next_seq += 1
             self.sent.append({"channel_id": path.split("/")[2], "seq": seq, **(body or {})})
 
-        response = self._responses.get((method, path))
-        if response is not None:
+        key = (method, path)
+        if key in self._responses:
+            response = self._responses[key]
             if isinstance(response, BaseException):
                 raise response
             return response() if callable(response) else response

@@ -2,6 +2,7 @@
 
 from . import catchup, cursor
 from .bot import Bot
+from .canvas import Canvas
 from .client import Client, is_not_found, is_token_revoked, socket_url
 from .commands import Command
 from .context import Context
@@ -31,6 +32,7 @@ __all__ = [
     "AsyncApiClient",
     "BadArgument",
     "Bot",
+    "Canvas",
     "Channel",
     "CheckFailure",
     "Client",

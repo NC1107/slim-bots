@@ -273,6 +273,42 @@ async def test_on_frame_fires_for_every_frame_including_unrecognised(bot, client
     assert seen == ["message.created", "some_future_event"]
 
 
+async def test_channel_scoped_canvas_event_only_fires_in_scope():
+    from slimbots.authors import AuthorFilter
+    from slimbots.space import Space
+
+    bot = Bot(prefix="!", channels={"c1"})
+    bot.client = FakeAsyncClient()
+    bot.space = Space(bot.client)
+    bot.authors = AuthorFilter(bot.client, space=bot.space, ignore_bots=True)
+    bot.me_id = "bot-1"
+
+    seen = []
+
+    @bot.event
+    async def on_canvas_object_placed(frame):
+        seen.append(frame["channel_id"])
+
+    await bot._handle_frame({"type": "canvas.object.placed", "channel_id": "other"})
+    assert seen == []
+    await bot._handle_frame({"type": "canvas.object.placed", "channel_id": "c1"})
+    assert seen == ["c1"]
+
+
+async def test_member_events_are_never_channel_scoped():
+    bot = Bot(prefix="!", channels={"c1"})
+    bot.client = FakeAsyncClient()
+
+    seen = []
+
+    @bot.event
+    async def on_member_removed(frame):
+        seen.append(frame["user_id"])
+
+    await bot._handle_frame({"type": "member.removed", "user_id": "u1"})
+    assert seen == ["u1"]
+
+
 async def test_a_token_revocation_propagates_instead_of_being_swallowed(bot, client):
     @bot.command()
     async def whoami(ctx):

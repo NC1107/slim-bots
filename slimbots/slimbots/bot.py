@@ -22,12 +22,19 @@ DEFAULT_USER_AGENT = "slimbots/0.3"
 DEFAULT_CURSOR_DB = "slimbots-cursor.db"
 
 # Deployment-wide frame types dispatched as events; see docs/framework.md on why there is no on_member_join.
-_EVENT_FRAMES = {
+_GLOBAL_EVENT_FRAMES = {
     "member.removed": "on_member_removed",
     "member.restored": "on_member_restored",
     "member.role_changed": "on_member_role_changed",
     "role.changed": "on_role_changed",
     "member.timeout": "on_member_timeout",
+}
+
+# Channel-scoped frame types - dispatched only for a channel in `channels`, the same gate message.created gets.
+_CHANNEL_EVENT_FRAMES = {
+    "canvas.object.placed": "on_canvas_object_placed",
+    "canvas.objects.removed": "on_canvas_objects_removed",
+    "canvas.cleared": "on_canvas_cleared",
 }
 
 
@@ -179,9 +186,15 @@ class Bot:
             await guard_dispatch(self._dispatch_event, "on_raw_message", message)
             await guard_dispatch(self.process_message, message)
             return
-        event_name = _EVENT_FRAMES.get(kind)
-        if event_name:
-            await guard_dispatch(self._dispatch_event, event_name, frame)
+        global_event = _GLOBAL_EVENT_FRAMES.get(kind)
+        if global_event:
+            await guard_dispatch(self._dispatch_event, global_event, frame)
+            return
+        channel_event = _CHANNEL_EVENT_FRAMES.get(kind)
+        if channel_event:
+            if self.channels is not None and frame.get("channel_id") not in self.channels:
+                return
+            await guard_dispatch(self._dispatch_event, channel_event, frame)
 
     def _note_seq(self, channel_id, seq):
         if self._cursor_conn is not None and seq is not None:
