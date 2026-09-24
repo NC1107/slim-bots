@@ -2,8 +2,10 @@ name: test
 
 # Actions are pinned by commit SHA, not tag, so a compromised tag can't run arbitrary code here.
 # Every third-party Python dependency installs from a hash-locked, wheel-only requirements file
-# (regenerate with `pip-compile --generate-hashes`); the local slim-m checkout under test installs
-# with --no-deps right after, since its own dependencies are already satisfied by that lock file.
+# (regenerate with `pip-compile --generate-hashes`). This repo's own slimbots package is never
+# `pip install`ed here - there is no meaningful hash to pin a same-PR source checkout to, so it is
+# just put on PYTHONPATH instead, which needs nothing from the checkout that --require-hashes could
+# ever verify anyway.
 on:
   pull_request:
   push:
@@ -11,6 +13,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  PYTHONPATH: ${{ github.workspace }}/slimbots
 
 jobs:
   slimbots:
@@ -20,11 +25,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install slimbots with its dev extras
+      - name: Install slimbots' third-party dependencies (hash-locked, wheel-only)
         run: |
           python -m pip install --upgrade pip --only-binary=:all:
           python -m pip install --only-binary=:all: --require-hashes -r slimbots/requirements-ci.lock.txt
-          python -m pip install --only-binary=:all: --no-deps -e "./slimbots[dev]"
       - name: Run the slimbots pytest suite
         working-directory: slimbots
         # These two repo-wide gates (see docs/framework.md's "Removed in 0.3.0") are only meant to
@@ -43,11 +47,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install slimbots (local checkout) and every template's shared runtime dependencies
+      - name: Install every template's shared runtime dependencies (hash-locked, wheel-only)
         run: |
           python -m pip install --upgrade pip --only-binary=:all:
           python -m pip install --only-binary=:all: --require-hashes -r bot-templates-requirements.lock.txt
-          python -m pip install --only-binary=:all: --no-deps ./slimbots
       - name: Run every template's own test_bot.py, skipping one not yet ported onto Bot
         run: |
           set -e
@@ -69,11 +72,10 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install slimbots (local checkout)
+      - name: Install bot-casino's shared runtime dependencies (hash-locked, wheel-only)
         run: |
           python -m pip install --upgrade pip --only-binary=:all:
           python -m pip install --only-binary=:all: --require-hashes -r bot-templates-requirements.lock.txt
-          python -m pip install --only-binary=:all: --no-deps ./slimbots
       - name: Run bot-casino's real-thread, real-sqlite concurrency suite
         working-directory: bot-casino
         run: python test_concurrency.py
