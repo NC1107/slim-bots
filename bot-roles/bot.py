@@ -1,69 +1,15 @@
 #!/usr/bin/env python3
-"""A slim-m bot for self-service roles: `!role <name>` grants it, `!role
-remove <name>` drops it, `!roles` lists what is on offer. At startup it also
-posts (or updates) that same listing in its channel, so there is a visible
-affordance even though nothing here is reaction-driven.
+"""bot-roles: self-service roles - `!role <name>`, `!role remove <name>`, `!role mine`, `!roles`, `!roles status`; see README.md."""
 
-Run it with a bot token from Space settings -> Bots, the channel it should
-watch, and a name-to-role-id map:
-
-    pip install -r requirements.txt
-    SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... \\
-        SLIMM_CHANNEL=<channel-uuid> \\
-        SLIMM_ROLES=member:<role-uuid>,helper:<role-uuid> python3 bot.py
-
-Reaction roles - react to an emoji, get a role - is the obvious shape for
-this and is not possible against slim-m today. The wire event for a reaction
-change (`ReactionsChanged`) carries public counts only, never who reacted:
-`crates/slimm-server/src/http/ws/frames.rs`'s `ReactionCountDto` says so in
-its own doc comment, and decision 0009 explains why - a reactor a viewer has
-blocked must not be visible to that viewer, so reactor identity is stripped
-for everyone, not just the blocking case. There is no way to build reaction
-roles on top of that, so this bot is command-driven instead. See the README
-for the rest of what this deliberately does not do.
-
-The single most important thing this demonstrates: `crates/slimm-server/src
-/http/roles.rs` refuses to grant a role carrying a permission the actor does
-not already hold. A role bot hands out permissions, so it must itself hold
-at least what it hands out, or every grant comes back 403 - see the README's
-"the no-escalation rule" section before assuming the bot is just broken.
-
-Like `bot-ping/`, a frame type this does not recognise is ignored
-rather than treated as an error, and the author is checked against `GET /me`
-before ever answering - this bot posts in the very channel it listens to.
-
-Unlike `bot-reminders/`, there is no sqlite file. A reminder is a
-promise to act in the future and must survive a restart or it silently never
-fires; a role command is acted on immediately and, if lost, costs the member
-nothing worse than typing it again. So the only state worth keeping is a
-`seq` cursor to avoid re-reading old history, and that only needs to survive
-a dropped websocket within one run, not a process restart - kept in memory
-below rather than reaching for `slimbots.cursor`'s sqlite storage, which
-would be the wrong tool for state this bot is fine losing. The README
-explains this tradeoff further.
-
-Auth, the REST call, the websocket handshake and the reconnect loop with
-backoff come from the `slimbots` package (`../slimbots/`) - the same
-plumbing every template but `bot-ping` shares.
-"""
-
-import asyncio
 import os
-import re
-import sys
-import urllib.error
 import uuid
 
-from slimbots import Client, Connection, is_not_found, run_forever
+from slimbots import Bot, Permissions, catchup
+from slimbots.http import ApiError, is_forbidden, is_not_found
 
-BASE = os.environ.get("SLIMM_URL", "").rstrip("/")
+BASE = os.environ.get("SLIMM_URL", "")
 TOKEN = os.environ.get("SLIMM_BOT_TOKEN", "")
 CHANNEL = os.environ.get("SLIMM_CHANNEL", "")
-USER_AGENT = "slimm-bot-roles/1.0"
-
-TRIGGER_REMOVE = re.compile(r"^!role\s+remove\s+(\S+)\s*$", re.IGNORECASE)
-TRIGGER_GRANT = re.compile(r"^!role\s+(\S+)\s*$", re.IGNORECASE)
-TRIGGER_LIST = re.compile(r"^!roles\s*$", re.IGNORECASE)
 
 # Namespace for deriving a stable listing-message id from the channel id, so nothing needs to be persisted to disk.
 LISTING_NAMESPACE = uuid.UUID("d1f6a9d0-0f0f-4b6a-9b0f-2f6b6f0f9a10")
@@ -85,152 +31,191 @@ def parse_roles(spec):
 
 ROLES = parse_roles(os.environ.get("SLIMM_ROLES", ""))
 
+bot = Bot(prefix="!", channels={CHANNEL} if CHANNEL else None)
+bot.my_permissions = 0
+_role_permissions_cache = {}
+# In-memory only - a role command lost across a restart just costs a retype; see README.md.
+_last_seq = {}
+
 
 def listing_message_id():
     return str(uuid.uuid5(LISTING_NAMESPACE, CHANNEL))
 
 
 def listing_text():
-    lines = ["**Self-service roles**", "`!role <name>` to add one, `!role remove <name>` to drop it."]
-    lines.append("")
+    lines = [
+        "**Self-service roles**",
+        "`!role <name>` to add one, `!role remove <name>` to drop it, `!role mine` to see what you hold.",
+        "",
+    ]
     lines.extend(f"- `{name}`" for name in ROLES)
     return "\n".join(lines)
 
 
-def post_listing(client):
-    """Publishes the role listing at startup, editing the previous one in
-    place when it already exists rather than posting a new copy every run."""
+async def post_listing():
+    """Publishes the role listing at startup, editing the previous one in place when it already exists."""
     message_id = listing_message_id()
     try:
-        client.call("PATCH", f"/channels/{CHANNEL}/messages/{message_id}", {"content": listing_text()})
-        print("updated the role listing", flush=True)
-    except urllib.error.HTTPError as err:
+        await bot.client.call("PATCH", f"/channels/{CHANNEL}/messages/{message_id}", {"content": listing_text()})
+    except ApiError as err:
         if not is_not_found(err):
             raise
-        client.send(CHANNEL, listing_text(), message_id=message_id)
-        print("posted the role listing", flush=True)
+        await bot.client.send(CHANNEL, listing_text(), message_id=message_id)
 
 
-def escalation_explanation():
+async def fetch_role_permissions(role_id):
+    """The configured role's own permission bits, or None if unreadable (needs MANAGE_ROLES, or the role is gone)."""
+    if role_id in _role_permissions_cache:
+        return _role_permissions_cache[role_id]
+    try:
+        roles = await bot.client.list_roles()
+    except ApiError as err:
+        if is_forbidden(err):
+            return None
+        raise
+    for role in roles:
+        _role_permissions_cache[role["id"]] = role["permissions"]
+    return _role_permissions_cache.get(role_id)
+
+
+async def escalation_explanation(role_name, role_id):
+    """Names the exact permission gap - a 403 alone cannot say which guard fired, so this asks `GET /roles` too."""
+    if not (bot.my_permissions & Permissions.MANAGE_ROLES):
+        return (
+            "I can't grant or remove any role here, not even a zero-permission one - I don't hold MANAGE_ROLES "
+            "myself. An admin needs to grant this bot's own account MANAGE_ROLES before self-service roles can work at all."
+        )
+    role_permissions = await fetch_role_permissions(role_id)
+    if role_permissions is None:
+        return (
+            f"I hold MANAGE_ROLES but still can't grant `{role_name}` - either it was deleted, or something else "
+            "is wrong. An admin should check it still exists."
+        )
+    missing = Permissions.names(role_permissions & ~bot.my_permissions)
+    if not missing:
+        return (
+            f"granting `{role_name}` was refused, but I hold everything it carries - an admin should check my "
+            "role assignment did not just change."
+        )
+    named = ", ".join(missing)
     return (
-        "I can't do that: granting a role means granting whatever it carries, "
-        "and I don't hold at least the same permissions myself right now. "
-        "An admin needs to give me a role covering what I'm meant to hand out."
+        f"I hold MANAGE_ROLES, but `{role_name}` also carries {named}, which I don't hold myself. An admin needs "
+        f"to grant this bot's own account {named} before it can hand out `{role_name}`."
     )
 
 
-def grant(client, role_name, actor_id, reply_to_id):
+async def grant(ctx, role_name):
     role_id = ROLES.get(role_name)
     if role_id is None:
-        client.send(CHANNEL, f"no role called `{role_name}` is offered here - try `!roles`.", reply_to_id=reply_to_id)
+        await ctx.reply(f"no role called `{role_name}` is offered here - try `!roles`.")
         return
     try:
-        client.call("PUT", f"/members/{actor_id}/roles/{role_id}")
-    except urllib.error.HTTPError as err:
-        if err.code == 403:
-            client.send(CHANNEL, escalation_explanation(), reply_to_id=reply_to_id)
+        await bot.space.grant_role(ctx.author, role_id)
+    except ApiError as err:
+        if is_forbidden(err):
+            await ctx.reply(await escalation_explanation(role_name, role_id))
             return
-        if err.code == 404:
-            client.send(
-                CHANNEL, f"`{role_name}` is misconfigured on my end - ask an admin to check it.", reply_to_id=reply_to_id
-            )
+        if is_not_found(err):
+            await ctx.reply(f"`{role_name}` is misconfigured on my end - ask an admin to check it.")
             return
         raise
-    client.send(CHANNEL, f"done - you have `{role_name}` now.", reply_to_id=reply_to_id)
+    await ctx.reply(f"done - you have `{role_name}` now.")
 
 
-def revoke(client, role_name, actor_id, reply_to_id):
+async def revoke(ctx, role_name):
     role_id = ROLES.get(role_name)
     if role_id is None:
-        client.send(CHANNEL, f"no role called `{role_name}` is offered here - try `!roles`.", reply_to_id=reply_to_id)
+        await ctx.reply(f"no role called `{role_name}` is offered here - try `!roles`.")
         return
     try:
-        client.call("DELETE", f"/members/{actor_id}/roles/{role_id}")
-    except urllib.error.HTTPError as err:
-        if err.code == 403:
-            client.send(CHANNEL, escalation_explanation(), reply_to_id=reply_to_id)
+        await bot.space.revoke_role(ctx.author, role_id)
+    except ApiError as err:
+        if is_forbidden(err):
+            await ctx.reply(await escalation_explanation(role_name, role_id))
             return
         raise
-    client.send(CHANNEL, f"removed `{role_name}`.", reply_to_id=reply_to_id)
+    await ctx.reply(f"removed `{role_name}`.")
 
 
-def handle_message(client, me, message):
-    """The author check is what stops the bot answering itself forever, and
-    matters more here than in bot-ping: this bot posts its own listing in
-    the very channel it listens to."""
-    author_id = message.get("author_id")
-    if author_id is None or author_id == me:
+async def show_mine(ctx):
+    held = set(ctx.author.role_ids)
+    mine = [name for name, role_id in ROLES.items() if role_id in held]
+    if mine:
+        await ctx.reply(f"you hold: {', '.join(mine)}")
+    else:
+        await ctx.reply("you hold none of the roles offered here.")
+
+
+async def show_status(ctx):
+    """The same diagnosis a failed grant gives, but on demand and for every configured role at once."""
+    lines = [f"I hold: {', '.join(Permissions.names(bot.my_permissions)) or 'nothing'}"]
+    if not (bot.my_permissions & Permissions.MANAGE_ROLES):
+        lines.append("MANAGE_ROLES is missing, so no role here is grantable yet.")
+        await ctx.reply("\n".join(lines))
         return
-    content = (message.get("content") or "").strip()
-    request_message_id = message.get("id")
+    for name, role_id in ROLES.items():
+        role_permissions = await fetch_role_permissions(role_id)
+        if role_permissions is None:
+            lines.append(f"`{name}`: cannot verify (role missing or unreadable)")
+            continue
+        missing = Permissions.names(role_permissions & ~bot.my_permissions)
+        lines.append(f"`{name}`: grantable" if not missing else f"`{name}`: missing {', '.join(missing)}")
+    await ctx.reply("\n".join(lines))
 
-    if match := TRIGGER_REMOVE.match(content):
-        revoke(client, match.group(1), author_id, request_message_id)
+
+@bot.command(name="roles", help="List self-service roles, or `status` to diagnose what's grantable", usage="[status]")
+async def roles_cmd(ctx, sub: str = None):
+    if sub and sub.lower() == "status":
+        await show_status(ctx)
         return
-    if match := TRIGGER_GRANT.match(content):
-        grant(client, match.group(1), author_id, request_message_id)
+    await ctx.reply(listing_text())
+
+
+@bot.command(name="role", help="Add a role, `remove <name>` to drop it, `mine` to see what you hold", usage="<name> | remove <name> | mine")
+async def role_cmd(ctx, first: str, second: str = None):
+    action = first.lower()
+    if action == "mine":
+        await show_mine(ctx)
         return
-    if TRIGGER_LIST.match(content):
-        client.send(CHANNEL, listing_text(), reply_to_id=request_message_id)
+    if action == "remove" and second:
+        await revoke(ctx, second)
+        return
+    await grant(ctx, first)
 
 
-def resync(client, cursor):
-    """Catches up on the configured channel over `/sync` when reconnecting
-    mid-run, so a command sent during a dropped socket is not lost. `cursor`
-    of `None` means this is the first connection this process has made, so
-    there is nothing to replay - see the module docstring on why that gap is
-    acceptable here but was not for bot-reminders."""
-    me = client.me()["id"]
-    if cursor is None:
-        latest = client.call("GET", f"/channels/{CHANNEL}/messages?limit=1")
-        return latest[0]["seq"] if latest else 0
-
-    response = client.call("POST", "/sync", {"scopes": [{"channel_id": CHANNEL, "after_seq": cursor}]})
-    scope = response["scopes"][0]
-    for message in scope["messages"]:
-        handle_message(client, me, message)
-    if scope["messages"]:
-        return scope["messages"][-1]["seq"]
-    if scope["reset"]:
-        latest = client.call("GET", f"/channels/{CHANNEL}/messages?limit=1")
-        return latest[0]["seq"] if latest else 0
-    return cursor
+async def _resync():
+    if CHANNEL not in _last_seq:
+        return
+    scopes = [{"channel_id": CHANNEL, "after_seq": _last_seq[CHANNEL]}]
+    for scope in await catchup.sync(bot.client, scopes):
+        for message in scope["messages"]:
+            await bot.process_message(message)
+        if scope["messages"]:
+            _last_seq[CHANNEL] = scope["messages"][-1]["seq"]
+        elif scope["reset"]:
+            _last_seq.pop(CHANNEL, None)
 
 
-async def attempt(client, state, reset_delay):
-    me = client.me()["id"]
-    print(f"connected as {me}", flush=True)
-
-    state["cursor"] = resync(client, state["cursor"])
-    post_listing(client)
-
-    async with await Connection.open(client) as socket:
-        print("listening", flush=True)
-        reset_delay()
-
-        async for frame in socket.frames():
-            # Ignore a frame type we do not know; see bot-ping's docstring.
-            if frame.get("type") != "message.created":
-                continue
-            if frame.get("channel_id") != CHANNEL:
-                continue
-            message = frame.get("message") or {}
-            handle_message(client, me, message)
-            seq = message.get("seq")
-            if seq is not None:
-                state["cursor"] = seq
+@bot.event
+async def on_raw_message(message):
+    seq = message.get("seq")
+    if seq is not None:
+        _last_seq[CHANNEL] = seq
 
 
-async def main():
+@bot.event
+async def on_connect():
+    bot.my_permissions = (await bot.client.me()).get("permissions", 0)
+    _role_permissions_cache.clear()
+    await _resync()
+    await post_listing()
+
+
+def main():
     if not BASE or not TOKEN or not CHANNEL or not ROLES:
-        print("set SLIMM_URL, SLIMM_BOT_TOKEN, SLIMM_CHANNEL and SLIMM_ROLES", file=sys.stderr)
-        return 2
-
-    client = Client(BASE, TOKEN, USER_AGENT)
-    state = {"cursor": None}
-
-    return await run_forever(lambda reset_delay: attempt(client, state, reset_delay))
+        raise SystemExit("set SLIMM_URL, SLIMM_BOT_TOKEN, SLIMM_CHANNEL and SLIMM_ROLES")
+    raise SystemExit(bot.run() or 0)
 
 
 if __name__ == "__main__":
-    raise SystemExit(asyncio.run(main()) or 0)
+    main()

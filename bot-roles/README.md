@@ -1,13 +1,16 @@
 # bot-roles
 
 A slim-m bot: `!role <name>` to grab a self-service role, `!role remove
-<name>` to drop it, `!roles` to see what is on offer. At startup it also
-posts (or updates) that same listing in its channel.
+<name>` to drop it, `!role mine` to see what you hold, `!roles` to see
+what is on offer, `!roles status` to diagnose what this bot can currently
+grant. At startup it also posts (or updates) that same listing in its
+channel.
 
-Unlike `bot-ping`, this template is built on the `slimbots` package in
-`../slimbots/`, which covers the plumbing every template but `bot-ping`
-shares - auth, the REST call, retries, the websocket handshake, and the
-reconnect loop. `bot-ping` stays free of it on purpose; see its own README.
+Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
+`@bot.command` replaces the old regex trigger wall, and role
+grants/revokes go through `bot.space.grant_role`/`revoke_role` rather
+than a raw HTTP call. `bot-ping` stays free of the library on purpose;
+see its own README.
 
 ```bash
 pip install -r requirements.txt
@@ -47,6 +50,18 @@ This is deliberate on the platform's side, not a bug to route around. A
 deployment that wants this bot to hand out a role with real permissions has
 to give the bot at least that much itself. If a grant is coming back
 forbidden, check the bot's own roles before assuming the code is broken.
+
+## Diagnosing the gap instead of a bare refusal
+
+The server gives every `403` the same body, so a failed grant and a missing
+`MANAGE_ROLES` are not distinguishable from the wire alone. This bot tells
+them apart using what it already has: its own `permissions` bitmask from
+`GET /me`, and - once `MANAGE_ROLES` is confirmed - the target role's own
+bits from `GET /roles`, turned into names with `slimbots.Permissions.names`.
+`!role <name>` and `!role remove <name>` show this automatically on a
+refusal; `!roles status` runs the same check for every configured role at
+once, on demand, so an admin can see the whole picture without provoking a
+403 first.
 
 ## Do not answer yourself
 
