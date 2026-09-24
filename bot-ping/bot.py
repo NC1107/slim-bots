@@ -27,15 +27,35 @@ restart; a bot that must not miss anything reads `seq` and calls /sync. It
 reconnects with a flat delay rather than backing off. It answers every channel
 it can see rather than being told which.
 
+Two things are not corners cut, because a bot answering `!ping` forever or
+dying ugly on a container restart is not a teaching point, it is a bug:
+
+- **It never answers another bot, or a webhook.** `should_answer` checks the
+  author against its own id, same as always, and also against
+  `GET /users/{id}`'s `is_bot`/`is_webhook` fields, cached per id so a chatty
+  channel does not refetch it every message. Several bots sharing one
+  channel is exactly the setup where a `!ping` in another bot's own output
+  would otherwise start an infinite reply loop - `slimbots.AuthorFilter`
+  fixes this for every other template; this file writes the same handful of
+  lines out inline instead of importing it, for the reason below.
+- **SIGTERM exits cleanly.** A container orchestrator stops a bot with
+  SIGTERM, not by pulling the plug, and the default Python behaviour for a
+  frame this small a handler covers in full is worth having: log why, then
+  exit 0 rather than whatever an unhandled signal does.
+
 Every other template in this repo builds on the `slimbots` package
 (`../slimbots/`) for this same plumbing. This one deliberately does not, so
 there is always one file that shows the whole protocol with nothing hidden
-behind an import - see `README.md` for why that stays true on purpose.
+behind an import - see `README.md` for why that stays true on purpose. The two
+exceptions above are kept inline rather than imported for the same reason:
+they are a few lines each, and a "teaching artifact" that answers itself
+forever or dies badly on a restart is not teaching the right lesson.
 """
 
 import asyncio
 import json
 import os
+import signal
 import sys
 import urllib.error
 import urllib.parse
@@ -171,10 +191,22 @@ async def listen():
                 print(f"answered in {frame['channel_id']}", flush=True)
 
 
+def _install_sigterm_handler():
+    """Exits 0 on SIGTERM instead of whatever an unhandled signal does, so a
+    container stop reads as a clean shutdown in its own exit code."""
+
+    def _on_sigterm(signum, frame):
+        print("received SIGTERM, shutting down", flush=True)
+        raise SystemExit(0)
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
+
 async def main():
     if not BASE or not TOKEN:
         print("set SLIMM_URL and SLIMM_BOT_TOKEN", file=sys.stderr)
         return 2
+    _install_sigterm_handler()
     while True:
         try:
             await listen()
