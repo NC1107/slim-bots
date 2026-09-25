@@ -106,6 +106,11 @@ Global versus channel-scoped follows the same test as before: an event about a c
 
 The real work happens through `livekit.rtc`, loaded dynamically (`importlib.import_module`, not a static `import`) so neither pyright nor a bot that never touches voice needs the package installed - `bot-jellyfin`'s `!watch` (`stream_session.py`) is the worked example: Jellyfin transcodes server-side, a local `ffmpeg` decodes to raw frames, and those get pushed into the sources `publish_screen_share` returns at the source's own pace.
 
+`await bot.voice.find_member(user_id)` answers "which voice channel is this person actually in right now", never "which channel did their command come from" - a command typed in a text channel has no voice call of its own, so a voice-aware command needs this rather than joining `ctx.channel_id`.
+It prefers live state: `voice.participant_joined`/`voice.participant_left` (decision 0032, `{channel_id, user_id}`) update an in-memory cache as they arrive, ungated by `channels=` since presence needs tracking across every voice channel the bot can see, not just the ones it watches for commands.
+A cache miss falls back to `GET .../voice/roster` on every voice channel the bot can see, fetched concurrently; a match populates the cache so a second lookup for the same person is free. These events only flow at all on a deployment with the LiveKit webhook configured (decision 0032's own caveat); the roster fallback is what keeps `find_member` correct regardless.
+A member is in at most one call; if roster data somehow shows otherwise (no timestamp travels with it to say which is newer), the last channel checked wins, arbitrarily - the live-event cache is what actually resolves a genuine order between two joins, by recording when each one arrived.
+
 ## Config, settings, channel scoping, and durable cursors - all owned by Bot
 
 `Bot()` reads `SLIMM_URL`/`SLIMM_BOT_TOKEN` itself, and `SLIMM_CHANNELS` (comma-separated ids) too when `channels=` is not passed explicitly - a bot script never needs `import os` just to read these three.

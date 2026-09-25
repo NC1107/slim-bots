@@ -4,7 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import time
 from typing import TYPE_CHECKING, Any
+
+from .http import ApiError, is_forbidden
 
 if TYPE_CHECKING:
     from .bot import Bot
@@ -86,11 +89,51 @@ class Voice:
 
     def __init__(self, bot: "Bot") -> None:
         self._bot = bot
+        # user_id -> (channel_id, monotonic time last confirmed there); see find_member().
+        self._member_channel: dict[str, tuple[str, float]] = {}
+
+    def _note_joined(self, channel_id: str, user_id: str) -> None:
+        self._member_channel[user_id] = (channel_id, time.monotonic())
+
+    def _note_left(self, channel_id: str, user_id: str) -> None:
+        current = self._member_channel.get(user_id)
+        if current is not None and current[0] == channel_id:
+            del self._member_channel[user_id]
+
+    async def find_member(self, user_id: str) -> str | None:
+        """The voice channel `user_id` is currently connected to, or None; see docs/framework.md."""
+        cached = self._member_channel.get(user_id)
+        if cached is not None:
+            return cached[0]
+        return await self._find_member_via_roster(user_id)
+
+    async def _find_member_via_roster(self, user_id: str) -> str | None:
+        assert self._bot.space is not None and self._bot.client is not None, "find_member needs an open connection"
+        voice_channel_ids = [c.id for c in self._bot.space.channels.values() if c.kind == "voice"]
+        rosters = await asyncio.gather(
+            *(self._bot.client.voice_roster(channel_id) for channel_id in voice_channel_ids),
+            return_exceptions=True,
+        )
+        found_in = None
+        for channel_id, roster in zip(voice_channel_ids, rosters):
+            if isinstance(roster, BaseException):
+                continue
+            participants = roster.get("participants", [])
+            if any(p.get("user_id") == user_id for p in participants):
+                found_in = channel_id  # a real anomaly if more than one matches; last one wins, arbitrarily
+        if found_in is not None:
+            self._note_joined(found_in, user_id)
+        return found_in
 
     async def join(self, channel_id: str) -> VoiceSession:
         """Mints a join token via `POST .../voice/token`, connects over LiveKit, and starts the session's heartbeat."""
         assert self._bot.client is not None, "voice.join needs an open Bot connection"
-        token = await self._bot.client.voice_token(channel_id)
+        try:
+            token = await self._bot.client.voice_token(channel_id)
+        except ApiError as err:
+            if is_forbidden(err):
+                raise VoiceError("needs VIEW_CHANNEL and CONNECT in that channel") from err
+            raise
         rtc = load_rtc()
         room = rtc.Room()
         try:

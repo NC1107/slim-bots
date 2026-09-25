@@ -3,6 +3,14 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.4.1
+
+`!watch` required the invoker to be in the *command channel's* own voice call - a check that could never pass once `!watch` was typed in an ordinary text channel, since a text channel has no voice call of its own. The bot always replied "join this channel's voice call first," regardless of which real voice channel the person was actually in.
+
+- `bot.voice.find_member(user_id)`: the voice channel a member is actually connected to, or None - live `voice.participant_joined`/`voice.participant_left` events (decision 0032) update an in-memory cache, a cache miss falls back to a concurrent roster scan of every voice channel the bot can see.
+- `bot-jellyfin`'s `!watch` now joins the invoker's real voice channel, wherever the command was typed; refuses with "join a voice channel first, then run `!watch` again" only if they are in no call, and names the missing `CONNECT`/`SPEAK` permission if the bot can't join or can't speak there. The confirmation names the voice channel, e.g. "streaming Iron Man into #voice".
+- Audited every other bot for the same "the command's channel is where the action happens" assumption; `bot-canvas-board` already has an explicit `CANVAS_CHANNEL` (0.4.0), and the rest (`bot-casino`, `bot-reminders`, `bot-modlog`, `bot-roles`) legitimately act on the channel a command came from - no other bot needed a change.
+
 ## 0.4.0
 
 A 0.2.0 database carried over into 0.3.0 could crash on a column that only 0.3.0's schema added - `bot-canvas-board`'s `items.added_by` was the one that actually broke in production (`OperationalError: no such column: added_by`).
