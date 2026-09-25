@@ -238,6 +238,7 @@ async def test_channel_scoping_ignores_frames_outside_the_set(client):
     await bot._handle_frame(
         {"type": "message.created", "channel_id": "c1", "message": {"id": "m2", "author_id": "u1", "channel_id": "c1", "content": "!ping"}}
     )
+    await asyncio.sleep(0)  # process_message now runs as its own task; let it run once before checking the reply
     assert client.sent[-1]["content"] == "pong"
 
 

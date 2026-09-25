@@ -3,6 +3,16 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.4.2
+
+A prod bug: `!watch iron man` gave the numbered picker, a reply within seconds still timed out 60s later with "timed out - `!watch` again to retry".
+
+- `Bot._handle_frame` used to await `process_message` inline, so the single sequential gateway loop (`async for frame in gateway.frames(): await self._handle_frame(frame)`) was blocked for as long as a command ran - including inside a command's own `bot.wait_for`/`ctx.confirm`. The reply frame that would resolve the wait could never be read until the wait's own timeout fired: a deadlock, not a race, for every command that waits on a later message.
+- `_handle_frame` now runs `process_message` as its own `bot.background()` task instead, so the frame loop keeps reading while a command is still in progress. Task creation order still matches frame arrival order; completion order does not (a slower command can finish after a faster later one) - a per-channel queue was considered and rejected, since serializing to completion would reintroduce the same deadlock one level down for a reply in the same channel.
+- Confirmed `ctx.confirm` and `bot-canvas-board`'s `!board clear` hit the identical deadlock and are fixed by the same change; both had test-level workarounds that existed only to dodge it.
+- Confirmed the picker's `same_place` check (`message.get("channel_id")`/`message.get("author_id")`) against the real wire `MessageDto` - both are genuine top-level fields, no fix needed there.
+- New regression test drives `_handle_frame` sequentially, the way the real gateway does, instead of calling `process_message` directly - the old tests could not have caught this since they never exercised the frame loop itself.
+
 ## 0.4.1
 
 `!watch` required the invoker to be in the *command channel's* own voice call - a check that could never pass once `!watch` was typed in an ordinary text channel, since a text channel has no voice call of its own. The bot always replied "join this channel's voice call first," regardless of which real voice channel the person was actually in.

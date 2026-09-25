@@ -353,7 +353,7 @@ class Bot:
             message = frame.get("message") or {}
             self._note_seq(channel_id, message.get("seq"))
             await guard_dispatch(self._dispatch_event, "on_raw_message", message)
-            await guard_dispatch(self.process_message, message)
+            self.background(guard_dispatch(self.process_message, message), name=f"message-{message.get('id', '?')}")
             return
         if kind == "voice.participant_joined":
             # Never gated on self.channels - find_member() tracks every voice channel the bot can see.
