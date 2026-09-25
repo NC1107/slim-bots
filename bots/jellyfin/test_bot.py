@@ -295,6 +295,35 @@ async def _fake_start(self):
     self._audio_source = object()
 
 
+async def _fake_start_pipeline(self, start_seconds):
+    self._seek_base = start_seconds
+    self._segment_started_at = stream_session.time.monotonic()
+
+
+def test_start_publishes_the_configured_bitrate_and_framerate_ceilings():
+    setup_with_voice()
+    voice_session = FakeVoiceSession("c1")
+    session = stream_session.WatchSession(jellyfin.bot, "c1", "c1", movie_for_watch(), "u1", voice_session)
+    original_start_pipeline = stream_session.WatchSession._start_pipeline
+    stream_session.WatchSession._start_pipeline = _fake_start_pipeline
+
+    async def run():
+        await session.start()
+        session._monitor_task.cancel()
+        try:
+            await session._monitor_task
+        except asyncio.CancelledError:
+            pass
+
+    try:
+        asyncio.run(run())
+    finally:
+        stream_session.WatchSession._start_pipeline = original_start_pipeline
+    assert voice_session.published["video_max_bitrate"] == jellyfin.jellyfin_core.JELLYFIN_STREAM_WEBRTC_MAX_BITRATE
+    assert voice_session.published["video_max_framerate"] == float(jellyfin.jellyfin_core.JELLYFIN_STREAM_FPS)
+    assert voice_session.published["audio_max_bitrate"] == jellyfin.jellyfin_core.JELLYFIN_STREAM_AUDIO_MAX_BITRATE
+
+
 def test_parse_hms_and_format_hms_round_trip():
     assert stream_session.parse_hms("1:02:03") == 3723
     assert stream_session.parse_hms("2:03") == 123

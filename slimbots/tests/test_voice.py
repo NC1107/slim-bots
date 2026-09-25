@@ -41,6 +41,10 @@ class FakeTrackSource:
     SOURCE_SCREENSHARE_AUDIO = "screenshare_audio"
 
 
+class FakeDegradationPreference:
+    MAINTAIN_RESOLUTION = "maintain_resolution"
+
+
 def fake_rtc_module(room: FakeRoom) -> SimpleNamespace:
     return SimpleNamespace(
         Room=lambda: room,
@@ -53,7 +57,15 @@ def fake_rtc_module(room: FakeRoom) -> SimpleNamespace:
         ),
         LocalVideoTrack=SimpleNamespace(create_video_track=lambda name, source: SimpleNamespace(name=name, source=source)),
         LocalAudioTrack=SimpleNamespace(create_audio_track=lambda name, source: SimpleNamespace(name=name, source=source)),
-        TrackPublishOptions=lambda source=None: SimpleNamespace(source=source),
+        VideoEncoding=lambda max_bitrate=None, max_framerate=None: SimpleNamespace(
+            max_bitrate=max_bitrate, max_framerate=max_framerate,
+        ),
+        AudioEncoding=lambda max_bitrate=None: SimpleNamespace(max_bitrate=max_bitrate),
+        DegradationPreference=FakeDegradationPreference,
+        TrackPublishOptions=lambda source=None, video_encoding=None, audio_encoding=None, degradation_preference=None: SimpleNamespace(
+            source=source, video_encoding=video_encoding, audio_encoding=audio_encoding,
+            degradation_preference=degradation_preference,
+        ),
         TrackSource=FakeTrackSource,
     )
 
@@ -99,6 +111,27 @@ def test_publish_screen_share_tags_both_tracks_with_the_screen_share_sources(mon
         assert audio_source.sample_rate == 48000
         sources = [options.source for _track, options in room.local_participant.published]
         assert sources == [FakeTrackSource.SOURCE_SCREENSHARE, FakeTrackSource.SOURCE_SCREENSHARE_AUDIO]
+        video_options, _audio_options = (options for _track, options in room.local_participant.published)
+        assert video_options.video_encoding is None
+        assert video_options.degradation_preference == FakeDegradationPreference.MAINTAIN_RESOLUTION
+        session._heartbeat_task.cancel()
+
+    asyncio.run(run())
+
+
+def test_publish_screen_share_sets_explicit_ceilings_when_given(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot, client, room = make_bot()
+    monkeypatch.setattr(voice_module, "load_rtc", lambda: fake_rtc_module(room))
+
+    async def run() -> None:
+        session = await bot.voice.join("c1")
+        await session.publish_screen_share(
+            width=1280, height=720, video_max_bitrate=8_000_000, video_max_framerate=30.0, audio_max_bitrate=128_000,
+        )
+        video_options, audio_options = (options for _track, options in room.local_participant.published)
+        assert video_options.video_encoding.max_bitrate == 8_000_000
+        assert video_options.video_encoding.max_framerate == 30.0
+        assert audio_options.audio_encoding.max_bitrate == 128_000
         session._heartbeat_task.cancel()
 
     asyncio.run(run())

@@ -54,20 +54,34 @@ class VoiceSession:
 
     async def publish_screen_share(
         self, *, width: int, height: int, sample_rate: int = 48000, num_channels: int = 2,
+        video_max_bitrate: int | None = None, video_max_framerate: float | None = None,
+        audio_max_bitrate: int | None = None,
     ) -> tuple[Any, Any]:
-        """Publishes a video+audio pair tagged SCREEN_SHARE/SCREEN_SHARE_AUDIO - what a person's own share also uses."""
+        """Publishes a video+audio pair tagged SCREEN_SHARE/SCREEN_SHARE_AUDIO - what a person's own share also uses.
+        A `None` ceiling keeps the library default; degradation favors resolution, since blur reads worse than a stutter."""
         if not self.can_publish:
             raise VoiceError("this token cannot publish - the bot needs SPEAK in this channel")
         rtc = self.rtc
+        video_encoding = (
+            rtc.VideoEncoding(max_bitrate=video_max_bitrate, max_framerate=video_max_framerate)
+            if video_max_bitrate is not None or video_max_framerate is not None
+            else None
+        )
+        audio_encoding = rtc.AudioEncoding(max_bitrate=audio_max_bitrate) if audio_max_bitrate is not None else None
         video_source = rtc.VideoSource(width, height, is_screencast=True)
         video_track = rtc.LocalVideoTrack.create_video_track("screen", video_source)
         await self.room.local_participant.publish_track(
-            video_track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_SCREENSHARE)
+            video_track,
+            rtc.TrackPublishOptions(
+                source=rtc.TrackSource.SOURCE_SCREENSHARE, video_encoding=video_encoding,
+                degradation_preference=rtc.DegradationPreference.MAINTAIN_RESOLUTION,
+            ),
         )
         audio_source = rtc.AudioSource(sample_rate, num_channels)
         audio_track = rtc.LocalAudioTrack.create_audio_track("screen-audio", audio_source)
         await self.room.local_participant.publish_track(
-            audio_track, rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_SCREENSHARE_AUDIO)
+            audio_track,
+            rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_SCREENSHARE_AUDIO, audio_encoding=audio_encoding),
         )
         return video_source, audio_source
 
