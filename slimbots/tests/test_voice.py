@@ -60,7 +60,7 @@ def fake_rtc_module(room: FakeRoom) -> SimpleNamespace:
         VideoEncoding=lambda max_bitrate=None, max_framerate=None: SimpleNamespace(
             max_bitrate=max_bitrate, max_framerate=max_framerate,
         ),
-        AudioEncoding=lambda max_bitrate=None: SimpleNamespace(max_bitrate=max_bitrate),
+        # No AudioEncoding on purpose: real livekit (1.1.20) re-exports VideoEncoding but not AudioEncoding.
         DegradationPreference=FakeDegradationPreference,
         TrackPublishOptions=lambda source=None, video_encoding=None, audio_encoding=None, degradation_preference=None: SimpleNamespace(
             source=source, video_encoding=video_encoding, audio_encoding=audio_encoding,
@@ -119,9 +119,16 @@ def test_publish_screen_share_tags_both_tracks_with_the_screen_share_sources(mon
     asyncio.run(run())
 
 
+def _stub_proto_audio_encoding(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Real livekit resolves AudioEncoding from its proto module; CI has no livekit, so stand in for that import."""
+    proto = SimpleNamespace(AudioEncoding=lambda max_bitrate=None: SimpleNamespace(max_bitrate=max_bitrate))
+    monkeypatch.setattr(voice_module.importlib, "import_module", lambda name: proto)
+
+
 def test_publish_screen_share_sets_explicit_ceilings_when_given(monkeypatch: pytest.MonkeyPatch) -> None:
     bot, client, room = make_bot()
     monkeypatch.setattr(voice_module, "load_rtc", lambda: fake_rtc_module(room))
+    _stub_proto_audio_encoding(monkeypatch)
 
     async def run() -> None:
         session = await bot.voice.join("c1")
@@ -181,3 +188,19 @@ def test_load_rtc_raises_a_clear_voice_error_when_livekit_is_missing() -> None:
             voice_module.load_rtc()
     finally:
         importlib.import_module = original  # type: ignore[assignment]
+
+
+def test_audio_encoding_falls_back_to_the_proto_when_rtc_lacks_the_public_name(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Real livekit 1.1.20: VideoEncoding is on rtc, AudioEncoding only in the proto. The old code did rtc.AudioEncoding directly and broke !watch.
+    rtc = SimpleNamespace()
+    _stub_proto_audio_encoding(monkeypatch)
+    enc = voice_module._audio_encoding(rtc, 128_000)
+    assert enc.max_bitrate == 128_000
+
+
+def test_audio_encoding_prefers_the_public_name_when_present() -> None:
+    rtc = SimpleNamespace(AudioEncoding=lambda max_bitrate=None: SimpleNamespace(max_bitrate=max_bitrate))
+    enc = voice_module._audio_encoding(rtc, 96_000)
+    assert enc.max_bitrate == 96_000

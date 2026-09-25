@@ -15,6 +15,15 @@ if TYPE_CHECKING:
 HEARTBEAT_INTERVAL_SECONDS = 15.0
 
 
+def _audio_encoding(rtc: Any, max_bitrate: int) -> Any:
+    """A livekit `AudioEncoding` carrying `max_bitrate`.
+    livekit re-exports `VideoEncoding` on `rtc` but not `AudioEncoding` (1.1.20); prefer the public name, fall back to the proto it lives in."""
+    cls = getattr(rtc, "AudioEncoding", None)
+    if cls is None:
+        cls = importlib.import_module("livekit.rtc._proto.room_pb2").AudioEncoding
+    return cls(max_bitrate=max_bitrate)
+
+
 class VoiceError(Exception):
     """Raised when a channel has no voice configured, a join fails, or a session cannot publish."""
 
@@ -67,7 +76,9 @@ class VoiceSession:
             if video_max_bitrate is not None or video_max_framerate is not None
             else None
         )
-        audio_encoding = rtc.AudioEncoding(max_bitrate=audio_max_bitrate) if audio_max_bitrate is not None else None
+        audio_encoding = (
+            _audio_encoding(rtc, audio_max_bitrate) if audio_max_bitrate is not None else None
+        )
         video_source = rtc.VideoSource(width, height, is_screencast=True)
         video_track = rtc.LocalVideoTrack.create_video_track("screen", video_source)
         await self.room.local_participant.publish_track(
