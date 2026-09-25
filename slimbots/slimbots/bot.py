@@ -34,7 +34,7 @@ DEFAULT_CURSOR_DB = "slimbots-cursor.db"
 EventFrame = tuple[str, "type[Any] | None"]
 
 # Deployment-wide (or DM/user-scoped) frame types: (handler name, payload class or None for the raw frame).
-# See docs/framework.md on why there is no on_member_join.
+# member.joined is not here; see the on_member_join special case in _handle_frame below.
 _GLOBAL_EVENT_FRAMES: dict[str, EventFrame] = {
     "member.removed": ("on_member_removed", None),
     "member.restored": ("on_member_restored", None),
@@ -361,6 +361,13 @@ class Bot:
             return
         if kind == "voice.participant_left":
             self.voice._note_left(frame["channel_id"], frame["user_id"])
+            return
+        if kind == "member.joined":
+            # Special-cased, not a _GLOBAL_EVENT_FRAMES entry: on_member_join needs a resolved Member, which payload_cls(frame) cannot fetch.
+            user_id = frame.get("user_id")
+            member = await self._resolve_author(user_id) if user_id else None
+            if member is not None:
+                await guard_dispatch(self._dispatch_event, "on_member_join", member)
             return
         global_event = _GLOBAL_EVENT_FRAMES.get(kind)
         if global_event:
