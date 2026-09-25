@@ -113,11 +113,22 @@ class FakeAudioSource:
 class FakeVoice:
     """A fake `bot.voice`: `join()` hands back a `FakeVoiceSession` instead of a real LiveKit room."""
 
-    def __init__(self, *, can_publish: bool = True) -> None:
+    def __init__(
+        self, *, can_publish: bool = True, member_channels: dict[str, str] | None = None,
+        join_error: VoiceError | None = None,
+    ) -> None:
         self.can_publish = can_publish
         self.sessions: list[FakeVoiceSession] = []
+        self.member_channels = dict(member_channels or {})
+        self.join_error = join_error
 
     async def join(self, channel_id: str) -> FakeVoiceSession:
+        if self.join_error is not None:
+            raise self.join_error
         session = FakeVoiceSession(channel_id, can_publish=self.can_publish)
         self.sessions.append(session)
         return session
+
+    async def find_member(self, user_id: str) -> str | None:
+        """The channel id `member_channels` says `user_id` is in, or None - set it directly in a test."""
+        return self.member_channels.get(user_id)

@@ -26,10 +26,9 @@ def _set_active_session(session):
     _active_session = session
 
 
-async def _invoker_is_in_the_call(ctx):
-    roster = await ctx.bot.client.voice_roster(ctx.channel_id)
-    participant_ids = {p.get("user_id") for p in roster.get("participants", [])}
-    return ctx.author.id in participant_ids
+def _channel_name(bot, channel_id):
+    channel = bot.space.channels.get(channel_id)
+    return f"#{channel.name}" if channel is not None else channel_id
 
 
 async def _pick_result(ctx, items):
@@ -69,8 +68,9 @@ async def run_watch(ctx, query):
     except ValidationError as err:
         await ctx.reply(str(err))
         return
-    if not await _invoker_is_in_the_call(ctx):
-        await ctx.reply("join this channel's voice call first.")
+    voice_channel_id = await ctx.bot.voice.find_member(ctx.author.id)
+    if voice_channel_id is None:
+        await ctx.reply("join a voice channel first, then run `!watch` again.")
         return
     try:
         results = await asyncio.to_thread(jellyfin_core.search_items, query, jellyfin_core.MAX_SEARCH_RESULTS)
@@ -91,12 +91,17 @@ async def run_watch(ctx, query):
     if full_item is None:
         await ctx.reply("could not load that title from jellyfin.")
         return
+    voice_channel_name = _channel_name(ctx.bot, voice_channel_id)
     try:
-        voice_session = await ctx.bot.voice.join(ctx.channel_id)
+        voice_session = await ctx.bot.voice.join(voice_channel_id)
     except VoiceError as err:
-        await ctx.reply(f"could not join the call: {err}")
+        await ctx.reply(f"can't join {voice_channel_name}: {err}")
         return
-    session = WatchSession(ctx.bot, ctx.channel_id, full_item, ctx.author.id, voice_session)
+    if not voice_session.can_publish:
+        await voice_session.leave()
+        await ctx.reply(f"I can join {voice_channel_name} but can't speak there - I need SPEAK to stream video/audio.")
+        return
+    session = WatchSession(ctx.bot, ctx.channel_id, voice_channel_id, full_item, ctx.author.id, voice_session)
     try:
         await session.start()
     except (StreamError, VoiceError) as err:
@@ -104,7 +109,7 @@ async def run_watch(ctx, query):
         await ctx.reply(f"could not start streaming: {err}")
         return
     _set_active_session(session)
-    await ctx.reply(f"now watching **{session.title}** ({format_hms(session.duration_seconds)}).")
+    await ctx.reply(f"streaming **{session.title}** into {voice_channel_name} ({format_hms(session.duration_seconds)}).")
 
 
 async def run_pause(ctx):
@@ -224,5 +229,5 @@ def setup(bot):
     @bot.event
     async def on_voice_activity(event):
         session = _active_session
-        if session is not None and not session.finished and event.channel_id == session.channel_id:
+        if session is not None and not session.finished and event.channel_id == session.voice_channel_id:
             session.wake_monitor()

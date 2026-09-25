@@ -343,8 +343,8 @@ class Bot:
             print(f"unhandled error in command `{command.name}`: {err}", file=sys.stderr)
             await self._dispatch_event("on_command_error", ctx, err)
 
-    async def _handle_frame(self, frame):
-        kind = frame.get("type")
+    async def _handle_frame(self, frame: dict[str, Any]) -> None:
+        kind: str = frame.get("type") or ""
         await guard_dispatch(self._dispatch_event, "on_frame", frame)
         if kind == "message.created":
             channel_id = frame.get("channel_id")
@@ -354,6 +354,13 @@ class Bot:
             self._note_seq(channel_id, message.get("seq"))
             await guard_dispatch(self._dispatch_event, "on_raw_message", message)
             await guard_dispatch(self.process_message, message)
+            return
+        if kind == "voice.participant_joined":
+            # Never gated on self.channels - find_member() tracks every voice channel the bot can see.
+            self.voice._note_joined(frame["channel_id"], frame["user_id"])
+            return
+        if kind == "voice.participant_left":
+            self.voice._note_left(frame["channel_id"], frame["user_id"])
             return
         global_event = _GLOBAL_EVENT_FRAMES.get(kind)
         if global_event:

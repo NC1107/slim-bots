@@ -70,15 +70,21 @@ Jellyfin request.
 
 ## Watch party
 
-`!watch <title>` searches Jellyfin the same way `!jellyfin search` does,
-joins the invoker's voice channel through `bot.voice.join()` (`slimbots`;
-see `docs/framework.md`), and streams the result in as a screen share -
-the bot needs `CONNECT` and `SPEAK` in that channel, the same grants a
-human sharing their screen needs. Several matches prompt a numbered pick,
-answered the same way `ctx.confirm` waits for a reply. Only one watch
-party runs per deployment at a time.
+`!watch <title>` can be typed in any text channel this bot listens on - it
+searches Jellyfin the same way `!jellyfin search` does, finds *the
+invoker's own* voice channel with `bot.voice.find_member()` (`slimbots`;
+see `docs/framework.md`), and joins that one through `bot.voice.join()`
+to stream the result in as a screen share. The bot needs `CONNECT` and
+`SPEAK` in the invoker's channel, the same grants a human sharing their
+screen needs, and says which one is missing if either is absent. Several
+matches prompt a numbered pick, answered the same way `ctx.confirm` waits
+for a reply. Only one watch party runs per deployment at a time, and its
+control commands (`!pause`/`!resume`/`!seek`/`!np`/`!subs`/`!stop`) work
+from any channel this bot listens on, not just the one `!watch` was typed
+in.
 
-- `!watch <title>` - search, join, and start playing.
+- `!watch <title>` - find the invoker's voice channel, join it, and start
+  playing; confirms with "streaming **title** into #channel-name".
 - `!pause` / `!resume` - stops or resumes reading the decoded stream;
   ffmpeg blocks on its own full pipe buffer while paused, so it costs no
   CPU and resumes exactly where it left off.
@@ -92,7 +98,9 @@ party runs per deployment at a time.
 
 `!pause`/`!resume`/`!seek`/`!stop`/`!subs` are refused unless the caller
 either started the stream or holds `MANAGE_CHANNELS`. `!watch` itself
-refuses unless the invoker is already in that channel's voice roster.
+refuses with "join a voice channel first, then run `!watch` again" if the
+invoker is not in any call this bot can see - never "join this channel's
+voice call", since the channel `!watch` was typed in may not have one.
 
 The stream stops itself when the movie ends, or when the voice channel
 empties - checked on `on_voice_activity` when the LiveKit webhook (decision

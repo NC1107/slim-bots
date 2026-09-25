@@ -82,9 +82,10 @@ def parse_hms(text):
 class WatchSession:
     """One `!watch` playback: owns the ffmpeg pipeline, the LiveKit publish, and its own position/pause state."""
 
-    def __init__(self, bot, channel_id, item, started_by_id, voice_session):
+    def __init__(self, bot, text_channel_id, voice_channel_id, item, started_by_id, voice_session):
         self.bot = bot
-        self.channel_id = channel_id
+        self.text_channel_id = text_channel_id
+        self.voice_channel_id = voice_channel_id
         self.item = item
         self.item_id = item["Id"]
         self.title = item.get("Name") or "Unknown title"
@@ -124,7 +125,7 @@ class WatchSession:
             sample_rate=AUDIO_SAMPLE_RATE, num_channels=AUDIO_CHANNELS,
         )
         await self._start_pipeline(0.0)
-        self._monitor_task = self.bot.background(self._monitor_loop(), name=f"jellyfin-watch-monitor-{self.channel_id}")
+        self._monitor_task = self.bot.background(self._monitor_loop(), name=f"jellyfin-watch-monitor-{self.voice_channel_id}")
 
     async def _start_pipeline(self, start_seconds):
         self._tmpdir = tempfile.mkdtemp(prefix="slimm-jellyfin-")
@@ -183,7 +184,7 @@ class WatchSession:
         finally:
             handle.close()
             if ended_naturally:
-                self.bot.background(self._handle_finished(), name=f"jellyfin-finished-{self.channel_id}")
+                self.bot.background(self._handle_finished(), name=f"jellyfin-finished-{self.voice_channel_id}")
 
     async def _pump_audio(self, fifo_path):
         chunk_bytes = audio_chunk_bytes()
@@ -253,10 +254,10 @@ class WatchSession:
 
     async def _handle_finished(self):
         self.finished = True
-        channel_id, title = self.channel_id, self.title
+        text_channel_id, title = self.text_channel_id, self.title
         await self.stop(reason="finished", announce=False)
         with contextlib.suppress(Exception):
-            await self.bot.client.send(channel_id, f"finished playing **{title}**.")
+            await self.bot.client.send(text_channel_id, f"finished playing **{title}**.")
 
     async def stop(self, *, reason="stopped", announce=True):
         self.finished = True
@@ -267,7 +268,7 @@ class WatchSession:
         await self.voice_session.leave()
         if announce:
             with contextlib.suppress(Exception):
-                await self.bot.client.send(self.channel_id, f"stopped **{self.title}** ({reason}).")
+                await self.bot.client.send(self.text_channel_id, f"stopped **{self.title}** ({reason}).")
 
     async def _monitor_loop(self):
         while True:
@@ -276,7 +277,7 @@ class WatchSession:
             self._wake_monitor.clear()
             if self.finished:
                 return
-            roster = await self.bot.client.voice_roster(self.channel_id)
+            roster = await self.bot.client.voice_roster(self.voice_channel_id)
             others = [p for p in roster.get("participants", []) if p.get("user_id") != self.bot.me_id]
             if not others:
                 await self.stop(reason="the call is empty")
