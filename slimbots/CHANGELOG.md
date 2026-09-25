@@ -3,6 +3,14 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.4.3
+
+`VoiceSession.publish_screen_share` now takes optional encoding ceilings, so a bot that publishes video is no longer stuck with the library default's ~1200 kbps floor and no ceiling.
+
+- New `video_max_bitrate`, `video_max_framerate` and `audio_max_bitrate` kwargs, each `None` by default so existing callers are unchanged; when set they reach the LiveKit track as `VideoEncoding` / `AudioEncoding`.
+- `bot-jellyfin`'s watch party uses them to match the WebRTC ceiling to Jellyfin's own transcode rather than letting the decent transcode be re-encoded back down, and to give continuous movie audio a 128 kbps stereo default instead of the unset speech-call tuning.
+- `FakeVoiceSession` records the new kwargs, so a bot's tests can assert what it asked for.
+
 ## 0.4.2
 
 A prod bug: `!watch iron man` gave the numbered picker, a reply within seconds still timed out 60s later with "timed out - `!watch` again to retry".
