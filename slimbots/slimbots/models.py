@@ -54,6 +54,8 @@ class Channel:
         self.kind = data.get("kind", "text")
         self.topic = data.get("topic")
         self.category_id = data.get("category_id")
+        # True when @everyone lacks VIEW_CHANNEL here - present only on listChannels rows.
+        self.restricted = bool(data.get("restricted", False))
 
     def __repr__(self) -> str:
         return f"Channel(id={self.id!r}, name={self.name!r})"
@@ -107,8 +109,15 @@ class Message:
         self.seq = data.get("seq")
         self.content = data.get("content")
         self.author_id = data.get("author_id")
+        self.author_display_name = data.get("author_display_name")
+        self.attachments: list[dict[str, Any]] = list(data.get("attachments") or [])
         self._client = client
         self._raw = data
+
+    @classmethod
+    async def fetch(cls, client: AsyncClient, channel_id: str, message_id: str) -> Message:
+        """One message by id, even one this bot never saw live - see `AsyncClient.get_message`."""
+        return await client.get_message(channel_id, message_id)
 
     async def edit(self, content: str) -> Message:
         """Edits this message; allowed for the author, or a member with MANAGE_MESSAGES."""
