@@ -3,6 +3,13 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.4.4
+
+A prod bug: `!watch` failed with `module 'livekit.rtc' has no attribute 'AudioEncoding'`. 0.4.3's audio-bitrate ceiling called `rtc.AudioEncoding(...)`, but real livekit (1.1.20) re-exports `VideoEncoding` on `rtc` and not `AudioEncoding` - it lives only in the proto. The test fake had defined an `AudioEncoding` the real library does not, so the suite was green while every watch party threw.
+
+- `publish_screen_share` now resolves `AudioEncoding` via the public name when present and falls back to `livekit.rtc._proto.room_pb2.AudioEncoding` otherwise; video was already correct.
+- The `fake_rtc_module` no longer provides `AudioEncoding`, matching the real surface, and a new test drives the fallback branch so the old `rtc.AudioEncoding` shape cannot come back green.
+
 ## 0.4.3
 
 `VoiceSession.publish_screen_share` now takes optional encoding ceilings, so a bot that publishes video is no longer stuck with the library default's ~1200 kbps floor and no ceiling.
