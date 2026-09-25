@@ -25,6 +25,7 @@ deliberate; see `bot-ping`'s own README before "fixing" it.
 | Directory | What it is for |
 | --- | --- |
 | [`bot-ping`](bot-ping/) | The smallest thing that connects and answers. Start here. |
+| [`bot-greeter`](bot-greeter/) | Posts a welcome message when someone joins, the worked example for `on_member_join`. |
 | [`bot-reminders`](bot-reminders/) | Durable state, recurring reminders, timezones, and a persisted cursor. |
 | [`bot-roles`](bot-roles/) | Self-service roles driven by a command, with a real permission-gap diagnosis. |
 | [`bot-canvas-board`](bot-canvas-board/) | Driving the Voice Canvas from outside the app. |

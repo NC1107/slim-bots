@@ -114,6 +114,36 @@ async def test_call_ringing_is_global_so_a_dm_channel_never_needs_to_be_in_chann
     assert seen[0].caller_id == "u1"
 
 
+async def test_member_joined_resolves_and_dispatches_a_live_member(bot, client):
+    seen = []
+
+    @bot.event
+    async def on_member_join(member):
+        seen.append(member)
+
+    client.respond("GET", "/users/u-new", {
+        "id": "u-new", "username": "newbie", "display_name": "Newbie",
+    })
+    await bot._handle_frame({"type": "member.joined", "user_id": "u-new"})
+    assert len(seen) == 1
+    assert seen[0].id == "u-new"
+    assert seen[0].display_name == "Newbie"
+
+
+async def test_member_joined_for_an_unresolvable_id_dispatches_nothing(bot, client):
+    from slimbots.http import ApiError
+
+    seen = []
+
+    @bot.event
+    async def on_member_join(member):
+        seen.append(member)
+
+    client.respond("GET", "/users/ghost", ApiError(404, "not found"))
+    await bot._handle_frame({"type": "member.joined", "user_id": "ghost"})
+    assert seen == []
+
+
 async def test_every_documented_frame_kind_has_a_registered_handler_name():
     from slimbots.bot import _CHANNEL_EVENT_FRAMES, _GLOBAL_EVENT_FRAMES
 
