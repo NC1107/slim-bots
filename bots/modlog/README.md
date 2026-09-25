@@ -1,9 +1,9 @@
-# bot-modlog
+# modlog
 
 A slim-m bot that mirrors moderation actions into a channel: timeouts,
 kicks, restores, role grants, role revokes, and role definition changes.
 
-Built on the `slimbots` `Bot` framework - see `../docs/framework.md`. The
+Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`. The
 five moderation events map onto `@bot.event` handlers (`on_member_timeout`,
 `on_member_removed`, `on_member_restored`, `on_member_role_changed`,
 `on_role_changed`) instead of a manual frame-type dispatch, `!modlog` is
@@ -99,7 +99,7 @@ the five watched types) to the moment the new connection is confirmed live -
 a decent estimate, never exact, since nothing on the wire says precisely
 when the drop happened.
 
-This is different from `bot-reminders/`'s reconnect story. There, a
+This is different from `bots/reminders/`'s reconnect story. There, a
 dropped socket is invisible to the *bot* precisely because `seq` and
 `/sync` make it invisible - the feature never notices. Here it is invisible
 to the bot too, but there is no later event that could ever fill the hole
@@ -166,5 +166,5 @@ Every log line's `content` is still the plain-text sentence a reader can
 skim; a real `Embed` (footer only, naming the event kind, e.g.
 `member.removed`) rides alongside it, for a client that wants to group or
 filter the feed by kind without parsing the sentence. See
-`../docs/framework.md`'s embeds section for the fallback an older server
+`../../docs/framework.md`'s embeds section for the fallback an older server
 gets instead.
