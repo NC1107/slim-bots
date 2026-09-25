@@ -1,15 +1,15 @@
-"""A ported bot's config and command triggers are the framework's job now, not `os`/`re`; bot-ping stays library-free."""
+"""A ported bot's config and command triggers are the framework's job now, not `os`/`re`; bots/ping stays library-free."""
 
 import ast
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXEMPT_BOTS = {"bot-ping"}
+EXEMPT_BOTS = {"ping"}
 BANNED_MODULES = {"os", "re"}
 
 
 def _bot_files():
-    for path in sorted(REPO_ROOT.glob("bot-*/bot.py")):
+    for path in sorted(REPO_ROOT.glob("bots/*/bot.py")):
         if path.parent.name not in EXEMPT_BOTS:
             yield path
 

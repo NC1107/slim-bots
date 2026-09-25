@@ -1,4 +1,4 @@
-# bot-canvas-board
+# canvas-board
 
 A slim-m bot that keeps a todo board on a voice channel's Voice Canvas:
 `!board add <text>` places a sticky note, `!board done <n>` removes it,
@@ -6,7 +6,7 @@ A slim-m bot that keeps a todo board on a voice channel's Voice Canvas:
 wipes the whole board, and `!board` (or `!board list`) shows what is up
 and which canvas it is drawing on, crediting whoever added each note.
 
-Built on the `slimbots` `Bot` framework - see `../docs/framework.md`. The
+Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`. The
 Voice Canvas calls go through the `Canvas` model
 (`canvas.place`/`move`/`remove`/`viewport`) instead of building the
 `canvas/objects`/`canvas/ops` request bodies by hand, and the three canvas

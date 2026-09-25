@@ -1,6 +1,6 @@
-# bot-casino
+# casino
 
-A slim-m bot with a per-person chip balance, two games, transfers, and a leaderboard - the reference port onto the `slimbots` `Bot` framework (see `../docs/framework.md`).
+A slim-m bot with a per-person chip balance, two games, transfers, and a leaderboard - the reference port onto the `slimbots` `Bot` framework (see `../../docs/framework.md`).
 
 ```bash
 pip install -r requirements.txt
@@ -134,4 +134,4 @@ Every balance is keyed on `member.storage_key` (the stable slim-m user id), neve
 
 `!balance` and every blackjack round's final result (a natural, a bust, a stand, a settled multi-hand round) send a real `Embed` - title, description, and a footer with the running balance.
 Everything else (`!daily`, `!give`, `!flip`, `!leaderboard`, and the mid-hand `!hit`/`!stand`/`!double`/`!split` prompts) stays plain text, since those are short one-liners an embed would not improve.
-See `../docs/framework.md`'s embeds section for the fallback an older server gets instead.
+See `../../docs/framework.md`'s embeds section for the fallback an older server gets instead.

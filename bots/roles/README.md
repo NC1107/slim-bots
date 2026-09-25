@@ -1,4 +1,4 @@
-# bot-roles
+# roles
 
 A slim-m bot: `!role <name>` to grab a self-service role, `!role remove
 <name>` to drop it, `!role mine` to see what you hold, `!roles` to see
@@ -6,7 +6,7 @@ what is on offer, `!roles status` to diagnose what this bot can currently
 grant. At startup it also posts (or updates) that same listing in its
 channel.
 
-Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
+Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`.
 `@bot.command` replaces the old regex trigger wall, role
 grants/revokes go through `bot.space.grant_role`/`revoke_role` rather
 than a raw HTTP call, and `Bot` itself reads `SLIMM_URL`/`SLIMM_BOT_TOKEN`/
@@ -93,7 +93,7 @@ skipping that check would have it react to its own listing message forever.
   needs its own sqlite file. A role grant needs nothing of its own: it is
   acted on immediately, and if the bot is offline when it arrives, the
   member's cost is typing it again once `Bot`'s own cursor catches the
-  command up on reconnect - see `../docs/framework.md`. The listing
+  command up on reconnect - see `../../docs/framework.md`. The listing
   message's id is derived deterministically from the channel id (a
   UUIDv5), so even that needs nothing bot-specific persisted.
 - **Re-granting a role a moderator took away by hand.** This bot only ever

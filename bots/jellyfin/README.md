@@ -1,4 +1,4 @@
-# bot-jellyfin
+# jellyfin
 
 A slim-m bot that watches a Jellyfin server and posts to a channel when
 something new is added (a movie, a batch of episodes, an album), answers
@@ -15,7 +15,7 @@ JELLYFIN_API_KEY=... \
 python3 bot.py
 ```
 
-Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
+Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`.
 `Bot` owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS` and the seq
 cursor for the `!jellyfin` command surface; every `JELLYFIN_*` variable is
 read through `bot.setting()` (two of them, `JELLYFIN_URL`/`JELLYFIN_API_KEY`,
@@ -185,7 +185,7 @@ episode/album summary) and its poster as a slim-m attachment, unchanged. A
 small `Embed` (title and description, no image - the poster stays an
 attachment, since an embed's image is a URL the server fetches itself, not
 an already-uploaded attachment) now rides alongside it. See
-`../docs/framework.md`'s embeds section for the fallback an older server
+`../../docs/framework.md`'s embeds section for the fallback an older server
 gets instead.
 
 ## What was and was not verified in this port

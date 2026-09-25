@@ -2,7 +2,7 @@
 
 `slimbots` 0.3 is a discord.py-shaped framework, not just transport plumbing.
 This is where the how-and-why lives, so docstrings in the code can stay one or two lines.
-Read `bot-casino/` for a real bot built on it.
+Read `bots/casino/` for a real bot built on it.
 
 ## Why the reversal
 
@@ -145,7 +145,7 @@ A bot with `channels` set gets a persisted, cross-restart `seq` cursor for free,
 `migrate` is a plain `def migrate(conn): ...` run once, off the event loop, right after the connection opens - `init_db` in every bot that already had one.
 
 The functions passed to `run()` are unchanged from before this - `get_balance(conn, user_id)`, `due_reminders(conn, now)`, and so on all still take a raw `sqlite3.Connection` and run synchronously; `run()` just moves *where* that call happens.
-That is why `bot-casino/test_concurrency.py` did not need to change at all: it drives those same functions directly against its own real connections on real threads, never through `Bot` or `Store`.
+That is why `bots/casino/test_concurrency.py` did not need to change at all: it drives those same functions directly against its own real connections on real threads, never through `Bot` or `Store`.
 A background sweep that already ran on its own thread (`bot-jellyfin`'s poster refresh used to reach for `asyncio.to_thread` by hand) can just call `bot.store.connection` directly instead, since it was never blocking the event loop in the first place.
 
 ## Migrating an existing table
@@ -156,7 +156,7 @@ Call it after the `CREATE TABLE IF NOT EXISTS` for that table, inside the same `
 
 `ensure_columns` cannot widen a `PRIMARY KEY` - SQLite's `ALTER TABLE` has no way to change one on an existing table, only add nullable-or-defaulted columns to it.
 A column that needs to join the primary key (`bot-casino`'s `hands.hand_index`, added alongside real multi-hand support) needs the table rebuilt instead: rename the old table, create the new one, `INSERT INTO ... SELECT` the old rows across with a value for the new key column, drop the old table.
-`bot-casino/blackjack.py`'s `_migrate_legacy_hands_table` is the worked example - it only runs when the table exists without `hand_index`, so it is a one-time rebuild, not something every `init_table` call redoes.
+`bots/casino/blackjack.py`'s `_migrate_legacy_hands_table` is the worked example - it only runs when the table exists without `hand_index`, so it is a one-time rebuild, not something every `init_table` call redoes.
 
 ## Async HTTP
 
@@ -243,9 +243,9 @@ If the server rejects the request with `embeds` present (an older deployment), `
 
 `slimbots.testing.FakeAsyncClient` never touches the network: pre-stubbed `/me`/`/channels`/`/members`/`/roles`, `respond(method, path, response_or_exception)` to stub anything else, and an unstubbed call fails loud rather than hanging.
 Drive a `Bot` directly with `await bot.process_message({...})` to exercise argument conversion, cooldowns, permission gating, and the bot-ignore default with no deployment; `await bot._handle_frame({...})` reaches an `@bot.event` handler the same way.
-A `wait_for`/`ctx.confirm` round trip needs `_handle_frame`, not `process_message` directly, since only `_handle_frame` schedules the command as its own background task the way the real gateway loop does; call it sequentially for each frame (command, then reply) with a short `await asyncio.sleep(0.01)` between them so the spawned task gets a turn to start and register its listener before the next frame arrives - `slimbots/tests/test_frame_loop_does_not_block_on_wait_for.py` and `bot-canvas-board/test_bot.py`'s `!board clear` tests are the worked examples.
+A `wait_for`/`ctx.confirm` round trip needs `_handle_frame`, not `process_message` directly, since only `_handle_frame` schedules the command as its own background task the way the real gateway loop does; call it sequentially for each frame (command, then reply) with a short `await asyncio.sleep(0.01)` between them so the spawned task gets a turn to start and register its listener before the next frame arrives - `slimbots/tests/test_frame_loop_does_not_block_on_wait_for.py` and `bots/canvas-board/test_bot.py`'s `!board clear` tests are the worked examples.
 `slimbots.testing.FakeVoice`/`FakeVoiceSession` stand in for `bot.voice`: `bot.voice = FakeVoice()`, then `await bot.voice.join(...)` hands back a session that records `publish_screen_share`'s arguments and whether `leave()` was called - no LiveKit package or network involved, which is also why CI never installs `livekit` (`bot-jellyfin`'s `test_bot.py` and `slimbots/tests/test_voice.py` are the worked examples).
-It is not a mock of slim-m's own validation or concurrency - `bot-casino/test_concurrency.py` is what proves money-safety, with a real sqlite connection and real threads.
+It is not a mock of slim-m's own validation or concurrency - `bots/casino/test_concurrency.py` is what proves money-safety, with a real sqlite connection and real threads.
 
 ## Types
 

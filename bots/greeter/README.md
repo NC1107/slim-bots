@@ -1,9 +1,9 @@
-# bot-greeter
+# greeter
 
 A slim-m bot: posts a configurable welcome message when somebody joins the
 Space - the worked example for `on_member_join`.
 
-Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
+Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`.
 `on_member_join(member)` is one `@bot.event` handler instead of a manual
 frame-type dispatch, and `Bot` itself owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/
 `SLIMM_CHANNELS` - this script never imports `os`, reading `GREETER_MESSAGE`
@@ -35,7 +35,7 @@ the one this bot posts into. It needs only `VIEW_CHANNEL` and
 
 `Embed(title=, description=)` carries the same message a plain-text client
 already sees in `content`, so nothing is lost for an older client - see
-`../docs/framework.md`'s embeds section for the fallback path. A future
+`../../docs/framework.md`'s embeds section for the fallback path. A future
 version could add the new member's avatar or join count once slim-m's
 embed schema (decision 0030) grows an image field a bot can point at one.
 

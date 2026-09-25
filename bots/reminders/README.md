@@ -1,4 +1,4 @@
-# bot-reminders
+# reminders
 
 A slim-m bot: `!remind in 2h <text>`, `!remind at 15:30 <text>`,
 `!remind every monday [at 09:00] <text>` or `!remind every 2h <text>`
@@ -6,7 +6,7 @@ for a recurring one, and `!reminders` to list, or `cancel`/`edit`/`snooze`
 your own by its listed number. `!timezone <IANA name>` sets the zone
 `at`/`every ... at` and the listing are shown in.
 
-Built on the `slimbots` `Bot` framework - see `../docs/framework.md`.
+Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`.
 `Bot` owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS`, the seq cursor,
 and `bot.data_path` (from `SLIMM_DB_PATH`, defaulting to `reminders.db`);
 this script only opens its own tables there. `!remind` and `!reminders`
@@ -69,7 +69,7 @@ DST-safe weekly recomputation via `zoneinfo`.
 
 A delivered reminder carries a small `Embed` (title "Reminder", a footer
 naming the recurrence if any) alongside its existing backtick-quoted plain
-text. See `../docs/framework.md`'s embeds section for the fallback an
+text. See `../../docs/framework.md`'s embeds section for the fallback an
 older server gets instead.
 
 ## What this deliberately does not do

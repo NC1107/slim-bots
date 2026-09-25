@@ -64,10 +64,10 @@ jobs:
         # test_concurrency.py is deliberately excluded here - it has its own dedicated job below.
         run: |
           set -e
-          for dir in bot-*/; do
+          for dir in bots/*/; do
             bot="${dir%/}"
             if [ ! -f "$bot/test_bot.py" ]; then
-              echo "skipping $bot: no test_bot.py (not on the Bot framework yet, or bot-ping, which stays library-free)"
+              echo "skipping $bot: no test_bot.py (not on the Bot framework yet, or bots/ping, which stays library-free)"
               continue
             fi
             echo "::group::$bot"
@@ -88,8 +88,8 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install bot-casino's shared runtime dependencies (hash-locked, wheel-only)
+      - name: Install casino's shared runtime dependencies (hash-locked, wheel-only)
         run: "python -m pip install --only-binary=:all: --require-hashes -r bot-templates-requirements.lock.txt"
-      - name: Run bot-casino's real-thread, real-sqlite concurrency suite
-        working-directory: bot-casino
+      - name: Run casino's real-thread, real-sqlite concurrency suite
+        working-directory: bots/casino
         run: python test_concurrency.py
