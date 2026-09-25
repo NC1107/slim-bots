@@ -91,7 +91,7 @@ Each of these hands the handler a small typed object from `slimbots/events.py` (
 `bot._handle_frame`'s own dispatch tables (`_GLOBAL_EVENT_FRAMES`/`_CHANNEL_EVENT_FRAMES`) now map a frame kind to `(handler_name, payload_class)`; `payload_class` of `None` means "pass the raw frame", which is how the eight originals stay backward compatible.
 
 Global versus channel-scoped follows the same test as before: an event about a channel's own activity (a message edit, a reaction, typing, canvas ops) is channel-scoped, gated the same way `message.created` is; an event about something that is not naturally inside one of a bot's watched channels - a member's presence, a channel being created in the first place, a DM call ring - is global, ungated by `channels`.
-`Message.fetch()` (a single-message GET) and `on_voice_*` join/leave/screen-share events are deliberately not here yet: slim-m has neither route nor frame for them at the time of writing. Add them once those land server-side rather than guessing the shape now.
+`AsyncClient.get_message(channel_id, message_id)` / `Message.fetch(client, channel_id, message_id)` fetch one message by id straight from `GET /channels/{channel}/messages/{message}` - enriched exactly like a page from `list`, and usable for a message a bot never saw live (a `reactions.changed` frame naming an id from before the bot started, for example). `on_voice_*` join/leave/screen-share events are still not exposed as `@bot.event` handlers: `voice.participant_joined`/`voice.participant_left` only feed `bot.voice.find_member`'s internal cache today. Add typed events for them once a bot actually needs them, rather than guessing the shape now.
 
 ## The Canvas model
 

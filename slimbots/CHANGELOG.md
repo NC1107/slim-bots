@@ -3,6 +3,15 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.4.3
+
+`bot-starboard`'s highlight-crediting needed a message a bot never saw live (a `reactions.changed` frame can name an id from before the bot started) and its attachments/author name, neither of which the library exposed.
+
+- `AsyncClient.get_message(channel_id, message_id)` and `Message.fetch(client, channel_id, message_id)`: `GET /channels/{channel}/messages/{message}`, enriched exactly like a page from `list` - the gap `docs/framework.md`'s typed-events section flagged as not yet possible.
+- `Message` now carries `.attachments` and `.author_display_name`, read straight off the wire `MessageDto` like `.content`/`.author_id` already were.
+- `Channel` now carries `.restricted` (whether `@everyone` lacks `VIEW_CHANNEL` there), present on `listChannels` rows since slim-m added it - `bot-starboard` uses it to refuse mirroring a restricted channel's content into an unrestricted one.
+- New bot template: `bot-starboard` - highlights a message into a chosen channel once it crosses a reaction threshold, keeps the count current, follows an edit or delete of the original, and never mirrors a bot/webhook's own post or a channel `@everyone` cannot already see. An optional weekly digest of the week's top highlights runs off `bot.background`.
+
 ## 0.4.2
 
 A prod bug: `!watch iron man` gave the numbered picker, a reply within seconds still timed out 60s later with "timed out - `!watch` again to retry".

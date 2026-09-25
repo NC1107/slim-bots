@@ -93,6 +93,34 @@ async def test_upload_attachment_returns_something_send_accepts():
     assert message.id == "m2"
 
 
+async def test_get_message_fetches_one_message_by_id():
+    client = FakeAsyncClient()
+    client.respond(
+        "GET", "/channels/c1/messages/m1",
+        {"id": "m1", "content": "hi", "author_id": "u1", "author_display_name": "Nick", "attachments": []},
+    )
+    message = await client.get_message("c1", "m1")
+    assert isinstance(message, Message)
+    assert message.id == "m1"
+    assert message.channel_id == "c1"
+    assert message.author_display_name == "Nick"
+
+
+async def test_message_fetch_classmethod_delegates_to_the_client():
+    client = FakeAsyncClient()
+    client.respond("GET", "/channels/c1/messages/m1", {"id": "m1", "content": "hi"})
+    message = await Message.fetch(client, "c1", "m1")
+    assert message.id == "m1"
+    assert message.content == "hi"
+
+
+async def test_message_carries_attachments_off_the_wire():
+    message = Message(
+        {"id": "m1", "attachments": [{"id": "a1", "content_type": "image/png"}]}, client=None, channel_id="c1",
+    )
+    assert message.attachments == [{"id": "a1", "content_type": "image/png"}]
+
+
 async def test_dm_helpers_wrap_the_right_routes():
     client = FakeAsyncClient()
     client.respond("GET", "/dms", [{"channel_id": "dm1", "user": {"id": "u2"}, "unread": 3, "created_at": 1}])

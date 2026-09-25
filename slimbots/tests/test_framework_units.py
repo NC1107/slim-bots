@@ -173,3 +173,10 @@ async def test_bad_argument_message_names_the_field():
     with pytest.raises(BadArgument) as excinfo:
         await cmd.convert_args(ctx, "notanumber")
     assert "amount" in str(excinfo.value)
+
+
+def test_channel_restricted_reflects_whether_everyone_can_view_it():
+    from slimbots.models import Channel
+
+    assert Channel({"id": "c1", "name": "general", "restricted": True}).restricted is True
+    assert Channel({"id": "c2", "name": "general"}).restricted is False

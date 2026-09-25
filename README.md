@@ -31,6 +31,7 @@ deliberate; see `bot-ping`'s own README before "fixing" it.
 | [`bot-modlog`](bot-modlog/) | Watching moderation events, and what is missing when one is dropped. |
 | [`bot-jellyfin`](bot-jellyfin/) | Polling an outside service (Jellyfin) instead of slim-m's own events, batching a library scan into one message instead of forty, and answering `!jellyfin search`/`recent`. |
 | [`bot-casino`](bot-casino/) | A currency bot: daily chips, blackjack (double, split, surrender), coinflip, transfers, a leaderboard, and money kept safe under real concurrency. |
+| [`bot-starboard`](bot-starboard/) | Mirrors a well-reacted message into a highlights channel, keeps it current on edits and deletes, and refuses to leak a private channel's content into a more open one. |
 
 Every template's README says what it deliberately does not do. That section is
 usually the more useful half.
