@@ -119,15 +119,17 @@ def test_move_refuses_a_taken_slot():
 
 
 def test_clear_asks_for_confirmation_and_a_no_reply_cancels():
+    """process_message runs as its own task now, so plain sequential _handle_frame calls work here -
+    no more manual task-wrapping to dodge the wait_for/confirm deadlock a blocking frame loop used to have."""
     client = setup()
     board.bot.store.connection.execute("INSERT INTO items (id, slot, text, seq, active, added_by) VALUES ('o1', 0, 'a', 1, 1, 'u1')")
     board.bot.store.connection.commit()
 
     async def run():
-        clear_task = asyncio.ensure_future(board.bot._handle_frame(frame("!board clear", "m1")))
+        await board.bot._handle_frame(frame("!board clear", "m1"))
         await asyncio.sleep(0.01)
         await board.bot._handle_frame(frame("no", "m2"))
-        await clear_task
+        await asyncio.sleep(0.01)
 
     asyncio.run(run())
     assert "This removes all 1 item(s)" in client.sent[-2]["content"]
@@ -142,10 +144,10 @@ def test_clear_yes_reply_removes_everything():
     board.bot.store.connection.commit()
 
     async def run():
-        clear_task = asyncio.ensure_future(board.bot._handle_frame(frame("!board clear", "m1")))
+        await board.bot._handle_frame(frame("!board clear", "m1"))
         await asyncio.sleep(0.01)
         await board.bot._handle_frame(frame("yes", "m2"))
-        await clear_task
+        await asyncio.sleep(0.01)
 
     asyncio.run(run())
     assert "cleared 1 item(s)" in client.sent[-1]["content"]
