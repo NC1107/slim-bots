@@ -115,12 +115,25 @@ raw I420 frames letterboxed to `JELLYFIN_STREAM_WIDTH`x`JELLYFIN_STREAM_HEIGHT`
 and PCM audio, published through `bot.voice`'s `SOURCE_SCREENSHARE`/
 `SOURCE_SCREENSHARE_AUDIO` tracks - see `stream_session.py`.
 
+Those raw frames are then re-encoded a second time by LiveKit's own
+WebRTC publish, which used to get no explicit bitrate/framerate ceiling
+at all - only the SDK's own default for an unset `VideoEncoding`/
+`AudioEncoding`, well below what Jellyfin had already been asked to
+transcode at. `JELLYFIN_STREAM_WEBRTC_MAX_BITRATE` and
+`JELLYFIN_STREAM_AUDIO_MAX_BITRATE` close that gap; see
+`../../docs/framework.md`'s voice section and `bot.voice`'s own
+`publish_screen_share` for what they set. Resolution and frame rate are
+left at their existing defaults on purpose - CPU cost, not bitrate, is
+what actually limits going past 720p; see below.
+
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `JELLYFIN_STREAM_WIDTH` | `1280` | The published video width; Jellyfin's own aspect ratio is letterboxed into this. |
 | `JELLYFIN_STREAM_HEIGHT` | `720` | The published video height. |
 | `JELLYFIN_STREAM_FPS` | `30` | The published frame rate. |
 | `JELLYFIN_STREAM_MAX_BITRATE` | `8000000` | The `VideoBitrate` Jellyfin is asked to transcode at, in bits/second. |
+| `JELLYFIN_STREAM_WEBRTC_MAX_BITRATE` | `JELLYFIN_STREAM_MAX_BITRATE` | The ceiling on LiveKit's own re-encode of the decoded frames, in bits/second. Defaults to whatever `JELLYFIN_STREAM_MAX_BITRATE` resolves to, so raising one without the other no longer throws away the extra quality. |
+| `JELLYFIN_STREAM_AUDIO_MAX_BITRATE` | `128000` | The ceiling on LiveKit's Opus re-encode of the decoded PCM audio, in bits/second. The unset default is speech-call-tuned and noticeably worse for movie audio. |
 
 ## Other settings
 
@@ -240,6 +253,42 @@ server, two real headless-Chrome web clients) and a real local Jellyfin
   file carried no subtitle stream), and a deployment where the invoker is
   in a *different* voice channel than the one named (refused by code
   inspection and the unit tests, not by a live attempt).
+
+## Stream quality: what changed and what is only reasoned
+
+`JELLYFIN_STREAM_WEBRTC_MAX_BITRATE`/`JELLYFIN_STREAM_AUDIO_MAX_BITRATE`
+were added by reading `slimbots.voice`'s `publish_screen_share` and the
+`livekit` client library's own docstrings and protobuf field comments,
+not by measuring a stream before and after: nothing here re-ran the live
+e2e stack above with a bandwidth or quality probe attached.
+
+- Confirmed by source reading, not measurement: `TrackPublishOptions`
+  never got a `video_encoding`/`audio_encoding` before this change, so
+  LiveKit's own encoder picked whatever an unset ceiling means for a
+  `SOURCE_SCREENSHARE` track - not the same 8 Mbps already spent getting
+  the source out of Jellyfin. Matching the WebRTC ceiling to
+  `JELLYFIN_STREAM_MAX_BITRATE` by default stops that gap from being the
+  bottleneck for the same reason a low-bitrate transcode would be one:
+  a later encoder cannot invent detail an earlier one already threw away,
+  and until now it did not even get the chance to keep what was there.
+- Resolution and frame rate are unchanged on purpose. The CPU numbers a
+  few lines above are this repo's own prior measurement, not a new one -
+  LiveKit's software encode alone went from ~20% of a core at 720p to
+  ~87% at 1080p on that hardware. Raising the ceiling costs nothing
+  extra there; raising the resolution risked exactly the kind of
+  stutter this change is trying to avoid, on hardware nobody re-profiled
+  for this PR.
+- `degradation_preference` is set explicitly to `MAINTAIN_RESOLUTION`,
+  matching what the protobuf field's own comment says is already the
+  unset default, and what `is_screencast=True` already biases the
+  encoder toward. A movie is mostly static shots and dialogue - losing
+  a few frames under congestion reads far better than the whole frame
+  going blurry or blocky.
+- Simulcast stays off. It exists to give differently-bandwidth-limited
+  subscribers different quality tiers from one publish; a LAN watch
+  party has no such subscribers, so a second/third encode layer would
+  only spend CPU nobody needs. Dynacast (pausing unwatched simulcast
+  layers) does not apply with simulcast off.
 
 ## What this deliberately does not do
 

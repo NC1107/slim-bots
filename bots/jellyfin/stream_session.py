@@ -123,6 +123,9 @@ class WatchSession:
         self._video_source, self._audio_source = await self.voice_session.publish_screen_share(
             width=jellyfin_core.JELLYFIN_STREAM_WIDTH, height=jellyfin_core.JELLYFIN_STREAM_HEIGHT,
             sample_rate=AUDIO_SAMPLE_RATE, num_channels=AUDIO_CHANNELS,
+            video_max_bitrate=jellyfin_core.JELLYFIN_STREAM_WEBRTC_MAX_BITRATE,
+            video_max_framerate=float(jellyfin_core.JELLYFIN_STREAM_FPS),
+            audio_max_bitrate=jellyfin_core.JELLYFIN_STREAM_AUDIO_MAX_BITRATE,
         )
         await self._start_pipeline(0.0)
         self._monitor_task = self.bot.background(self._monitor_loop(), name=f"jellyfin-watch-monitor-{self.voice_channel_id}")
