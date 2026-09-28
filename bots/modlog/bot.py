@@ -43,7 +43,7 @@ _role_names = {}
 # Wall-clock time this bot last knew for certain it was connected - None until the first successful connect.
 _last_seen_at = None
 # The gap notice that is still the newest post in the channel, as [message_id, notices_so_far, total_downtime].
-_open_gap_notice = None
+_open_gap_notice: "list | None" = None
 
 
 def format_duration(seconds):
@@ -106,6 +106,8 @@ def gap_notice_text(count, downtime):
 async def report_reconnect_gap():
     """Records downtime since the last frame seen; posts a notice only for a long gap, editing the previous notice if nothing was posted since."""
     global _last_seen_at, _open_gap_notice
+    assert bot.client is not None and bot.channel is not None, "report_reconnect_gap runs only once connected"
+    client, channel = bot.client, bot.channel
     if _last_seen_at is None:
         return
     downtime = int(time.time() - _last_seen_at)
@@ -118,7 +120,7 @@ async def report_reconnect_gap():
         message_id, count, total = _open_gap_notice
         count, total = count + 1, total + downtime
         try:
-            await bot.client.edit_message(bot.channel, message_id, gap_notice_text(count, total))
+            await client.edit_message(channel, message_id, gap_notice_text(count, total))
         except ApiError:
             _open_gap_notice = None
         else:
@@ -126,7 +128,7 @@ async def report_reconnect_gap():
             return
     text = gap_notice_text(1, downtime)
     message_id = str(uuid.uuid4())
-    await bot.client.send(bot.channel, text, message_id=message_id)
+    await client.send(channel, text, message_id=message_id)
     await bot.store.run(record_event, "gap", text)
     _open_gap_notice = [message_id, 1, downtime]
 

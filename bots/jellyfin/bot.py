@@ -35,6 +35,7 @@ async def upload_poster(poster_item_id):
 
 async def send_post(entry):
     """The title rides once: as the embed when a poster attachment carries the post, else as plain text."""
+    assert bot.client is not None, "send_post runs only once connected"
     attachment_id = await upload_poster(entry["poster_item_id"])
     channel_id = jellyfin_core.target_channel(bot, entry.get("library_id"))
     text = jellyfin_core.render_text(entry)
