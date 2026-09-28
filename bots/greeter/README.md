@@ -14,14 +14,27 @@ of the library on purpose; see its own README.
 pip install -r requirements.txt
 SLIMM_URL=https://your.space \
 SLIMM_BOT_TOKEN=slimbot_... \
-SLIMM_CHANNELS=<channel-uuid> \
 python3 bot.py
 ```
 
-`SLIMM_CHANNELS` should name exactly one channel here - `bot.channel` is
-the one this bot posts into. It needs only `VIEW_CHANNEL` and
-`SEND_MESSAGES` there - see "What your bot may do" in
-`docs/bots/building-bots.md` for how to grant a bot a channel overwrite.
+It needs `VIEW_CHANNEL` and `SEND_MESSAGES` in the welcome channel - see
+"What your bot may do" in `docs/bots/building-bots.md`.
+
+## Where welcomes go
+
+First match wins:
+
+1. `SLIMM_CHANNELS`, if it names exactly one channel id: a hard pin, for a
+   deployment that wants it fixed in config.
+2. `!welcome here`, run in a channel by someone with Manage Server. The
+   choice is stored in the bot's sqlite file (`SLIMM_DB_PATH`, default
+   `greeter.db`), so it survives a restart. `!welcome` alone says where
+   welcomes currently go.
+3. `GREETER_CHANNEL` (default `general/chat`): a `category/channel` path, or
+   a bare channel name, matched case-insensitively.
+
+If none of those resolves, a join posts nothing and logs why, rather than
+guessing a channel.
 
 ## Settings
 
@@ -30,6 +43,7 @@ the one this bot posts into. It needs only `VIEW_CHANNEL` and
   other `{...}` is left alone and would raise on a genuine typo, logged by
   the framework's own `guard_dispatch` rather than crashing the bot.
 - `GREETER_TITLE` (default `New member`) - the embed's title.
+- `GREETER_CHANNEL` (default `general/chat`) - see above.
 
 ## Why an embed rides alongside the plain text
 
