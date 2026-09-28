@@ -91,9 +91,10 @@ gated behind `MANAGE_MESSAGES`, is the only route that could ever answer
 
 What changed: this bot used to note that fact once, to its own stdout, at
 startup. Now, on every reconnect after a previous successful connection
-(never the very first connect, which is not a gap), it posts how long it
-was offline right in the log and records it for `!modlog gaps` to answer
-later. The downtime estimate runs from the last frame this bot actually saw
+(never the very first connect, which is not a gap), it records the downtime
+for `!modlog gaps` to answer later, and posts it in the log only when it was
+at least five minutes. Back-to-back notices with no other log line between
+them are merged by editing the earlier one. The downtime estimate runs from the last frame this bot actually saw
 (via the framework's `on_frame`, which fires for any frame at all, not just
 the five watched types) to the moment the new connection is confirmed live -
 a decent estimate, never exact, since nothing on the wire says precisely

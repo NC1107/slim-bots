@@ -27,6 +27,7 @@ def setup():
     modlog.bot.channels = {"c1"}
     modlog._last_roles.clear()
     modlog._role_names.clear()
+    modlog._open_gap_notice = None
     client = FakeAsyncClient(me_id="bot-1")
     client.respond("GET", "/members", MEMBERS)
     modlog.bot.client = client
@@ -140,11 +141,48 @@ def test_reconnect_gap_is_recorded_and_reported():
     assert modlog.bot.store.connection.execute("SELECT COUNT(*) FROM gaps").fetchone()[0] == 0
 
     modlog.note_alive()
-    modlog._last_seen_at -= 100
+    modlog._last_seen_at -= 4000
     client = modlog.bot.client
     asyncio.run(modlog.report_reconnect_gap())
-    assert "reconnected after" in client.sent[-1]["content"]
+    assert "reconnected after approximately 1h6m offline" in client.sent[-1]["content"]
+    assert "embeds" not in client.sent[-1]
     assert modlog.bot.store.connection.execute("SELECT COUNT(*) FROM gaps").fetchone()[0] == 1
+
+
+def test_a_blip_is_recorded_but_not_posted():
+    setup()
+    modlog.note_alive()
+    modlog._last_seen_at -= 60
+    client = modlog.bot.client
+    asyncio.run(modlog.report_reconnect_gap())
+    assert client.sent == []
+    assert modlog.bot.store.connection.execute("SELECT COUNT(*) FROM gaps").fetchone()[0] == 1
+
+
+def reconnect_after(seconds):
+    modlog.note_alive()
+    modlog._last_seen_at -= seconds
+    asyncio.run(modlog.report_reconnect_gap())
+
+
+def test_back_to_back_gaps_edit_one_notice():
+    client = setup()
+    reconnect_after(600)
+    first_id = client.sent[-1]["id"]
+    client.respond("PATCH", f"/channels/{modlog.bot.channel}/messages/{first_id}", {})
+    reconnect_after(900)
+    assert len(client.sent) == 1
+    method, path, body, _ = client.calls[-1]
+    assert (method, path) == ("PATCH", f"/channels/{modlog.bot.channel}/messages/{first_id}")
+    assert "reconnected 2 times, approximately 25m offline in total" in body["content"]
+
+
+def test_a_gap_after_a_log_line_gets_a_fresh_notice():
+    client = setup()
+    reconnect_after(600)
+    asyncio.run(modlog.post("member.role_changed", "Nick was granted x"))
+    reconnect_after(600)
+    assert len(client.sent) == 3
 
 
 def test_a_short_gap_is_not_reported():

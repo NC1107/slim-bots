@@ -249,6 +249,35 @@ def test_upload_poster_returns_the_uploaded_attachments_id():
     assert attachment_id == "att-1"
 
 
+def sent_post(image_bytes):
+    client = setup()
+    original = jellyfin.jellyfin_core.jf_get_bytes
+    jellyfin.jellyfin_core.jf_get_bytes = lambda path: image_bytes
+    client.respond("POST", "/attachments?filename=poster.jpg", {"id": "att-1", "content_type": "image/png"})
+    entry = jellyfin.jellyfin_core.render_episode_post(
+        {"Id": "e1", "SeasonName": "Season 1", "IndexNumber": 2, "Name": "Pilot", "DateCreated": "2026-01-01", "SeriesId": "s1"}, "Show"
+    )
+    try:
+        asyncio.run(jellyfin.send_post(entry))
+    finally:
+        jellyfin.jellyfin_core.jf_get_bytes = original
+    return client.sent[-1]
+
+
+def test_a_post_with_a_poster_sends_its_title_and_poster_once():
+    sent = sent_post(b"\x89PNGdata")
+    assert sent["content"] == ""
+    assert sent["attachment_ids"] == ["att-1"]
+    assert [e["title"] for e in sent["embeds"]] == ['New episode: Show - Season 1 episode 2 "Pilot"']
+
+
+def test_a_post_without_a_poster_is_plain_text_only():
+    sent = sent_post(None)
+    assert sent["content"] == 'New episode: Show - Season 1 episode 2 "Pilot"'
+    assert "embeds" not in sent
+    assert "attachment_ids" not in sent
+
+
 def test_upload_poster_returns_none_when_jellyfin_has_no_image():
     client = setup()
     original = jellyfin.jellyfin_core.jf_get_bytes
