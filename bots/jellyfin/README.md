@@ -193,13 +193,12 @@ message id.
 
 ## Output
 
-Every post still carries its plain text (title, and a trimmed overview or
-episode/album summary) and its poster as a slim-m attachment, unchanged. A
-small `Embed` (title and description, no image - the poster stays an
-attachment, since an embed's image is a URL the server fetches itself, not
-an already-uploaded attachment) now rides alongside it. See
-`../../docs/framework.md`'s embeds section for the fallback an older server
-gets instead.
+A post with a poster is the poster as a slim-m attachment plus a small
+`Embed` (title and description, no image - an embed's image is a URL the
+server fetches itself, not an already-uploaded attachment), with an empty
+body so the title shows once. A post without a poster is plain text only.
+See `../../docs/framework.md`'s embeds section for the fallback an older
+server gets instead.
 
 ## What was and was not verified in this port
 

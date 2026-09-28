@@ -34,13 +34,16 @@ async def upload_poster(poster_item_id):
 
 
 async def send_post(entry):
+    """The title rides once: as the embed when a poster attachment carries the post, else as plain text."""
     attachment_id = await upload_poster(entry["poster_item_id"])
-    attachment_ids = [attachment_id] if attachment_id else None
     channel_id = jellyfin_core.target_channel(bot, entry.get("library_id"))
     text = jellyfin_core.render_text(entry)
+    if not attachment_id:
+        await bot.client.send(channel_id, text, message_id=entry["message_id"])
+        return
     embed = jellyfin_core.render_embed(entry)
     await bot.client.send(
-        channel_id, text, message_id=entry["message_id"], attachment_ids=attachment_ids,
+        channel_id, "", message_id=entry["message_id"], attachment_ids=[attachment_id],
         embeds=[embed.to_wire()], fallback_content=text,
     )
 

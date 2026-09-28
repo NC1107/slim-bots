@@ -8,8 +8,10 @@ from datetime import datetime, timezone
 from slimbots import ApiError, Bot, Embed
 from slimbots.http import is_forbidden
 
-# A reconnect faster than this is not worth a channel post - most drops are a blip that missed nothing worth naming.
-GAP_NOTICE_THRESHOLD_SECONDS = 5
+# Every gap over the record threshold is kept for `!modlog gaps`; only a longer one is worth a channel post.
+GAP_RECORD_THRESHOLD_SECONDS = 5
+# Five minutes: shorter drops are gateway blips, and a notice for each buried the log in noise.
+GAP_NOTICE_THRESHOLD_SECONDS = 300
 MAX_GAPS_SHOWN = 10
 
 
@@ -40,6 +42,8 @@ _last_roles = {}
 _role_names = {}
 # Wall-clock time this bot last knew for certain it was connected - None until the first successful connect.
 _last_seen_at = None
+# The gap notice that is still the newest post in the channel, as [message_id, notices_so_far, total_downtime].
+_open_gap_notice = None
 
 
 def format_duration(seconds):
@@ -74,6 +78,8 @@ def record_event(conn, kind, text):
 async def post(kind, text):
     """Posts a log line under a fresh id every call - two different events can produce identical text,
     so there is nothing here worth deduplicating against the way a command reply is."""
+    global _open_gap_notice
+    _open_gap_notice = None
     embed = Embed(footer=kind)
     await bot.client.send(bot.channel, text, message_id=str(uuid.uuid4()), embeds=[embed.to_wire()], fallback_content=text)
     await bot.store.run(record_event, kind, text)
@@ -89,20 +95,40 @@ def _record_gap(conn, downtime):
     conn.commit()
 
 
+def gap_notice_text(count, downtime):
+    if count == 1:
+        lead = f"reconnected after approximately {format_duration(downtime)} offline"
+    else:
+        lead = f"reconnected {count} times, approximately {format_duration(downtime)} offline in total"
+    return f"{lead} - moderation events during that gap are not recorded here (`!modlog permissions` says what would close it)"
+
+
 async def report_reconnect_gap():
-    """Posts and records downtime since the last frame seen, unless this is the first connect or the gap was too short."""
-    global _last_seen_at
+    """Records downtime since the last frame seen; posts a notice only for a long gap, editing the previous notice if nothing was posted since."""
+    global _last_seen_at, _open_gap_notice
     if _last_seen_at is None:
         return
     downtime = int(time.time() - _last_seen_at)
-    if downtime < GAP_NOTICE_THRESHOLD_SECONDS:
+    if downtime < GAP_RECORD_THRESHOLD_SECONDS:
         return
     await bot.store.run(_record_gap, downtime)
-    await post(
-        "gap",
-        f"reconnected after approximately {format_duration(downtime)} offline - moderation events during that "
-        "gap are not recorded here (`!modlog permissions` says what would close it)",
-    )
+    if downtime < GAP_NOTICE_THRESHOLD_SECONDS:
+        return
+    if _open_gap_notice is not None:
+        message_id, count, total = _open_gap_notice
+        count, total = count + 1, total + downtime
+        try:
+            await bot.client.edit_message(bot.channel, message_id, gap_notice_text(count, total))
+        except ApiError:
+            _open_gap_notice = None
+        else:
+            _open_gap_notice = [message_id, count, total]
+            return
+    text = gap_notice_text(1, downtime)
+    message_id = str(uuid.uuid4())
+    await bot.client.send(bot.channel, text, message_id=message_id)
+    await bot.store.run(record_event, "gap", text)
+    _open_gap_notice = [message_id, 1, downtime]
 
 
 async def resolve_member(user_id):
