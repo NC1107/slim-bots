@@ -42,7 +42,8 @@ def test_ping_needs_no_test_bot(tmp_path):
 def test_pin_below_feature_version_fails(tmp_path):
     bot = make_bot(tmp_path, "b", req="slim-m>=0.3.0\n", code="await session.unpublish_screen_share()\n")
     (problem,) = c.check_bot(bot)
-    assert "needs >=0.5.1" in problem and "pins slim-m>=0.3.0" in problem
+    assert "needs >=0.5.1" in problem
+    assert "pins slim-m>=0.3.0" in problem
 
 
 def test_pin_at_feature_version_passes(tmp_path):
@@ -89,3 +90,21 @@ def test_changed_bots_lists_only_touched_dirs(tmp_path):
     git("add", ".")
     git("commit", "-qm", "change")
     assert c.changed_bots("main", tmp_path) == ["new"]
+
+
+@pytest.mark.parametrize("ref", ["--output=/tmp/x", "-h", "main..evil", "a b", "", "main;rm", "$(x)", "--"])
+def test_hostile_base_refused(ref):
+    assert not c.valid_ref(ref)
+    with pytest.raises(ValueError):
+        c.changed_bots(ref)
+
+
+@pytest.mark.parametrize("ref", ["origin/main", "main", "feature/x-1.2"])
+def test_plain_ref_accepted(ref):
+    assert c.valid_ref(ref)
+
+
+def test_main_rejects_option_like_base():
+    with pytest.raises(SystemExit) as exc:
+        c.main(["--base=--output=/tmp/x"])
+    assert exc.value.code == 2

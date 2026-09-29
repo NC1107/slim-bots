@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -26,7 +27,32 @@ from typing import Any, Callable
 import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
+BOT_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
+MAX_STEPS = 50
+MAX_TIMEOUT = 120
+MAX_READY = 60
 REQUIRED_ENV = ("SLIMM_URL", "SLIMM_BOT_TOKEN", "SLIMM_SMOKE_TESTER_TOKEN", "SLIMM_SMOKE_CHANNEL")
+
+
+def confined(path: Path, parent: Path) -> Path:
+    """The resolved path, refusing anything that lands outside `parent`."""
+    resolved = path.resolve()
+    if not resolved.is_relative_to(parent.resolve()):
+        raise ValueError(f"{path} is outside {parent}")
+    return resolved
+
+
+def bot_paths(bot: str, root: Path = ROOT) -> tuple[Path, Path]:
+    """The bot's directory and default manifest, for a name that is a plain directory name."""
+    if BOT_NAME.fullmatch(bot) is None:
+        raise ValueError(f"bot name {bot!r} must match {BOT_NAME.pattern}")
+    return confined(root / "bots" / bot, root / "bots"), confined(root / "scripts" / "smoke" / f"{bot}.json", root / "scripts" / "smoke")
+
+
+def bounded_number(value: Any, label: str, maximum: int) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not 0 < value <= maximum:
+        raise ValueError(f"{label} must be a number in (0, {maximum}]")
+    return value
 
 
 def load_manifest(path: Path) -> dict[str, Any]:
@@ -34,7 +60,13 @@ def load_manifest(path: Path) -> dict[str, Any]:
     steps = data.get("steps")
     if not isinstance(steps, list) or not steps:
         raise ValueError(f"{path.name}: 'steps' must be a non-empty list")
+    if len(steps) > MAX_STEPS:
+        raise ValueError(f"{path.name}: at most {MAX_STEPS} steps")
+    if not isinstance(data.get("env", {}), dict) or not all(isinstance(v, str) for v in data.get("env", {}).values()):
+        raise ValueError(f"{path.name}: 'env' must map names to strings")
+    bounded_number(data.get("ready_seconds", 8), f"{path.name}: ready_seconds", MAX_READY)
     for i, step in enumerate(steps):
+        bounded_number(step.get("timeout", 15), f"{path.name}: step {i} timeout", MAX_TIMEOUT)
         if not isinstance(step.get("say"), str) or not step["say"]:
             raise ValueError(f"{path.name}: step {i} needs a 'say' string")
         if not all(isinstance(s, str) for s in step.get("expect_contains", [])):
@@ -62,13 +94,13 @@ def replies_after(messages: list[dict[str, Any]], sent_id: str, tester_id: str) 
 
 def run_step(
     step: dict[str, Any], say: Callable[[str], str], fetch: Callable[[], list[dict[str, Any]]],
-    tester_id: str, sleep: Callable[[float], None] = time.sleep, clock: Callable[[], float] = time.monotonic,
+    tester_id: str, sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     sent_id = say(step["say"])
-    deadline = clock() + step.get("timeout", 15)
+    polls = min(int(step.get("timeout", 15)), MAX_TIMEOUT)
     wanted = step.get("expect_contains", [])
     replies: list[dict[str, Any]] = []
-    while clock() < deadline:
+    for _ in range(polls):
         sleep(1)
         replies = replies_after(fetch(), sent_id, tester_id)
         text = "\n".join(r.get("content", "") for r in replies)
@@ -98,7 +130,12 @@ def main(argv: list[str] | None = None) -> int:
     if missing:
         print(f"refusing to run, set: {', '.join(missing)}", file=sys.stderr)
         return 2
-    manifest = load_manifest(args.manifest or ROOT / "scripts" / "smoke" / f"{args.bot}.json")
+    try:
+        bot_dir, default_manifest = bot_paths(args.bot)
+        manifest = load_manifest(confined(args.manifest or default_manifest, ROOT / "scripts" / "smoke"))
+    except ValueError as err:
+        print(f"refusing to run: {err}", file=sys.stderr)
+        return 2
     base, channel = os.environ["SLIMM_URL"].rstrip("/"), os.environ["SLIMM_SMOKE_CHANNEL"]
     http = httpx.Client(base_url=base, timeout=20, headers={"authorization": f"Bearer {os.environ['SLIMM_SMOKE_TESTER_TOKEN']}"})
     tester_id = http.get("/me").raise_for_status().json()["id"]
@@ -112,7 +149,7 @@ def main(argv: list[str] | None = None) -> int:
         return http.get(f"/channels/{channel}/messages", params={"limit": 50}).raise_for_status().json()
 
     env = {**os.environ, "SLIMM_CHANNELS": channel, **manifest.get("env", {})}
-    proc = subprocess.Popen([sys.executable, "bot.py"], cwd=ROOT / "bots" / args.bot, env=env)
+    proc = subprocess.Popen([sys.executable, "bot.py"], cwd=bot_dir, env=env)
     results: list[dict[str, Any]] = []
     try:
         time.sleep(manifest.get("ready_seconds", 8))
@@ -121,7 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         proc.terminate()
         proc.wait(timeout=15)
-    out = Path(f"smoke-{args.bot}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.md")
+    out = confined(Path.cwd() / f"smoke-{args.bot}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.md", Path.cwd())
     out.write_text(render(args.bot, results))
     failed = [r for r in results if not r["ok"]]
     print(f"{len(results) - len(failed)}/{len(results)} steps ok, transcript at {out}")

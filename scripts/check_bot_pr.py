@@ -23,7 +23,7 @@ FEATURES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
     (r"\bensure_columns\b|\bbot\.canvas\(|\bbot\.voice\.join\b", "ensure_columns / bot.canvas / bot.voice.join", (0, 4, 0)),
 )
 
-PIN = re.compile(r"^\s*slim-m\s*(?P<op>>=|==|~=|>|<=|<|!=)?\s*(?P<ver>[0-9][0-9A-Za-z.]*)?", re.IGNORECASE)
+PIN = re.compile(r"^\s*slim-m\s*(?P<op>>=|==|~=|>|<=|<|!=)?\s*(?P<ver>\d[\dA-Za-z.]*)?", re.IGNORECASE)
 
 
 def parse_version(text: str) -> tuple[int, ...]:
@@ -80,8 +80,17 @@ def check_bot(bot_dir: Path) -> list[str]:
     return problems
 
 
+REF_NAME = re.compile(r"\w[\w./-]*", re.ASCII)
+
+
+def valid_ref(ref: str) -> bool:
+    return REF_NAME.fullmatch(ref) is not None and ".." not in ref
+
+
 def changed_bots(base: str, root: Path = ROOT) -> list[str]:
-    cmd = ["git", "diff", "--name-only", f"{base}...HEAD"]
+    if not valid_ref(base):
+        raise ValueError(f"refusing --base {base!r}: not a plain git ref name")
+    cmd = ["git", "diff", "--name-only", f"{base}...HEAD", "--", "bots"]
     out = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=True).stdout
     return sorted({p.split("/")[1] for p in out.splitlines() if p.startswith("bots/") and p.count("/") >= 2})
 
@@ -90,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base", help="git ref; check only bots changed since it (default: every bot)")
     args = ap.parse_args(argv)
+    if args.base and not valid_ref(args.base):
+        ap.error(f"--base {args.base!r} is not a plain git ref name")
     names = changed_bots(args.base) if args.base else sorted(p.name for p in (ROOT / "bots").iterdir() if p.is_dir())
     problems: list[str] = []
     for name in names:
