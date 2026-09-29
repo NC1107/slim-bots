@@ -91,7 +91,7 @@ def test_watch_offers_resume_from_jellyfins_own_position_and_starts_there():
     assert fetched == ["jf-user"]
     assert "is at 10:00" in client.sent[0]["content"]
     assert started == [600.0]
-    assert client.sent[-1]["content"] == "streaming **Inception** into #voice-room (2:00:00, from 10:00)."
+    assert client.sent[-1]["content"] == "**Inception** in #voice-room\nplaying - 2:00:00 - 720p - subtitles off"
 
 
 def test_watch_start_over_ignores_the_saved_position():
@@ -102,7 +102,7 @@ def test_watch_start_over_ignores_the_saved_position():
     ):
         started = run_watch_with_reply("!watch inception", "start")
     assert started == [0.0]
-    assert client.sent[-1]["content"] == "streaming **Inception** into #voice-room (2:00:00)."
+    assert client.sent[-1]["content"] == "**Inception** in #voice-room\nplaying - 2:00:00 - 720p - subtitles off"
 
 
 def test_watch_without_an_answer_starts_nothing():

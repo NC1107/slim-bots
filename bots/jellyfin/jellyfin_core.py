@@ -400,6 +400,19 @@ def fetch_item_for_playback(item_id, user_id=None):
     return items[0] if items else None
 
 
+def next_episode(item, user_id=None):
+    """The episode after `item` in its series, with playback fields, or None for a movie or a finale."""
+    series_id = item.get("SeriesId")
+    if item.get("Type") != "Episode" or not series_id:
+        return None
+    params = {"startItemId": item["Id"], "limit": 2, "fields": STREAM_FIELDS}
+    if user_id:
+        params["userId"] = user_id
+    episodes = jf_get(f"/Shows/{series_id}/Episodes", params).get("Items", [])
+    later = [e for e in episodes if e.get("Id") != item["Id"]]
+    return later[0] if later else None
+
+
 def subtitle_streams(item):
     return [s for s in item.get("MediaStreams") or [] if s.get("Type") == "Subtitle"]
 

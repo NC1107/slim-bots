@@ -24,6 +24,14 @@ def session_for_channel(channel_id):
     return live_sessions().get(channel_id)
 
 
+def session_for_panel(message_id):
+    """The live party whose now-playing panel is this message, or None once it ended."""
+    for session in live_sessions().values():
+        if session.panel is not None and session.panel.message_id == message_id:
+            return session
+    return None
+
+
 def channel_name(bot, channel_id):
     channel = bot.space.channels.get(channel_id)
     return f"#{channel.name}" if channel is not None else channel_id
