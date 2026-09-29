@@ -87,7 +87,11 @@ from any channel this bot listens on, not just the one `!watch` was typed
 in.
 
 - `!watch <title>` - find the invoker's voice channel, join it, and start
-  playing; confirms with "streaming **title** into #channel-name".
+  playing; confirms with "streaming **title** into #channel-name". If
+  jellyfin already has a saved position for it (past 30 seconds, not in the
+  last minute) the bot asks first: reply `resume` to pick up there or
+  `start` to begin again. With no title, `!watch` offers the account's most
+  recent unfinished item the same way (`/UserItems/Resume`).
 - `!pause` / `!resume` - stops or resumes reading the decoded stream;
   ffmpeg blocks on its own full pipe buffer while paused, so it costs no
   CPU and resumes exactly where it left off.
@@ -95,6 +99,12 @@ in.
   and a bare second count also work).
 - `!np` - an embed with title, position, duration, and subtitle state.
 - `!stop` - ends the stream and leaves the call.
+- Progress: while a stream plays the bot writes its position back to
+  jellyfin every 30 seconds and on `!stop` (`POST /UserItems/{id}/UserData`
+  with `PlaybackPositionTicks` and `LastPlayedDate`), and marks the item
+  played and clears the position when it finishes, so jellyfin's own
+  Continue Watching stays correct. It does not use the `/Sessions/Playing`
+  endpoints, which need a user token rather than the API key.
 - `!subs <lang|off>` - matches a subtitle track by language code or
   display title and restarts the transcode with `SubtitleMethod=Encode`
   burning it in, or clears it with `off`.
@@ -137,6 +147,7 @@ what actually limits going past 720p; see below.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
+| `JELLYFIN_USER_ID` | first enabled user | The jellyfin account whose playback position `!watch` reads and writes. The bot has one API key, so every slim-m user shares this account's position; there is no per-person mapping. |
 | `JELLYFIN_STREAM_WIDTH` | `1280` | The published video width; Jellyfin's own aspect ratio is letterboxed into this. |
 | `JELLYFIN_STREAM_HEIGHT` | `720` | The published video height. |
 | `JELLYFIN_STREAM_FPS` | `30` | The published frame rate. |

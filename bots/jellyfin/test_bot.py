@@ -11,6 +11,7 @@ os.environ.setdefault("JELLYFIN_URL", "https://fake-jellyfin.invalid")
 os.environ.setdefault("JELLYFIN_API_KEY", "fake-key")
 
 import bot as jellyfin  # noqa: E402
+import playback_progress  # noqa: E402
 import stream_session  # noqa: E402
 import watch_cog  # noqa: E402
 from slimbots import Permissions, Store  # noqa: E402
@@ -109,6 +110,7 @@ def message(content, msg_id="m1"):
 
 
 def setup():
+    playback_progress.JELLYFIN_USER_ID = "jf-user"
     jellyfin.bot.store = Store(":memory:", migrate=jellyfin.jellyfin_core.init_db)
     asyncio.run(jellyfin.bot.store.open())
     jellyfin.bot.channels = {"c1"}
@@ -319,7 +321,7 @@ def movie_for_watch(item_id="m1", name="Inception", runtime_seconds=7200):
     return {"Id": item_id, "Name": name, "Type": "Movie", "RunTimeTicks": int(runtime_seconds * 10_000_000), "MediaStreams": []}
 
 
-async def _fake_start(self):
+async def _fake_start(self, start_seconds=0.0):
     self._video_source = object()
     self._audio_source = object()
 
@@ -413,7 +415,7 @@ def test_watch_streams_into_the_invokers_own_voice_channel_not_the_text_channel(
     original_search = jellyfin.jellyfin_core.search_items
     original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
     jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
-    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id: movie_for_watch()
+    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id, user_id=None: movie_for_watch()
     original_start = stream_session.WatchSession.start
     stream_session.WatchSession.start = _fake_start
     try:
@@ -439,7 +441,7 @@ def test_watch_refuses_when_the_bot_lacks_speak_in_the_invokers_channel():
     original_search = jellyfin.jellyfin_core.search_items
     original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
     jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
-    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id: movie_for_watch()
+    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id, user_id=None: movie_for_watch()
     try:
         process(client, message("!watch inception"))
     finally:
@@ -458,7 +460,7 @@ def test_watch_names_the_missing_permission_when_the_bot_cannot_connect():
     original_search = jellyfin.jellyfin_core.search_items
     original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
     jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
-    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id: movie_for_watch()
+    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id, user_id=None: movie_for_watch()
     try:
         process(client, message("!watch inception"))
     finally:
