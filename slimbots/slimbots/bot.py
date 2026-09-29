@@ -20,6 +20,7 @@ from .commands import Command, Group, build_help_text
 from .context import Context
 from .exceptions import CommandError, CommandNotFound
 from .gateway import Gateway
+from .interactions import ButtonHandler, ButtonRoutes, dispatch_press
 from .http import ApiError, AsyncClient, is_forbidden, is_token_revoked
 from .lifecycle import guard_dispatch, run_with_shutdown
 from .models import Member
@@ -108,6 +109,7 @@ class Bot:
         self.commands: dict[str, Command] = {}
         self._unique_commands: list[Command] = []
         self._listeners: dict[str, list[Callable[..., Awaitable[Any]]]] = {}
+        self._buttons = ButtonRoutes()
         self._global_checks: list[Callable[[Context], Awaitable[str | None]]] = []
         self.client: AsyncClient | None = None
         self.space: Space | None = None
@@ -246,6 +248,13 @@ class Bot:
             return f
         return decorator(func) if func else decorator
 
+    def button(self, custom_id: str | None = None, *, prefix: str | None = None) -> Callable[[ButtonHandler], ButtonHandler]:
+        """`@bot.button("hit")` runs for a press of that custom_id; `prefix=` matches a family. See docs/framework.md."""
+        def decorator(func: ButtonHandler) -> ButtonHandler:
+            self._buttons.add(custom_id, prefix, func)
+            return func
+        return decorator
+
     async def wait_for(
         self, event: str, *, check: Callable[..., bool] | None = None, timeout: float | None = None,
     ) -> Any:
@@ -377,6 +386,10 @@ class Bot:
             self._note_seq(channel_id, message.get("seq"))
             await guard_dispatch(self._dispatch_event, "on_raw_message", message)
             self.background(guard_dispatch(self.process_message, message), name=f"message-{message.get('id', '?')}")
+            return
+        if kind == "interaction.created":
+            if self._listens_in(frame.get("channel_id")):
+                self.background(dispatch_press(self, self._buttons, frame), name=f"press-{frame.get('interaction_id', '?')}")
             return
         if kind == "voice.participant_joined":
             # Never gated on self.channels - find_member() tracks every voice channel the bot can see.
