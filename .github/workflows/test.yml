@@ -93,3 +93,27 @@ jobs:
       - name: Run casino's real-thread, real-sqlite concurrency suite
         working-directory: bots/casino
         run: python test_concurrency.py
+
+  voice-real-livekit:
+    # Runs the jellyfin publish path against the real livekit package (the version the prod image
+    # installs) and a real livekit-server (the version prod runs), since the fast suite only sees a fake.
+    runs-on: ubuntu-latest
+    services:
+      livekit:
+        image: livekit/livekit-server:v1.10.1@sha256:698a13999b4b2285866a32903724884b1e10c03259526391d9b3a72d9b73bbb4
+        env:
+          LIVEKIT_KEYS: "devkey: secret"
+        ports:
+          - 7880:7880
+    env:
+      LIVEKIT_URL: ws://127.0.0.1:7880
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install slimbots' dependencies plus the pinned real livekit (hash-locked, wheel-only)
+        run: "python -m pip install --only-binary=:all: --require-hashes -r slimbots/requirements-livekit.lock.txt"
+      - name: Run the real-livekit suite (surface, fake conformance, connect and publish)
+        working-directory: slimbots
+        run: python -m pytest -q tests_livekit
