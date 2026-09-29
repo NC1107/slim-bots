@@ -7,6 +7,7 @@ from .bot import Bot
 from .canvas import Canvas
 from .client import socket_url
 from .commands import Command, Group
+from .components import Button, rows
 from .context import Context
 from .converters import Duration, TimeOfDay
 from .embeds import Embed
@@ -22,6 +23,7 @@ from .exceptions import (
 )
 from .http import ApiError
 from .http import AsyncClient
+from .interactions import Interaction
 from .limits import Cooldown, Quota, RateLimiter, ValidationError, require_int, require_len, require_range
 from .models import Attachment, Channel, DmConversation, Member, Message, Role
 from .permissions import Permissions
@@ -35,6 +37,7 @@ __all__ = [
     "Attachment",
     "BadArgument",
     "Bot",
+    "Button",
     "Canvas",
     "Channel",
     "CheckFailure",
@@ -48,6 +51,7 @@ __all__ = [
     "Duration",
     "Embed",
     "Group",
+    "Interaction",
     "Member",
     "Message",
     "MissingPermissions",
@@ -71,5 +75,6 @@ __all__ = [
     "require_int",
     "require_len",
     "require_range",
+    "rows",
     "socket_url",
 ]

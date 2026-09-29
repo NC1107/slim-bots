@@ -253,6 +253,27 @@ A member who blocked the bot still gets a 200 back, so a bot cannot tell.
 On a server that predates it the call is a 404 or 405 and raises `ApiError`; pass `public_fallback=True` to reply in the channel instead. Only do that for a refusal - never for anything private like a balance.
 `FakeAsyncClient` records each one in `client.ephemerals`, separate from `client.sent`.
 
+## Buttons
+
+A message can carry buttons (slim-m decision 0039): `await ctx.send("Hit or stand?", components=rows([Button("Hit", "hit", style="primary"), Button("Stand", "stand")]))`.
+`Button(label, custom_id, style=..., disabled=...)` takes a style of `primary`, `secondary` or `danger`; `Button.link(label, url)` opens a page and never reaches the bot.
+The caps are the server's and Discord's: 5 rows of 5 buttons, an 80-character label, a 100-character `custom_id` unique within the message.
+`Button` refuses an over-cap value before the send, and only a bot may send buttons at all.
+
+`@bot.button("hit")` runs `async def hit(interaction)` when a member presses that `custom_id`; `@bot.button(prefix="vote:")` matches a family of them.
+The interaction names who pressed (`user_id`, `user_display_name`), the pressed `message_id` and its own `id`.
+A press with no matching handler still reaches any `on_interaction` listener.
+
+Answer within 15 minutes, in any of three ways; the member's button waits until you do, and shows an error if nothing comes back in about five seconds.
+`await interaction.reply_ephemeral(text)` answers only the presser, three times at most per press, through the private-reply route with `interaction_id` in place of `in_reply_to_id` (the two are separate fields and one of them is required).
+`await interaction.edit_components(rows(...))` replaces the buttons on the pressed message, for example with `disabled=True` ones, and `[]` clears them.
+`await interaction.ack()` says the press needs no visible answer.
+A handler that returns without answering is acked for you, so a quiet handler does not look broken; one that raises is not, so the member sees the failure.
+
+`AsyncClient.send(components=...)`, `edit_components(channel_id, message_id, layout, interaction_id=...)` and `ack_interaction(channel_id, interaction_id)` are the underlying calls.
+A press is best effort like typing: a bot that was offline never sees it.
+`FakeAsyncClient` records replacements in `client.component_edits` and acks in `client.acks`, and a test can feed a press through `await bot._handle_frame({"type": "interaction.created", ...})`.
+
 ## Embeds
 
 `ctx.send(content, embed=Embed(...))` and `ctx.reply(...)` send the real `RequestEmbed` wire shape decision 0030 defines (title/description/url/color/author/fields/footer/timestamp/image/thumbnail), capped to the same limits the server enforces (10 embeds/message elsewhere is a bot's own concern; per-embed caps live in `slimbots/embeds.py`).
