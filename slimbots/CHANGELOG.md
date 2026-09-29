@@ -3,8 +3,12 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
-## Unreleased
+## 0.8.0
 
+- `space.find_member(user_id)` returns the cached member, else fetches it once, else `None`. `Bot._resolve_author` uses it.
+- `bot.setting(name, type=bool)` and `type=dict` (`"a:1,b:2"`, order kept). A malformed dict entry is reported at `start()` with the missing-setting errors.
+- `VoiceSession.leave` logs a warning when forgetting the heartbeat fails, instead of swallowing it.
+- Bots that use these need `slim-m>=0.8.0`; `scripts/check_bot_pr.py` enforces it.
 - Fix: `bot-jellyfin` announced the same episode or movie again when Sonarr or a manual replace swapped the file, since the new Jellyfin item has a new id and `DateCreated`. Announcements are now deduped in the bot's sqlite by series/season/episode, and by tmdb/imdb id or name and year for movies, within `JELLYFIN_DEDUPE_DAYS` (default 7, `0` is off). `JELLYFIN_REANNOUNCE_REPLACED=true` restores the old behaviour. The new `posted_media` table is added in place to an existing database.
 
 ## 0.7.1
