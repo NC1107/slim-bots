@@ -9,12 +9,14 @@ from slimbots import ApiError, Bot
 from slimbots.http import is_token_revoked
 
 import jellyfin_core
+import playback_progress
 
 bot = Bot(
     prefix="!", require_channels=True, listen_voice_chats=True,
     default_data_path="jellyfin_watch.db", store_migrate=jellyfin_core.init_db,
 )
 jellyfin_core.configure(bot)
+playback_progress.configure(bot)
 
 bot.load_extension("search_cog")
 bot.load_extension("watch_cog")
