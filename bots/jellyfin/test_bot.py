@@ -408,6 +408,20 @@ def test_watch_requires_the_invoker_to_be_in_any_voice_call():
     assert not session_registry.live_sessions()
 
 
+def test_watch_passes_a_multi_word_title_whole_to_the_search():
+    client = setup_with_voice(
+        member_channels={"u1": "v1"}, voice_channels=[Channel({"id": "v1", "name": "voice-room", "kind": "voice"})],
+    )
+    queries = []
+    original_search = jellyfin.jellyfin_core.search_items
+    jellyfin.jellyfin_core.search_items = lambda query, limit: queries.append(query) or []
+    try:
+        process(client, message("!watch two words"))
+    finally:
+        jellyfin.jellyfin_core.search_items = original_search
+    assert queries == ["two words"]
+
+
 def test_watch_streams_into_the_invokers_own_voice_channel_not_the_text_channel():
     """The command is typed in the text channel c1; the invoker is actually in the voice channel v1 - the bug this fixes."""
     client = setup_with_voice(

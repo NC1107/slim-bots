@@ -20,6 +20,20 @@ _COOLDOWN_BUCKETS = ("user", "channel", "deployment")
 _DEPLOYMENT_COOLDOWN_KEY = "*"
 
 
+def _handler_params(func: Callable[..., Any]) -> list[inspect.Parameter]:
+    """`func`'s parameters after `ctx`, with postponed (string) annotations resolved; one that won't resolve stays a string."""
+    namespace = getattr(func, "__globals__", {})
+    resolved = []
+    for param in list(inspect.signature(func).parameters.values())[1:]:
+        if isinstance(param.annotation, str):
+            try:
+                param = param.replace(annotation=eval(param.annotation, namespace))  # noqa: S307
+            except Exception:  # noqa: BLE001 - an unresolvable name just means "plain token"
+                pass
+        resolved.append(param)
+    return resolved
+
+
 def _cooldown_key(bucket: str, ctx: Context) -> str:
     """The bucket a cooldown is tracked under: one deployment is one bot process, so `deployment` is a single key."""
     if bucket == "channel":
@@ -107,7 +121,7 @@ class Command:
         self.check = check
         self.cooldown = Cooldown(cooldown) if cooldown else None
         self.cooldown_bucket = _validate_cooldown_bucket(cooldown_bucket)
-        self.params = list(inspect.signature(func).parameters.values())[1:]
+        self.params = _handler_params(func)
         self.usage = usage or " ".join(_usage_token(p) for p in self.params)
 
     @property
@@ -191,7 +205,7 @@ class Group(Command):
         self.check = check
         self.cooldown = Cooldown(cooldown) if cooldown else None
         self.cooldown_bucket = _validate_cooldown_bucket(cooldown_bucket)
-        self.params = list(inspect.signature(func).parameters.values())[1:]
+        self.params = _handler_params(func)
         self.subcommands: dict[str, Command] = {}
         self._unique_subcommands: list[Command] = []
 
