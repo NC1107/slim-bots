@@ -1,4 +1,4 @@
-"""A member pressing one of this bot's buttons (slim-m decision 0039), and how `@bot.button` finds its handler."""
+"""A member pressing one of this bot's buttons, or using a menu entry or call control (decisions 0039 and 0045)."""
 
 from __future__ import annotations
 
@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
 from . import components
 from .lifecycle import guard_dispatch
+from .ui import UiRoutes
 
 if TYPE_CHECKING:
     from .bot import Bot
@@ -15,12 +16,14 @@ ButtonHandler = Callable[["Interaction"], Awaitable[Any]]
 
 
 class Interaction:
-    """One press. Answer within 15 minutes with `reply_ephemeral`, `edit_components` or `ack`."""
+    """One press or use. Answer within 15 minutes with `reply_ephemeral`, `edit_components` or `ack`."""
 
     def __init__(self, frame: dict[str, Any], bot: Bot) -> None:
         self.id = frame["interaction_id"]
         self.channel_id = frame["channel_id"]
-        self.message_id = frame["message_id"]
+        self.kind = frame.get("kind", "button")
+        # A call control is used on a call, which has no message.
+        self.message_id = frame.get("message_id")
         self.custom_id = frame["custom_id"]
         self.user_id = frame["user_id"]
         self.user_display_name = frame.get("user_display_name")
@@ -38,6 +41,8 @@ class Interaction:
     async def edit_components(self, layout: components.Rows) -> Any:
         """Replaces the buttons on the pressed message (`[]` clears them) and answers this press."""
         assert self.bot.client is not None
+        if self.message_id is None:
+            raise ValueError("a call control names no message, so it has no buttons to replace")
         result = await self.bot.client.edit_components(
             self.channel_id, self.message_id, layout, interaction_id=self.id,
         )
@@ -85,4 +90,23 @@ async def dispatch_press(bot: Bot, routes: ButtonRoutes, frame: dict[str, Any]) 
         await guard_dispatch(handler, interaction, on_error=report)
     # A handler that raised is left unanswered on purpose, so the member sees the press failed.
     if handlers and not failed and not interaction.answered:
+        await guard_dispatch(interaction.ack)
+
+
+async def dispatch_ui(bot: Bot, routes: UiRoutes, frame: dict[str, Any]) -> None:
+    """Runs `on_interaction` listeners and the entry's handler, then acks a use that nothing answered."""
+    interaction = Interaction(frame, bot)
+    await bot._dispatch_event("on_interaction", interaction)
+    handler = routes.handler(interaction.kind, interaction.custom_id)
+    if handler is None:
+        return
+    failed = False
+
+    async def report(err: Exception) -> None:
+        nonlocal failed
+        failed = True
+        print(f"unhandled error in {interaction.kind} `{interaction.custom_id}`: {err}", file=sys.stderr)
+
+    await guard_dispatch(handler, interaction, on_error=report)
+    if not failed and not interaction.answered:
         await guard_dispatch(interaction.ack)

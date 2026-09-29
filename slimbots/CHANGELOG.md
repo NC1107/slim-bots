@@ -3,6 +3,17 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.7.0 (unreleased)
+
+Menu entries and call controls expect a slim-m server with bot-contributed UI (decision 0045, which stacks on decision 0039).
+
+- New `@bot.message_menu(id, label, permission=None)`: adds a row to every message's context menu, under the bot's name and badge. The handler gets the same `Interaction` as a button, with `kind == "message_menu"` and the `message_id` it was used on.
+- New `@bot.call_control(id, label, icon=None, permission=None)`: adds a button to the call dock while the bot is on the call. `icon` is one of `play`, `pause`, `stop`, `skip_next`, `skip_previous`, `volume`, `volume_off`, `repeat`, `shuffle`, `list`. The `Interaction` has `kind == "call_control"` and a `message_id` of `None`.
+- The caps are the server's: 5 menu entries, 8 call controls, a 32-character label and a 64-character id. They are checked when the decorator runs.
+- Both are registered with `PUT /bots/ui` on connect, only when the bot declares any, and quietly skipped on a server that predates it.
+- `Interaction.kind` is new (`button` on a server that does not send it). `reply_ephemeral` and `ack` answer a use as they do a press; `edit_components` raises on a call control.
+- `FakeAsyncClient` answers `PUT /bots/ui`, and `client.calls` records it.
+
 ## 0.6.0 (unreleased)
 
 Ephemeral replies expect a slim-m server with ephemeral messages (decision 0036).

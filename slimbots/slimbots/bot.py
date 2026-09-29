@@ -20,11 +20,12 @@ from .commands import Command, Group, build_help_text
 from .context import Context
 from .exceptions import CommandError, CommandNotFound
 from .gateway import Gateway
-from .interactions import ButtonHandler, ButtonRoutes, dispatch_press
+from .interactions import ButtonHandler, ButtonRoutes, dispatch_press, dispatch_ui
 from .http import ApiError, AsyncClient, is_forbidden, is_token_revoked
 from .lifecycle import guard_dispatch, run_with_shutdown
 from .models import Member
 from .registration import register_commands
+from .ui import UiEntry, UiHandler, UiRoutes, register_ui
 from .space import Space
 from .store import Store
 from .voice import Voice
@@ -110,6 +111,7 @@ class Bot:
         self._unique_commands: list[Command] = []
         self._listeners: dict[str, list[Callable[..., Awaitable[Any]]]] = {}
         self._buttons = ButtonRoutes()
+        self._ui = UiRoutes()
         self._global_checks: list[Callable[[Context], Awaitable[str | None]]] = []
         self.client: AsyncClient | None = None
         self.space: Space | None = None
@@ -255,6 +257,24 @@ class Bot:
             return func
         return decorator
 
+    def message_menu(
+        self, entry_id: str, label: str, *, permission: int | None = None,
+    ) -> Callable[[UiHandler], UiHandler]:
+        """`@bot.message_menu("translate", "Translate")` adds a row to every message's menu; the handler gets the `Interaction`."""
+        def decorator(func: UiHandler) -> UiHandler:
+            self._ui.add("message_menu", UiEntry(entry_id, label, permission=permission), func)
+            return func
+        return decorator
+
+    def call_control(
+        self, entry_id: str, label: str, *, icon: str | None = None, permission: int | None = None,
+    ) -> Callable[[UiHandler], UiHandler]:
+        """`@bot.call_control("pause", "Pause", icon="pause")` adds a button to the call dock while this bot is on the call."""
+        def decorator(func: UiHandler) -> UiHandler:
+            self._ui.add("call_control", UiEntry(entry_id, label, icon=icon, permission=permission), func)
+            return func
+        return decorator
+
     async def wait_for(
         self, event: str, *, check: Callable[..., bool] | None = None, timeout: float | None = None,
     ) -> Any:
@@ -389,7 +409,9 @@ class Bot:
             return
         if kind == "interaction.created":
             if self._listens_in(frame.get("channel_id")):
-                self.background(dispatch_press(self, self._buttons, frame), name=f"press-{frame.get('interaction_id', '?')}")
+                is_button = frame.get("kind", "button") == "button"
+                dispatch = dispatch_press(self, self._buttons, frame) if is_button else dispatch_ui(self, self._ui, frame)
+                self.background(dispatch, name=f"press-{frame.get('interaction_id', '?')}")
             return
         if kind == "voice.participant_joined":
             # Never gated on self.channels - find_member() tracks every voice channel the bot can see.
@@ -454,6 +476,8 @@ class Bot:
                 raise
         await self.space.refresh_members()
         await register_commands(self.client, prefix=self.prefix, commands=self.unique_commands())
+        if self._ui:
+            await register_ui(self.client, self._ui)
         await self._dispatch_event("on_connect")
         await self._catch_up()
 
