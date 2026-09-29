@@ -26,8 +26,6 @@ EXEMPT_PERMISSIONS = Permissions.MANAGE_MESSAGES
 
 # user_id -> send times inside the flood window; memory only, a restart forgives everyone.
 _recent = defaultdict(deque)
-# user_id -> when this process saw them join; a member who joined before it started is never "new".
-_joined_at = {}
 _log_channel_id = None
 
 
@@ -90,12 +88,13 @@ def flood_tripped(user_id, now):
     return len(times) > FLOOD_MESSAGES
 
 
-def is_new_member(user_id, now):
-    joined = _joined_at.get(user_id)
-    return NEW_MEMBER_HOURS > 0 and joined is not None and now - joined < NEW_MEMBER_HOURS * 3600
+def is_new_member(member, now):
+    """Whether the server says `member` joined less than `NEW_MEMBER_HOURS` ago; a restart does not change that."""
+    joined_ms = member.joined_at
+    return NEW_MEMBER_HOURS > 0 and joined_ms is not None and now - joined_ms / 1000 < NEW_MEMBER_HOURS * 3600
 
 
-def verdict(message, channel_name, now):
+def verdict(message, member, channel_name, now):
     """`(rule, reason, timeout_seconds)` for the first rule the message breaks, or None; checked cheapest first."""
     text = message.get("content") or ""
     user_id = message["author_id"]
@@ -105,7 +104,7 @@ def verdict(message, channel_name, now):
     if MENTION_LIMIT > 0 and mention_count(text) > MENTION_LIMIT:
         return "mention-spam", f"more than {MENTION_LIMIT} mentions in one message", MENTION_TIMEOUT
     hosts = link_domains(text)
-    if hosts and is_new_member(user_id, now):
+    if hosts and is_new_member(member, now):
         return "new-member-link", f"a link within {NEW_MEMBER_HOURS}h of joining", None
     bad = next((h for h in hosts if blocked_link(h)), None)
     if bad:
@@ -181,11 +180,6 @@ async def enforce(message, member, channel_name, rule, reason, timeout_seconds):
 
 
 @bot.event
-async def on_member_join(member):
-    _joined_at[member.id] = time.time()
-
-
-@bot.event
 async def on_raw_message(message):
     author_id = message.get("author_id")
     if not author_id or author_id == bot.me_id or not message.get("id"):
@@ -197,7 +191,7 @@ async def on_raw_message(message):
         return
     channel = bot.space.channels.get(message.get("channel_id"))
     channel_name = channel.name.lower() if channel else ""
-    found = verdict(message, channel_name, time.time())
+    found = verdict(message, member, channel_name, time.time())
     if found:
         await enforce(message, member, channel_name, *found)
 
@@ -215,7 +209,7 @@ def rules_summary():
     if LINK_POLICY in ("allow", "deny"):
         lines.append(f"- links: {LINK_POLICY} list of {len(LINK_DOMAINS)} domain(s)")
     if NEW_MEMBER_HOURS > 0:
-        lines.append(f"- links from members who joined in the last {NEW_MEMBER_HOURS}h (as seen by this bot)")
+        lines.append(f"- links from members who joined in the last {NEW_MEMBER_HOURS}h")
     if WORDS:
         scope = f" in {', '.join(WORD_CHANNELS)}" if WORD_CHANNELS else ""
         lines.append(f"- words: {len(WORDS)} listed{scope}")

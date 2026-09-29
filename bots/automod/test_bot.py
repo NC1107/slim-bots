@@ -5,6 +5,7 @@ import asyncio
 import os
 import sys
 import tempfile
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -31,7 +32,6 @@ def setup(**config):
     for name, value in {**DEFAULTS, **config}.items():
         setattr(automod, name, value)
     automod._recent.clear()
-    automod._joined_at.clear()
     automod._log_channel_id = None
     client = FakeAsyncClient(me_id="bot-1")
     client.respond("GET", "/channels", CHANNELS)
@@ -119,16 +119,35 @@ def test_allow_list_blocks_every_link_that_is_not_listed():
     assert len(deleted(client)) == 1
 
 
+def joined_ago(hours):
+    return {**USER, "created_at": int((time.time() - hours * 3600) * 1000)}
+
+
 def test_a_recent_joiner_cannot_post_links_but_an_old_member_can():
     client = setup(NEW_MEMBER_HOURS=24)
-    asyncio.run(automod.on_member_join(automod.bot.space._make_member(USER)))
+    client.respond("GET", "/users/u1", joined_ago(1))
     say("https://anything.example")
     assert len(deleted(client)) == 1
     say("no link here")
     assert len(deleted(client)) == 1
     client2 = setup(NEW_MEMBER_HOURS=24)
+    client2.respond("GET", "/users/u1", joined_ago(48))
     say("https://anything.example")
-    assert deleted(client2) == [], "a member this process never saw join is not treated as new"
+    assert deleted(client2) == []
+
+
+def test_new_member_status_comes_from_the_server_so_a_restart_keeps_it():
+    client = setup(NEW_MEMBER_HOURS=24)
+    client.respond("GET", "/users/u1", joined_ago(2))
+    automod.bot.space.members.clear()
+    say("https://anything.example")
+    assert len(deleted(client)) == 1, "a member who joined before this process started is still new"
+
+
+def test_a_member_without_a_join_time_is_not_treated_as_new():
+    client = setup(NEW_MEMBER_HOURS=24)
+    say("https://anything.example")
+    assert deleted(client) == []
 
 
 def test_word_list_matches_whole_words_only_and_can_be_limited_to_channels():
