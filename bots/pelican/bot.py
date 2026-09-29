@@ -43,7 +43,7 @@ async def resolve(ctx, query):
         return None
     matches = core.find_servers(servers, query)
     if not matches:
-        await ctx.reply(f"no server matches `{query}` - try `!servers`.")
+        await ctx.reply(f"no server matches `{query}` - try `{bot.prefix}servers`.")
         return None
     if len(matches) > 1:
         names = ", ".join(f"`{server['name']}`" for server in matches[:8])

@@ -37,7 +37,7 @@ def listing_message_id():
 def listing_text():
     lines = [
         "**Self-service roles**",
-        "`!role <name>` to add one, `!role remove <name>` to drop it, `!role mine` to see what you hold.",
+        f"`{bot.prefix}role <name>` to add one, `{bot.prefix}role remove <name>` to drop it, `{bot.prefix}role mine` to see what you hold.",
         "",
     ]
     lines.extend(f"- `{name}`" for name in ROLES)
@@ -99,7 +99,7 @@ async def escalation_explanation(role_name, role_id):
 async def grant(ctx, role_name):
     role_id = ROLES.get(role_name)
     if role_id is None:
-        await ctx.reply(f"no role called `{role_name}` is offered here - try `!roles`.")
+        await ctx.reply(f"no role called `{role_name}` is offered here - try `{bot.prefix}roles`.")
         return
     try:
         await bot.space.grant_role(ctx.author, role_id)
@@ -117,7 +117,7 @@ async def grant(ctx, role_name):
 async def revoke(ctx, role_name):
     role_id = ROLES.get(role_name)
     if role_id is None:
-        await ctx.reply(f"no role called `{role_name}` is offered here - try `!roles`.")
+        await ctx.reply(f"no role called `{role_name}` is offered here - try `{bot.prefix}roles`.")
         return
     try:
         await bot.space.revoke_role(ctx.author, role_id)

@@ -100,7 +100,7 @@ def gap_notice_text(count, downtime):
         lead = f"reconnected after approximately {format_duration(downtime)} offline"
     else:
         lead = f"reconnected {count} times, approximately {format_duration(downtime)} offline in total"
-    return f"{lead} - moderation events during that gap are not recorded here (`!modlog permissions` says what would close it)"
+    return f"{lead} - moderation events during that gap are not recorded here (`{bot.prefix}modlog permissions` says what would close it)"
 
 
 async def report_reconnect_gap():
@@ -229,7 +229,8 @@ async def modlog_cmd(ctx, sub: str):
     elif sub == "permissions":
         await show_permissions(ctx)
     else:
-        await ctx.reply("try `!modlog stats`, `!modlog gaps`, or `!modlog permissions`")
+        p = bot.prefix
+        await ctx.reply(f"try `{p}modlog stats`, `{p}modlog gaps`, or `{p}modlog permissions`")
 
 
 @bot.event

@@ -128,6 +128,24 @@ def test_modlog_permissions_names_both_gaps():
     assert "MANAGE_ROLES" in client.sent[-1]["content"]
 
 
+class prefixed:
+    """Runs a block with the bot answering to `?`, the way `SLIMM_PREFIX` would set it."""
+
+    def __enter__(self):
+        self.original, modlog.bot.prefix = modlog.bot.prefix, "?"
+
+    def __exit__(self, *_exc):
+        modlog.bot.prefix = self.original
+
+
+def test_modlog_hints_name_the_configured_prefix():
+    client = setup()
+    with prefixed():
+        process(client, message("u1", "?modlog nonsense"))
+        assert "try `?modlog stats`" in client.sent[-1]["content"]
+        assert "`?modlog permissions`" in modlog.gap_notice_text(1, 3600)
+
+
 def test_modlog_bad_subcommand_is_a_clear_reply():
     client = setup()
     process(client, message("u1", "!modlog nonsense"))

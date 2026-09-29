@@ -64,6 +64,24 @@ def test_role_grants_a_role_the_bot_can_hand_out():
     assert "you have `member` now" in client.sent[-1]["content"]
 
 
+class prefixed:
+    """Runs a block with the bot answering to `?`, the way `SLIMM_PREFIX` would set it."""
+
+    def __enter__(self):
+        self.original, roles.bot.prefix = roles.bot.prefix, "?"
+
+    def __exit__(self, *_exc):
+        roles.bot.prefix = self.original
+
+
+def test_role_replies_name_the_configured_prefix():
+    client = setup()
+    with prefixed():
+        process(client, message("u1", "?role admin"))
+        assert "try `?roles`" in client.sent[-1]["content"]
+        assert "`?role <name>`" in roles.listing_text()
+
+
 def test_role_refuses_an_unlisted_name():
     client = setup()
     process(client, message("u1", "!role admin"))

@@ -89,6 +89,17 @@ def test_account_reports_the_link_privately():
     assert 'linked to the jellyfin user "Alice"' in client.ephemerals[-1]["content"]
 
 
+def test_account_hints_name_the_configured_prefix():
+    client = setup()
+    original, jellyfin.bot.prefix = jellyfin.bot.prefix, "?"
+    try:
+        process(client, message("?jellyfin account"))
+    finally:
+        jellyfin.bot.prefix = original
+    assert "`?watch` uses the shared" in client.ephemerals[-1]["content"]
+    assert "`?jellyfin link <jellyfin username>`" in client.ephemerals[-1]["content"]
+
+
 def test_user_for_prefers_the_link_and_falls_back_to_the_shared_account():
     setup()
     asyncio.run(jellyfin.bot.store.run(accounts.set_link, "u1", "jf-a", "Alice"))

@@ -93,22 +93,24 @@ async def run_link(ctx, name):
         await _tell(ctx, f'"{user["Name"]}" is already linked to someone else.', "that jellyfin user is already linked.")
         return
     await ctx.bot.store.run(set_link, ctx.author.id, user["Id"], user["Name"])
+    p = ctx.bot.prefix
     await _tell(
-        ctx, f'linked you to the jellyfin user "{user["Name"]}". `!watch` now uses their resume position and continue watching, and `!jellyfin unlink` undoes it.',
+        ctx, f'linked you to the jellyfin user "{user["Name"]}". `{p}watch` now uses their resume position and continue watching, and `{p}jellyfin unlink` undoes it.',
         "linked.",
     )
 
 
 async def run_unlink(ctx):
     removed = await ctx.bot.store.run(remove_link, ctx.author.id)
-    text = "unlinked - `!watch` uses the shared jellyfin account again." if removed else "you were not linked to a jellyfin user."
+    text = f"unlinked - `{ctx.bot.prefix}watch` uses the shared jellyfin account again." if removed else "you were not linked to a jellyfin user."
     await _tell(ctx, text, "done.")
 
 
 async def run_account(ctx):
     link = await ctx.bot.store.run(get_link, ctx.author.id)
     if link is None:
-        text = "you are not linked, so `!watch` uses the shared jellyfin account. `!jellyfin link <jellyfin username>` links you."
+        p = ctx.bot.prefix
+        text = f"you are not linked, so `{p}watch` uses the shared jellyfin account. `{p}jellyfin link <jellyfin username>` links you."
     else:
         text = f'you are linked to the jellyfin user "{link[1]}".'
-    await _tell(ctx, text, "see `!jellyfin help`.")
+    await _tell(ctx, text, f"see `{ctx.bot.prefix}jellyfin help`.")

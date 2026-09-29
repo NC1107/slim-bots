@@ -25,7 +25,7 @@ async def _refuse_if_busy(ctx, voice_channel_id):
     if running is None:
         return False
     name = session_registry.channel_name(ctx.bot, voice_channel_id)
-    await ctx.reply(f"already watching **{running.title}** in {name} - `!stop` it first. another call can have its own stream.")
+    await ctx.reply(f"already watching **{running.title}** in {name} - `{ctx.bot.prefix}stop` it first. another call can have its own stream.")
     return True
 
 
@@ -35,7 +35,7 @@ async def _find_item(ctx, query):
         user_id = await accounts.user_for(ctx.bot, ctx.author.id)
         last = await asyncio.to_thread(playback_progress.fetch_last_watched, user_id)
         if last is None:
-            await ctx.reply("nothing to resume - `!watch <title>` to pick something.")
+            await ctx.reply(f"nothing to resume - `{ctx.bot.prefix}watch <title>` to pick something.")
         return last
     try:
         query = require_len(query.strip(), max_len=jellyfin_core.MAX_QUERY_LENGTH, field="a title")
@@ -90,7 +90,7 @@ async def launch(ctx, full_item, start_seconds):
     """Joins the invoker's call as it is now and starts the stream, with the panel as the reply."""
     voice_channel_id = await ctx.bot.voice.find_member(ctx.author.id)
     if voice_channel_id is None:
-        await ctx.reply("join a voice channel first, then run `!watch` again.")
+        await ctx.reply(f"join a voice channel first, then run `{ctx.bot.prefix}watch` again.")
         return
     if await _refuse_if_busy(ctx, voice_channel_id):
         return
@@ -122,7 +122,7 @@ async def run_watch(ctx, query):
         return
     voice_channel_id = await ctx.bot.voice.find_member(ctx.author.id)
     if voice_channel_id is None:
-        await ctx.reply("join a voice channel first, then run `!watch` again.")
+        await ctx.reply(f"join a voice channel first, then run `{ctx.bot.prefix}watch` again.")
         return
     if await _refuse_if_busy(ctx, voice_channel_id):
         return

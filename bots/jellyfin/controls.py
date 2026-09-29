@@ -105,7 +105,7 @@ async def run_control(interaction, session, action):
 async def on_panel_press(interaction):
     session = session_registry.session_for_panel(interaction.message_id)
     if session is None:
-        await _refuse(interaction, "that watch party has ended - `!watch` starts another.")
+        await _refuse(interaction, f"that watch party has ended - `{interaction.bot.prefix}watch` starts another.")
         return
     await run_control(interaction, session, interaction.custom_id[len(ID_PREFIX):])
 

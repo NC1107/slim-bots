@@ -109,7 +109,7 @@ async def run_quality(ctx, preset_name):
         return
     preset_name = (preset_name or "").strip()
     if not preset_name:
-        await ctx.reply(f"quality is {session.quality.describe()}. change it with `!quality <{'|'.join(quality.PRESETS)}>`.")
+        await ctx.reply(f"quality is {session.quality.describe()}. change it with `{ctx.bot.prefix}quality <{'|'.join(quality.PRESETS)}>`.")
         return
     preset = quality.find_preset(preset_name)
     if preset is None:

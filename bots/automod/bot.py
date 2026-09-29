@@ -153,7 +153,7 @@ def _describe(member, channel_name, rule, reason, outcomes):
     failed = [f"{label} refused ({status})" for label, status in outcomes if status is not None]
     if failed:
         text += f". could not: {', '.join(failed)} - the bot needs MANAGE_MESSAGES and KICK_MEMBERS"
-    return text + f". undo a timeout with `!automod lift {member.mention()}`"
+    return text + f". undo a timeout with `{bot.prefix}automod lift {member.mention()}`"
 
 
 async def _attempt(label, call):
@@ -249,7 +249,8 @@ async def automod_cmd(ctx, sub: str, member: Member = None):
         await write_modlog(f"automod: {ctx.author.mention()} lifted {member.mention()}'s timeout")
         await ctx.reply(f"{member.mention()} can speak again.")
     else:
-        await ctx.reply("try `!automod rules`, `!automod stats`, or `!automod lift @member`")
+        p = bot.prefix
+        await ctx.reply(f"try `{p}automod rules`, `{p}automod stats`, or `{p}automod lift @member`")
 
 
 def main():

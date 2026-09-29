@@ -16,10 +16,12 @@ MAX_SLOTS = 20
 # A note is a fixed 220x140 box; text past this overflows it regardless of what the canvas itself allows.
 MAX_TEXT_LENGTH = 240
 
-HELP_TEXT = (
-    "commands: `!board` to list, `!board add <text>`, `!board done <n>`, "
-    "`!board move <n> <slot>`, `!board clear` (removes everything - asks to confirm)."
-)
+def help_text():
+    p = bot.prefix
+    return (
+        f"commands: `{p}board` to list, `{p}board add <text>`, `{p}board done <n>`, "
+        f"`{p}board move <n> <slot>`, `{p}board clear` (removes everything - asks to confirm)."
+    )
 
 # user_id -> display_name, resolved once per author and reused; a later rename keeps the old name.
 _names = {}
@@ -245,11 +247,11 @@ async def board_cmd(ctx, sub: str = None, rest: str = None):
         if len(parts) == 2 and all(p.isdigit() for p in parts):
             await move_item(ctx, int(parts[0]), int(parts[1]))
         else:
-            await ctx.reply(HELP_TEXT)
+            await ctx.reply(help_text())
     elif sub == "clear":
         await clear_board(ctx)
     else:
-        await ctx.reply(HELP_TEXT)
+        await ctx.reply(help_text())
 
 
 def _txn_deactivate_matching(conn, ids):

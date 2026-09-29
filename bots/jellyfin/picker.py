@@ -117,7 +117,7 @@ async def open_pick(bot, pick, *, reply_to_id=None):
 async def _expire(bot, pick, delay):
     await asyncio.sleep(delay)
     if _picks.get(pick.message_id) is pick:
-        await _close(bot, pick, "timed out - `!watch` again to retry.")
+        await _close(bot, pick, f"timed out - `{bot.prefix}watch` again to retry.")
 
 
 async def _close(bot, pick, text):
@@ -182,13 +182,13 @@ async def on_pick_press(interaction):
     pick = _picks.get(interaction.message_id)
     if pick is None or pick.expired():
         if pick is not None:
-            await _close(bot, pick, "timed out - `!watch` again to retry.")
+            await _close(bot, pick, f"timed out - `{bot.prefix}watch` again to retry.")
         with contextlib.suppress(ApiError):
-            await interaction.reply_ephemeral("that choice has expired - `!watch` again.")
+            await interaction.reply_ephemeral(f"that choice has expired - `{bot.prefix}watch` again.")
         return
     if interaction.user_id != pick.invoker_id:
         with contextlib.suppress(ApiError):
-            await interaction.reply_ephemeral(f"only {pick.invoker_name} can choose here - `!watch` starts your own.")
+            await interaction.reply_ephemeral(f"only {pick.invoker_name} can choose here - `{bot.prefix}watch` starts your own.")
         return
     await interaction.ack()
     action = interaction.custom_id[len(ID_PREFIX):]
