@@ -7,20 +7,17 @@ import sqlite3
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 os.environ.setdefault("SEERR_URL", "http://jellyseerr:5055")
 os.environ.setdefault("SEERR_API_KEY", "fake-key")
 
 import bot as seerr  # noqa: E402
+import seerr_cog  # noqa: E402
 import seerr_core as core  # noqa: E402
-from slimbots import Store  # noqa: E402
-from slimbots.authors import AuthorFilter  # noqa: E402
-from slimbots.space import Space  # noqa: E402
-from slimbots.testing import FakeAsyncClient  # noqa: E402
+from arrkit.service import AuthError  # noqa: E402
+from arrkit.testkit import FakeApi, Harness, Patched  # noqa: E402
 
-MEMBERS = [
-    {"id": "u1", "username": "nick", "display_name": "Nick", "is_bot": False, "is_webhook": False, "role_ids": []},
-    {"id": "u2", "username": "amy", "display_name": "Amy", "is_bot": False, "is_webhook": False, "role_ids": []},
-]
+harness = Harness(seerr.bot, core.init_db)
 
 
 def request(rid, status=1, media_status=3, kind="movie", tmdb=100, by="amy"):
@@ -111,92 +108,41 @@ def test_links_are_one_to_one_and_removable():
     assert core.remove_link(conn, "u1") is True and core.get_link(conn, "u1") is None
 
 
-class FakeSeerr:
-    """Routes `core.api` calls by path; records every call so a test can assert what was sent."""
-
-    def __init__(self):
-        self.calls = []
-        self.requests = []
-        self.search_results = []
-        self.users = []
-        self.fail_with = None
-        self.refuse_posts = None
-        self.pending = {"results": [], "pageInfo": {"results": 0}}
-
-    def __call__(self, method, path, params=None, body=None):
-        self.calls.append((method, path, params, body))
-        if self.fail_with:
-            raise self.fail_with
-        if method == "POST":
-            if self.refuse_posts:
-                raise self.refuse_posts
-            return {"id": 500}
-        if path == "/request":
-            if (params or {}).get("filter") == "pending":
-                return self.pending
-            return {"results": self.requests}
-        if path == "/search":
-            return {"results": self.search_results}
-        if path == "/user":
-            return {"results": self.users}
-        return {"title": f"Title {path.rsplit('/', 1)[-1]}", "releaseDate": "2021-05-01"}
-
-
-class Patched:
-    def __init__(self, fake):
-        self.fake = fake
-
-    def __enter__(self):
-        self.saved = core.api
-        core.api = self.fake
-        return self.fake
-
-    def __exit__(self, *_exc):
-        core.api = self.saved
+def seerr_api(**more):
+    routes = {
+        "/request": lambda params: {"results": api.requests} if params.get("filter") != "pending" else api.pending,
+        "/search": lambda _p: {"results": api.search_results}, "/user": lambda _p: {"results": api.users},
+    }
+    api = FakeApi(**routes, **more)
+    api.requests, api.search_results, api.users = [], [], []
+    api.pending = {"results": [], "pageInfo": {"results": 0}}
+    api.fallback = lambda path, _params: {"title": f"Title {path.rsplit('/', 1)[-1]}", "releaseDate": "2021-05-01"}
+    return api
 
 
 def setup():
-    seerr.bot.store = Store(":memory:", migrate=core.init_db)
-    asyncio.run(seerr.bot.store.open())
-    seerr.bot.channels = {"c1"}
-    core._command_cooldown._last.clear()
+    seerr_cog.GUARD.cooldown._last.clear()
+    seerr_cog.CHOOSER._picks.clear()
     core.SEERR_DEFAULT_USER_ID = None
-    client = FakeAsyncClient(me_id="bot-1")
-    client.respond("GET", "/members", MEMBERS)
-    client.edited = []
-
-    async def record_edit(channel_id, message_id, content):
-        client.edited.append({"channel_id": channel_id, "message_id": message_id, "content": content})
-
-    client.edit_message = record_edit
-    seerr.bot.client = client
-    seerr.bot.space = Space(client)
-    seerr.bot.authors = AuthorFilter(client, space=seerr.bot.space, ignore_bots=True)
-    seerr.bot.me_id = "bot-1"
-    asyncio.run(seerr.bot.space.refresh_members())
-    return client
+    return harness.setup()
 
 
-def message(content, msg_id="m1", author="u1"):
-    return {"id": msg_id, "author_id": author, "channel_id": "c1", "content": content}
+def message(text, msg_id="m1", author="u1"):
+    return harness.message(text, msg_id, author)
 
 
 def process(*messages):
-    async def run():
-        for msg in messages:
-            await seerr.bot.process_message(msg)
-
-    asyncio.run(run())
+    harness.process(*messages)
 
 
-def poll(fake):
-    with Patched(fake):
+def poll(api):
+    with Patched(core, "api", api):
         asyncio.run(seerr.poll_once())
 
 
 def test_the_first_poll_announces_nothing_and_a_later_request_posts_with_buttons():
     client = setup()
-    fake = FakeSeerr()
+    fake = seerr_api()
     fake.requests = [request(1, status=2, media_status=5)]
     poll(fake)
     assert client.sent == []
@@ -211,7 +157,7 @@ def test_the_first_poll_announces_nothing_and_a_later_request_posts_with_buttons
 
 def test_a_failed_send_retries_without_repeating_what_landed():
     client = setup()
-    fake = FakeSeerr()
+    fake = seerr_api()
     fake.requests = [request(1, status=2, media_status=5)]
     poll(fake)
     fake.requests += [request(2, tmdb=2), request(3, tmdb=3)]
@@ -233,7 +179,7 @@ def test_a_failed_send_retries_without_repeating_what_landed():
 
 def test_a_seerr_outage_during_a_poll_raises_for_the_loop_to_retry():
     setup()
-    fake = FakeSeerr()
+    fake = seerr_api()
     fake.requests = [request(1)]
     poll(fake)
     fake.fail_with = OSError("down")
@@ -246,11 +192,11 @@ def test_a_seerr_outage_during_a_poll_raises_for_the_loop_to_retry():
 
 def test_requests_lists_pending_and_says_so_when_there_are_none():
     client = setup()
-    fake = FakeSeerr()
-    with Patched(fake):
+    fake = seerr_api()
+    with Patched(core, "api", fake):
         process(message("!requests"))
         assert "no requests are waiting" in client.sent[-1]["content"]
-        core._command_cooldown._last.clear()
+        seerr_cog.GUARD.cooldown._last.clear()
         fake.pending = {"results": [request(1, tmdb=7)], "pageInfo": {"results": 12}}
         process(message("!requests", "m2"))
     reply = client.sent[-1]["content"]
@@ -260,26 +206,26 @@ def test_requests_lists_pending_and_says_so_when_there_are_none():
 
 def test_request_without_a_link_or_default_user_asks_to_link_first():
     client = setup()
-    fake = FakeSeerr()
-    with Patched(fake):
+    fake = seerr_api()
+    with Patched(core, "api", fake):
         process(message("!request dune"))
     assert "link your seerr account first" in client.sent[-1]["content"] and not any(c[1] == "/search" for c in fake.calls)
 
 
 def test_link_finds_the_user_by_any_of_their_names_and_refuses_admins_and_taken_accounts():
     client = setup()
-    fake = FakeSeerr()
+    fake = seerr_api()
     fake.users = [
         {"id": 5, "displayName": "amy", "jellyfinUsername": "Amy", "permissions": 32},
         {"id": 1, "displayName": "npc", "permissions": 2},
     ]
-    with Patched(fake):
+    with Patched(core, "api", fake):
         process(message("!request link AMY"))
         assert asyncio.run(seerr.bot.store.run(core.get_link, "u1"))[0] == 5
-        core._command_cooldown._last.clear()
+        seerr_cog.GUARD.cooldown._last.clear()
         process(message("!request link npc", "m2"))
         assert asyncio.run(seerr.bot.store.run(core.get_link, "u1"))[0] == 5
-        core._command_cooldown._last.clear()
+        seerr_cog.GUARD.cooldown._last.clear()
         process(message("!request link amy", "m3", author="u2"))
     texts = [e["content"] for e in client.ephemerals]
     assert any("linked you" in t for t in texts) and any("admin accounts cannot be linked" in t for t in texts) and any("already linked" in t for t in texts)
@@ -288,10 +234,10 @@ def test_link_finds_the_user_by_any_of_their_names_and_refuses_admins_and_taken_
 
 def test_link_to_an_unknown_user_and_unlink_and_account_answer_plainly():
     client = setup()
-    fake = FakeSeerr()
-    with Patched(fake):
+    fake = seerr_api()
+    with Patched(core, "api", fake):
         process(message("!request link ghost"))
-        core._command_cooldown._last.clear()
+        seerr_cog.GUARD.cooldown._last.clear()
         process(message("!request account", "m2"), message("!request unlink", "m3"))
     texts = [e["content"] for e in client.ephemerals]
     assert any('no seerr user called "ghost"' in t for t in texts)
@@ -300,41 +246,40 @@ def test_link_to_an_unknown_user_and_unlink_and_account_answer_plainly():
 
 def test_an_unreachable_seerr_answers_with_a_sentence_not_a_traceback():
     client = setup()
-    fake = FakeSeerr()
+    fake = seerr_api()
     fake.fail_with = OSError("refused")
-    with Patched(fake):
+    with Patched(core, "api", fake):
         process(message("!requests"))
     assert "unavailable right now" in client.sent[-1]["content"]
 
 
 def test_a_rejected_api_key_says_so():
     client = setup()
-    fake = FakeSeerr()
-    fake.fail_with = core.SeerrAuthError("no")
-    with Patched(fake):
+    fake = seerr_api()
+    fake.fail_with = AuthError("no")
+    with Patched(core, "api", fake):
         process(message("!requests"))
     assert "api key" in client.sent[-1]["content"]
 
 
 def test_an_oversized_title_is_refused_before_touching_seerr():
     client = setup()
-    fake = FakeSeerr()
-    with Patched(fake):
+    fake = seerr_api()
+    with Patched(core, "api", fake):
         process(message("!request " + "x" * 200))
     assert "between" in client.sent[-1]["content"] and fake.calls == []
 
 
-def test_the_config_check_rejects_a_public_plaintext_url_and_a_bogus_permission_name():
+def test_the_approver_permission_must_be_a_real_slim_m_permission_name():
     from slimbots import Permissions
-    saved = core.SEERR_URL, core.SEERR_APPROVER_PERMISSION
+    saved = core.SEERR_APPROVER_PERMISSION
     try:
-        for url, ok in (("http://jellyseerr:5055", True), ("http://127.0.0.1:5055", True), ("http://seerr.example.com", False), ("https://seerr.example.com", True)):
-            core.SEERR_URL = url
-            assert (core.check_seerr_config(Permissions) is None) is ok, url
-        core.SEERR_URL, core.SEERR_APPROVER_PERMISSION = "https://x.example.com", "MANAGE_NOTHING"
-        assert "MANAGE_NOTHING" in core.check_seerr_config(Permissions)
+        core.SEERR_APPROVER_PERMISSION = "MANAGE_SERVER"
+        assert core.permission_problem(Permissions) is None
+        core.SEERR_APPROVER_PERMISSION = "MANAGE_NOTHING"
+        assert "MANAGE_NOTHING" in core.permission_problem(Permissions)
     finally:
-        core.SEERR_URL, core.SEERR_APPROVER_PERMISSION = saved
+        core.SEERR_APPROVER_PERMISSION = saved
 
 
 if __name__ == "__main__":

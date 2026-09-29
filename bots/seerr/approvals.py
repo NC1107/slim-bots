@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import urllib.error
 
+from arrkit.guard import UNREACHABLE
+from arrkit.service import AuthError
 from slimbots import ApiError, Button, Permissions, rows
 
 import seerr_core as core
@@ -56,7 +57,7 @@ async def on_decision_press(interaction):
     verb = "approved" if action == "approve" else "declined"
     try:
         await asyncio.to_thread(core.set_request_state, raw_id, action)
-    except (urllib.error.URLError, TimeoutError, OSError, core.SeerrAuthError):
+    except (*UNREACHABLE, AuthError):
         with contextlib.suppress(ApiError):
             await interaction.reply_ephemeral(f"seerr did not accept that - request {raw_id} is unchanged.")
         return

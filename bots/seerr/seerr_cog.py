@@ -1,35 +1,19 @@
 """bot-seerr's `!request` and `!requests` commands; an extension, see docs/framework.md."""
 
 import asyncio
-import urllib.error
 
+from arrkit.chooser import Chooser, Pick
+from arrkit.guard import UNREACHABLE, Guard
 from slimbots import ApiError
 from slimbots.limits import ValidationError, require_len
 
-import picker
 import seerr_core as core
 
+GUARD = Guard(core.SERVICE)
+CHOOSER = Chooser("seerrpick:", "request", lambda item: core.result_title(item)[:80], "request")
 SEERR_ADMIN_BIT = 2
 NAME_MAX = 100
 RESERVED = ("link", "unlink", "account", "help")
-
-
-async def _guarded(ctx, call, *args):
-    """Runs a blocking Seerr call; on failure answers with a sentence and returns None."""
-    try:
-        return await asyncio.to_thread(call, *args)
-    except core.SeerrAuthError:
-        await ctx.reply("seerr rejected the bot's api key - an admin needs to fix it.")
-    except (urllib.error.URLError, TimeoutError, OSError):
-        await ctx.reply("seerr is unavailable right now (it did not answer).")
-    return None
-
-
-async def _throttled(ctx):
-    wait = core._command_cooldown.check(ctx.author.id)
-    if wait:
-        await ctx.reply(wait)
-    return bool(wait)
 
 
 async def _tell(ctx, text, fallback):
@@ -55,11 +39,11 @@ async def run_request(ctx, title):
         await ctx.reply(str(err))
         return
     if await seerr_user_for(ctx.bot, ctx.author.id) is None:
-        await ctx.reply("link your seerr account first: `!request link <your seerr username>`.")
+        await ctx.reply(f"link your seerr account first: `{ctx.bot.prefix}request link <your seerr username>`.")
         return
-    if await _throttled(ctx):
+    if await GUARD.throttled(ctx):
         return
-    found = await _guarded(ctx, core.search, title)
+    found = await GUARD.call(ctx, core.search, title)
     if found is None:
         return
     open_items = [r for r in found if (r.get("mediaInfo") or {}).get("status") not in core.UNAVAILABLE_FOR_REQUEST]
@@ -73,25 +57,29 @@ async def run_request(ctx, title):
     async def on_choose(item):
         return await _file_request(ctx.bot, ctx.author.id, item)
 
-    pick = picker.Pick(ctx.author.id, ctx.author.display_name, ctx.channel_id, open_items, title, on_choose, skipped=len(found) - len(open_items))
-    await picker.open_pick(ctx.bot, pick, reply_to_id=ctx.message.get("id"))
+    pick = Pick(ctx.author.id, ctx.author.display_name, ctx.channel_id, open_items, title, on_choose, note=_skipped_note(len(found) - len(open_items)))
+    await CHOOSER.open(ctx.bot, pick, reply_to_id=ctx.message.get("id"))
+
+
+def _skipped_note(count):
+    return f" ({count} already requested or available, left out)" if count else ""
 
 
 async def _file_request(bot, slimm_user_id, item):
     user_id = await seerr_user_for(bot, slimm_user_id)
     try:
         await asyncio.to_thread(core.create_request, item, user_id)
-    except core.SeerrAuthError:
+    except core.AuthError:
         return "seerr rejected the bot's api key - an admin needs to fix it."
-    except (urllib.error.URLError, TimeoutError, OSError):
+    except UNREACHABLE:
         return f"could not request **{core.result_title(item)}**: seerr did not accept it (it may already be requested)."
     return f"requested **{core.result_title(item)}**."
 
 
 async def run_pending(ctx):
-    if await _throttled(ctx):
+    if await GUARD.throttled(ctx):
         return
-    found = await _guarded(ctx, core.pending_requests)
+    found = await GUARD.call(ctx, core.pending_requests)
     if found is None:
         return
     requests, total = found
@@ -109,14 +97,14 @@ async def run_pending(ctx):
 
 
 async def run_link(ctx, name):
-    if await _throttled(ctx):
+    if await GUARD.throttled(ctx):
         return
     try:
         name = require_len((name or "").strip(), max_len=NAME_MAX, min_len=1, field="a seerr username")
     except ValidationError as err:
         await ctx.reply(str(err))
         return
-    user = await _guarded(ctx, core.find_user, name)
+    user = await GUARD.call(ctx, core.find_user, name)
     if user is None:
         await _tell(ctx, f'there is no seerr user called "{name}".', "no such seerr user.")
         return
@@ -128,7 +116,8 @@ async def run_link(ctx, name):
         await _tell(ctx, f'"{core.display_name(user)}" is already linked to someone else.', "that seerr user is already linked.")
         return
     await ctx.bot.store.run(core.set_link, ctx.author.id, user["id"], core.display_name(user))
-    await _tell(ctx, f'linked you to the seerr user "{core.display_name(user)}". `!request` now files requests as them, and `!request unlink` undoes it.', "linked.")
+    prefix = ctx.bot.prefix
+    await _tell(ctx, f'linked you to the seerr user "{core.display_name(user)}". `{prefix}request` now files requests as them, and `{prefix}request unlink` undoes it.', "linked.")
 
 
 async def run_unlink(ctx):
@@ -138,12 +127,13 @@ async def run_unlink(ctx):
 
 async def run_account(ctx):
     link = await ctx.bot.store.run(core.get_link, ctx.author.id)
-    text = f'you are linked to the seerr user "{link[1]}".' if link else "you are not linked. `!request link <seerr username>` links you."
-    await _tell(ctx, text, "see `!request help`.")
+    prefix = ctx.bot.prefix
+    text = f'you are linked to the seerr user "{link[1]}".' if link else f"you are not linked. `{prefix}request link <seerr username>` links you."
+    await _tell(ctx, text, f"see `{prefix}request help`.")
 
 
 def setup(bot):
-    bot.button(prefix=picker.ID_PREFIX)(picker.on_pick_press)
+    CHOOSER.register(bot)
 
     @bot.command(name="request", help="`<title>`, `link <seerr username>`, `unlink`, `account` or `help`", usage="<title>|link|unlink|account|help")
     async def request_cmd(ctx, sub: str = "help", rest: str = None):
@@ -155,7 +145,7 @@ def setup(bot):
         elif word == "account":
             await run_account(ctx)
         elif word == "help":
-            await ctx.reply(core.HELP_TEXT)
+            await ctx.reply(core.help_text(ctx.bot.prefix))
         else:
             await run_request(ctx, sub if rest is None else f"{sub} {rest}")
 

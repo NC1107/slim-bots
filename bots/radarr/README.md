@@ -12,6 +12,7 @@ RADARR_API_KEY=... \
 python3 bot.py
 ```
 
+Shared code lives in `../arrkit`; a copy of this bot needs it alongside.
 Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`.
 `SLIMM_CHANNELS` names exactly one channel: announcements land there and `!radarr` is answered there.
 The bot needs `VIEW_CHANNEL` and `SEND_MESSAGES` in it.
