@@ -43,10 +43,16 @@ CHANNEL_MISS_REFRESH_SECONDS = 30.0
 # Frames that can change which channels the bot may see, beyond the channel lifecycle frames themselves.
 _VISIBILITY_FRAMES = frozenset({"overwrite.changed", "role.changed", "member.role_changed"})
 
+TRUTHY = frozenset({"1", "true", "yes", "on"})
+
+
+def _split_list(raw: str) -> list[str]:
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 EventFrame = tuple[str, "type[Any] | None"]
 
-# Deployment-wide (or DM/user-scoped) frame types: (handler name, payload class or None for the raw frame).
-# member.joined is not here; see the on_member_join special case in _handle_frame below.
+# Deployment-wide frame types: (handler name, payload class or None for the raw frame); member.joined is special-cased below.
 _GLOBAL_EVENT_FRAMES: dict[str, EventFrame] = {
     "member.removed": ("on_member_removed", None),
     "member.restored": ("on_member_restored", None),
@@ -205,9 +211,24 @@ class Bot:
             return int(raw)
         if type is float:
             return float(raw)
+        if type is bool:
+            return raw.strip().lower() in TRUTHY
         if type is list:
-            return [item.strip() for item in raw.split(",") if item.strip()]
+            return _split_list(raw)
+        if type is dict:
+            return self._pairs_setting(name, raw)
         return raw
+
+    def _pairs_setting(self, name: str, raw: str) -> dict[str, str]:
+        """`"a:1,b:2"` -> `{"a": "1", "b": "2"}` in order; a malformed entry is reported at `start()` like a missing one."""
+        pairs = {}
+        for entry in _split_list(raw):
+            key, _, value = entry.partition(":")
+            if not key.strip() or not value.strip():
+                self._setting_errors.append(f"{name} (bad entry {entry!r})")
+                continue
+            pairs[key.strip()] = value.strip()
+        return pairs
 
     def command(
         self, name: str | None = None, *, aliases: tuple[str, ...] = (), help: str | None = None, usage: str | None = None,
@@ -316,13 +337,7 @@ class Bot:
 
     async def _resolve_author(self, author_id: str) -> Member | None:
         assert self.space is not None, "_resolve_author needs an open connection"
-        member = self.space.members.get(author_id)
-        if member is not None:
-            return member
-        try:
-            return await self.space.fetch_member(author_id)
-        except ApiError:
-            return None
+        return await self.space.find_member(author_id)
 
     async def process_message(self, message: dict[str, Any]) -> None:
         """One `message.created` payload: the bot-ignore default, command

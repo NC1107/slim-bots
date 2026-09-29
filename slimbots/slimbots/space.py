@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .http import ApiError
 from .models import Channel, Member, Role
 
 if TYPE_CHECKING:
@@ -71,6 +72,16 @@ class Space:
         member = self._make_member(data)
         self.members[user_id] = member
         return member
+
+    async def find_member(self, user_id: str) -> Member | None:
+        """The cached member for `user_id`, else one fetched directly; None when the server has no such user."""
+        member = self.members.get(user_id)
+        if member is not None:
+            return member
+        try:
+            return await self.fetch_member(user_id)
+        except ApiError:
+            return None
 
     async def get_member(self, id_or_name: str) -> Member | None:
         """A cached member by id or by username/display name (case-insensitive)."""

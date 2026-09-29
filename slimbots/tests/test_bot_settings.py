@@ -73,3 +73,30 @@ async def test_cursor_shares_data_path_when_no_explicit_cursor_path_is_given(mon
     monkeypatch.setattr(bot, "_run_forever", fake_run_forever)
     await bot.start()
     assert bot._cursor_conn is not None
+
+
+def test_setting_converts_bool_from_the_usual_truthy_words(monkeypatch):
+    bot = Bot()
+    for raw, expected in [("1", True), ("true", True), (" Yes ", True), ("on", True), ("0", False), ("off", False), ("nope", False)]:
+        monkeypatch.setenv("FLAG", raw)
+        assert bot.setting("FLAG", False, type=bool) is expected
+    monkeypatch.delenv("FLAG")
+    assert bot.setting("FLAG", False, type=bool) is False
+
+
+def test_setting_converts_dict_pairs_in_order(monkeypatch):
+    monkeypatch.setenv("ROUTES", "lib1:chan1, lib2 : chan2,")
+    bot = Bot()
+    routes = bot.setting("ROUTES", {}, type=dict)
+    assert routes == {"lib1": "chan1", "lib2": "chan2"}
+    assert list(routes) == ["lib1", "lib2"]
+
+
+async def test_a_malformed_dict_entry_is_reported_at_start(monkeypatch):
+    monkeypatch.setenv("SLIMM_URL", "https://fake.invalid")
+    monkeypatch.setenv("SLIMM_BOT_TOKEN", "slimbot_fake")
+    monkeypatch.setenv("ROUTES", "lib1:chan1,broken")
+    bot = Bot()
+    assert bot.setting("ROUTES", {}, type=dict) == {"lib1": "chan1"}
+    with pytest.raises(RuntimeError, match="ROUTES.*'broken'"):
+        await bot.start()
