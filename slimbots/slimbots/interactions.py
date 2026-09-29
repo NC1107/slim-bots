@@ -31,7 +31,7 @@ class Interaction:
     async def reply_ephemeral(self, content: str) -> Any:
         """Answers only the member who pressed; the server allows three of these per press."""
         assert self.bot.client is not None
-        result = await self.bot.client.send_ephemeral(self.channel_id, self.id, content)
+        result = await self.bot.client.send_ephemeral_to_press(self.channel_id, self.id, content)
         self.answered = True
         return result
 

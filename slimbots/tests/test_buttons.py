@@ -94,7 +94,7 @@ async def test_a_handler_can_answer_privately_and_that_counts_as_the_answer():
 
     await deliver(bot, press("hit"))
     assert bot.client.ephemerals == [
-        {"channel_id": "c1", "in_reply_to_id": "i1", "content": "you drew a king"},
+        {"channel_id": "c1", "interaction_id": "i1", "content": "you drew a king"},
     ]
     assert bot.client.acks == []
 

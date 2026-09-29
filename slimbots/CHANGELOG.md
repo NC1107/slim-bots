@@ -12,7 +12,7 @@ Ephemeral replies expect a slim-m server with ephemeral messages (decision 0036)
 - `FakeAsyncClient` records private answers in `client.ephemerals`, apart from `client.sent`.
 - `bot-greeter` refuses `!welcome here` privately.
 - 0.6.0: new buttons on messages: `Button`, `rows()` and `send(components=...)`, with `@bot.button(custom_id)` / `@bot.button(prefix=...)` handlers that receive an `Interaction` naming who pressed. Expects the server's buttons support (decision 0039, which stacks on decision 0037).
-- `Interaction.reply_ephemeral`, `.edit_components` and `.ack` answer a press; a handler that returns quietly is acked for it. `AsyncClient` gains `edit_components` and `ack_interaction`.
+- `Interaction.reply_ephemeral`, `.edit_components` and `.ack` answer a press; a handler that returns quietly is acked for it. `AsyncClient` gains `edit_components`, `ack_interaction` and `send_ephemeral_to_press`.
 - `FakeAsyncClient` records `component_edits` and `acks`.
 
 ## 0.5.1

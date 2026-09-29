@@ -265,7 +265,7 @@ The interaction names who pressed (`user_id`, `user_display_name`), the pressed 
 A press with no matching handler still reaches any `on_interaction` listener.
 
 Answer within 15 minutes, in any of three ways; the member's button waits until you do, and shows an error if nothing comes back in about five seconds.
-`await interaction.reply_ephemeral(text)` answers only the presser, three times at most per press, through the same route as a private reply.
+`await interaction.reply_ephemeral(text)` answers only the presser, three times at most per press, through the private-reply route with `interaction_id` in place of `in_reply_to_id` (the two are separate fields and one of them is required).
 `await interaction.edit_components(rows(...))` replaces the buttons on the pressed message, for example with `disabled=True` ones, and `[]` clears them.
 `await interaction.ack()` says the press needs no visible answer.
 A handler that returns without answering is acked for you, so a quiet handler does not look broken; one that raises is not, so the member sees the failure.

@@ -182,6 +182,11 @@ class AsyncClient:
         body = {"in_reply_to_id": in_reply_to_id, "content": content}
         return await self.call("POST", f"/channels/{channel_id}/ephemeral-messages", body)
 
+    async def send_ephemeral_to_press(self, channel_id: str, interaction_id: str, content: str) -> Any:
+        """Answers whoever pressed the button behind `interaction_id`; a separate field from a message anchor."""
+        body = {"interaction_id": interaction_id, "content": content}
+        return await self.call("POST", f"/channels/{channel_id}/ephemeral-messages", body)
+
     async def edit_components(
         self, channel_id: str, message_id: str, components: Rows, *, interaction_id: str | None = None,
     ) -> Any:
