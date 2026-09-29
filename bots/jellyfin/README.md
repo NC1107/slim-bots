@@ -224,6 +224,14 @@ body so the title shows once. A post without a poster is plain text only.
 See `../../docs/framework.md`'s embeds section for the fallback an older
 server gets instead.
 
+A message carries exactly one poster. Checked against the live channel on 2026-09-29: every recent post has one
+`poster.jpg` attachment and an embed with no image, and the web client draws the image once. The two sizes that once read as
+a double upload are one file in two units - the api reports bytes (481585) and the client shows KiB under the image (470.3 KB).
+
+The same episode can still be posted more than once, and that is Jellyfin, not the poster path. When Sonarr replaces a file
+Jellyfin makes a new item with a new id and a new `DateCreated`, so the dedupe by item id treats it as new.
+A series that arrives episode by episode over an hour also gets one grouped post per poll.
+
 ## What was and was not verified in this port
 
 The auth header, `DateCreated`-vs-`DateLastSaved`, and paging findings above
