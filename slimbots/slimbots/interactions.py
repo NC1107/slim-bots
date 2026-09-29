@@ -1,4 +1,4 @@
-"""A member pressing one of this bot's buttons (slim-m decision 0038), and how `@bot.button` finds its handler."""
+"""A member pressing one of this bot's buttons (slim-m decision 0039), and how `@bot.button` finds its handler."""
 
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-"""Buttons for a bot's message (slim-m decision 0038): `Button` and `rows()`, the wire shape `send(components=...)` takes."""
+"""Buttons for a bot's message (slim-m decision 0039): `Button` and `rows()`, the wire shape `send(components=...)` takes."""
 
 from __future__ import annotations
 

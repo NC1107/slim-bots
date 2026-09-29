@@ -255,7 +255,7 @@ On a server that predates it the call is a 404 or 405 and raises `ApiError`; pas
 
 ## Buttons
 
-A message can carry buttons (slim-m decision 0038): `await ctx.send("Hit or stand?", components=rows([Button("Hit", "hit", style="primary"), Button("Stand", "stand")]))`.
+A message can carry buttons (slim-m decision 0039): `await ctx.send("Hit or stand?", components=rows([Button("Hit", "hit", style="primary"), Button("Stand", "stand")]))`.
 `Button(label, custom_id, style=..., disabled=...)` takes a style of `primary`, `secondary` or `danger`; `Button.link(label, url)` opens a page and never reaches the bot.
 The caps are the server's and Discord's: 5 rows of 5 buttons, an 80-character label, a 100-character `custom_id` unique within the message.
 `Button` refuses an over-cap value before the send, and only a bot may send buttons at all.
