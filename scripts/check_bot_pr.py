@@ -16,6 +16,7 @@ EXEMPT = {"ping": {"test_bot.py"}}
 
 # Feature pattern in bot source -> first slim-m release that provides it (see slimbots/CHANGELOG.md).
 FEATURES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    (r"\btime_out_member\b|\blift_member_timeout\b", "AsyncClient.time_out_member / lift_member_timeout", (0, 6, 0)),
     (r"\bunpublish_screen_share\b", "VoiceSession.unpublish_screen_share", (0, 5, 1)),
     (r"\blisten_voice_chats\b|\bmention_commands\b|\bSLIMM_PREFIX\b", "voice-chat listening / @name commands", (0, 5, 0)),
     (r"\b(video_max_bitrate|video_max_framerate|audio_max_bitrate)\b", "publish bitrate ceilings", (0, 4, 3)),
