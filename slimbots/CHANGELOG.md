@@ -3,6 +3,14 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## Unreleased
+
+- Fix: a bot with `listen_voice_chats` never heard a voice channel created, or made visible to it, after it connected. `space.channels` was only loaded on connect.
+- `space.channels` now follows `channel.created`, `channel.updated` and `channel.deleted`, and is reloaded on `overwrite.changed`, `role.changed` and the bot's own `member.role_changed`, since those can make a channel newly visible.
+- A frame for a channel id the space does not know triggers one channel reload, at most once per id per 30 seconds, as a backstop.
+- A frame dropped because the bot does not listen in its channel is logged at debug level on the `slimbots.bot` logger.
+- `Space.apply_channel_frame(frame)` is new.
+
 ## 0.7.0
 
 Menu entries and call controls expect a slim-m server with bot-contributed UI (decision 0045, which stacks on decision 0039).
