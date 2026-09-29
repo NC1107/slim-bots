@@ -80,17 +80,22 @@ def check_bot(bot_dir: Path) -> list[str]:
     return problems
 
 
-REF_NAME = re.compile(r"\w[\w./-]*", re.ASCII)
+SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
-def valid_ref(ref: str) -> bool:
-    return REF_NAME.fullmatch(ref) is not None and ".." not in ref
+def resolve_base(base: str, root: Path = ROOT) -> str:
+    """The commit SHA `base` names; git never parses the user string as an option."""
+    cmd = ["git", "rev-parse", "--verify", "--quiet", "--end-of-options", f"{base}^{{commit}}"]
+    done = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
+    sha = done.stdout.strip()
+    if done.returncode != 0 or SHA.fullmatch(sha) is None:
+        raise ValueError(f"refusing --base {base!r}: not a commit in this repository")
+    return sha
 
 
 def changed_bots(base: str, root: Path = ROOT) -> list[str]:
-    if not valid_ref(base):
-        raise ValueError(f"refusing --base {base!r}: not a plain git ref name")
-    cmd = ["git", "diff", "--name-only", f"{base}...HEAD", "--", "bots"]
+    sha = resolve_base(base, root)
+    cmd = ["git", "diff", "--name-only", f"{sha}...HEAD", "--", "bots"]
     out = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=True).stdout
     return sorted({p.split("/")[1] for p in out.splitlines() if p.startswith("bots/") and p.count("/") >= 2})
 
@@ -99,9 +104,10 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--base", help="git ref; check only bots changed since it (default: every bot)")
     args = ap.parse_args(argv)
-    if args.base and not valid_ref(args.base):
-        ap.error(f"--base {args.base!r} is not a plain git ref name")
-    names = changed_bots(args.base) if args.base else sorted(p.name for p in (ROOT / "bots").iterdir() if p.is_dir())
+    try:
+        names = changed_bots(args.base) if args.base else sorted(p.name for p in (ROOT / "bots").iterdir() if p.is_dir())
+    except ValueError as err:
+        ap.error(str(err))
     problems: list[str] = []
     for name in names:
         bot_dir = ROOT / "bots" / name

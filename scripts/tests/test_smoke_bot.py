@@ -69,21 +69,37 @@ def test_bad_bot_names_refused(bot):
         s.bot_paths(bot)
 
 
-def test_good_bot_name_resolves_inside_repo(tmp_path):
-    bot_dir, manifest = s.bot_paths("casino", tmp_path)
+def make_repo(root):
+    (root / "bots" / "casino").mkdir(parents=True)
+    (root / "scripts" / "smoke").mkdir(parents=True)
+    (root / "scripts" / "smoke" / "casino.json").write_text("{}")
+
+
+def test_good_bot_name_resolves_from_listing(tmp_path):
+    make_repo(tmp_path)
+    name, bot_dir, manifest = s.bot_paths("casino", root=tmp_path)
+    assert name == "casino"
     assert bot_dir == (tmp_path / "bots" / "casino").resolve()
     assert manifest == (tmp_path / "scripts" / "smoke" / "casino.json").resolve()
 
 
+def test_unlisted_bot_and_manifest_refused(tmp_path):
+    make_repo(tmp_path)
+    with pytest.raises(ValueError):
+        s.bot_paths("nope", root=tmp_path)
+    with pytest.raises(ValueError):
+        s.bot_paths("casino", "../../etc/passwd", root=tmp_path)
+
+
 def test_symlink_escape_refused(tmp_path):
-    (tmp_path / "bots").mkdir()
+    make_repo(tmp_path)
     (tmp_path / "outside").mkdir()
     (tmp_path / "bots" / "evil").symlink_to(tmp_path / "outside")
     with pytest.raises(ValueError):
-        s.bot_paths("evil", tmp_path)
+        s.bot_paths("evil", root=tmp_path)
 
 
-def test_manifest_and_output_paths_are_confined(tmp_path):
+def test_manifest_path_is_confined(tmp_path):
     with pytest.raises(ValueError):
         s.confined(tmp_path / ".." / "x.json", tmp_path)
 

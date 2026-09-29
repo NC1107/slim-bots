@@ -92,16 +92,22 @@ def test_changed_bots_lists_only_touched_dirs(tmp_path):
     assert c.changed_bots("main", tmp_path) == ["new"]
 
 
-@pytest.mark.parametrize("ref", ["--output=/tmp/x", "-h", "main..evil", "a b", "", "main;rm", "$(x)", "--"])
-def test_hostile_base_refused(ref):
-    assert not c.valid_ref(ref)
+@pytest.mark.parametrize("ref", ["--output=/tmp/x", "-h", "main..evil", "a b", "", "main;rm", "$(x)", "--", "nonexistent"])
+def test_hostile_or_unknown_base_refused(ref):
     with pytest.raises(ValueError):
         c.changed_bots(ref)
 
 
-@pytest.mark.parametrize("ref", ["origin/main", "main", "feature/x-1.2"])
-def test_plain_ref_accepted(ref):
-    assert c.valid_ref(ref)
+def test_option_like_base_is_never_run_as_a_git_option(tmp_path):
+    with pytest.raises(ValueError):
+        c.resolve_base("--output=" + str(tmp_path / "pwned"), tmp_path)
+    assert not (tmp_path / "pwned").exists()
+
+
+def test_resolve_base_returns_a_sha_for_a_real_ref(tmp_path):
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "x"], cwd=tmp_path, check=True)
+    assert c.SHA.fullmatch(c.resolve_base("main", tmp_path))
 
 
 def test_main_rejects_option_like_base():

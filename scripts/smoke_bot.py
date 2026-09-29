@@ -7,7 +7,7 @@ For the owner or orchestrator, never CI. Needs (all from env, none printed):
   SLIMM_SMOKE_TESTER_TOKEN   a second account (user or bot) that types the commands
   SLIMM_SMOKE_CHANNEL        a private channel holding only those two accounts
   SLIMM_SMOKE_PRIVATE=1      your statement that the channel really is private
-The transcript is written to smoke-<bot>-<timestamp>.md for the PR as evidence.
+The transcript is written to smoke-transcripts/smoke-<bot>-<timestamp>.md for the PR as evidence.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from typing import Any, Callable
 import httpx
 
 ROOT = Path(__file__).resolve().parent.parent
+TRANSCRIPT_DIR = ROOT / "smoke-transcripts"
 BOT_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 MAX_STEPS = 50
 MAX_TIMEOUT = 120
@@ -42,11 +43,21 @@ def confined(path: Path, parent: Path) -> Path:
     return resolved
 
 
-def bot_paths(bot: str, root: Path = ROOT) -> tuple[Path, Path]:
-    """The bot's directory and default manifest, for a name that is a plain directory name."""
-    if BOT_NAME.fullmatch(bot) is None:
-        raise ValueError(f"bot name {bot!r} must match {BOT_NAME.pattern}")
-    return confined(root / "bots" / bot, root / "bots"), confined(root / "scripts" / "smoke" / f"{bot}.json", root / "scripts" / "smoke")
+def listed(directory: Path, wanted: str, *, suffix: str = "") -> Path:
+    """The entry of `directory` named `wanted`, chosen from a listing so the argument never builds a path itself."""
+    entries = sorted(directory.iterdir())
+    match = next((e for e in entries if e.name == wanted and e.name.endswith(suffix)), None)
+    if match is None:
+        raise ValueError(f"{wanted!r} is not one of: {', '.join(e.name for e in entries)}")
+    return confined(match, directory)
+
+
+def bot_paths(bot: str, manifest: str | None = None, root: Path = ROOT) -> tuple[str, Path, Path]:
+    """The listed bot name, its directory and its manifest, all derived from directory listings."""
+    bot_dir = listed(root / "bots", bot)
+    if not bot_dir.is_dir() or BOT_NAME.fullmatch(bot_dir.name) is None:
+        raise ValueError(f"{bot!r} is not a bot directory")
+    return bot_dir.name, bot_dir, listed(root / "scripts" / "smoke", manifest or f"{bot_dir.name}.json", suffix=".json")
 
 
 def bounded_number(value: Any, label: str, maximum: int) -> float:
@@ -124,15 +135,15 @@ def render(bot: str, results: list[dict[str, Any]]) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("bot", help="directory name under bots/")
-    ap.add_argument("--manifest", type=Path, help="default: scripts/smoke/<bot>.json")
+    ap.add_argument("--manifest", help="file name under scripts/smoke/, default <bot>.json")
     args = ap.parse_args(argv)
     missing = missing_env(dict(os.environ))
     if missing:
         print(f"refusing to run, set: {', '.join(missing)}", file=sys.stderr)
         return 2
     try:
-        bot_dir, default_manifest = bot_paths(args.bot)
-        manifest = load_manifest(confined(args.manifest or default_manifest, ROOT / "scripts" / "smoke"))
+        name, bot_dir, manifest_path = bot_paths(args.bot, args.manifest)
+        manifest = load_manifest(manifest_path)
     except ValueError as err:
         print(f"refusing to run: {err}", file=sys.stderr)
         return 2
@@ -158,8 +169,9 @@ def main(argv: list[str] | None = None) -> int:
     finally:
         proc.terminate()
         proc.wait(timeout=15)
-    out = confined(Path.cwd() / f"smoke-{args.bot}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.md", Path.cwd())
-    out.write_text(render(args.bot, results))
+    TRANSCRIPT_DIR.mkdir(exist_ok=True)
+    out = TRANSCRIPT_DIR / f"smoke-{name}-{datetime.now(timezone.utc):%Y%m%d-%H%M%S}.md"
+    out.write_text(render(name, results))
     failed = [r for r in results if not r["ok"]]
     print(f"{len(results) - len(failed)}/{len(results)} steps ok, transcript at {out}")
     return 1 if failed else 0
