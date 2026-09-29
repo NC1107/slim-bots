@@ -160,6 +160,85 @@ def test_a_malformed_decision_id_is_ignored():
     assert decisions(api) == []
 
 
+USERS = [
+    {"id": 5, "displayName": "amy", "jellyfinUsername": "Amy", "permissions": 32},
+    {"id": 1, "displayName": "npc", "permissions": 2},
+]
+
+
+def link_setup():
+    """u1 holds the approver permission, u2 does not; Seerr knows a normal user and an admin."""
+    client = approval_setup()[0]
+    api = seerr_api()
+    api.users = USERS
+    seerr_cog.GUARD.cooldown._last.clear()
+    return client, api
+
+
+def say(api, text, author="u1", msg_id="m1"):
+    seerr_cog.GUARD.cooldown._last.clear()
+    with Patched(core, "api", api):
+        harness.process(harness.message(text, msg_id, author))
+
+
+def link_of(member_id):
+    return asyncio.run(seerr.bot.store.run(core.get_link, member_id))
+
+
+def test_an_approver_links_another_member_by_any_seerr_name():
+    client, api = link_setup()
+    say(api, "!request link @amy AMY")
+    assert link_of("u2")[0] == 5 and "linked @amy" in client.sent[-1]["content"]
+
+
+def test_an_approver_may_link_an_admin_seerr_account():
+    client, api = link_setup()
+    say(api, "!request link @nick npc")
+    assert link_of("u1")[0] == 1
+
+
+def test_a_non_approver_cannot_link_themselves_or_anyone_else():
+    client, api = link_setup()
+    say(api, "!request link @amy amy", author="u2")
+    say(api, "!request link @nick npc", author="u2", msg_id="m2")
+    assert link_of("u2") is None and link_of("u1") is None
+    assert client.ephemerals[-1]["content"].startswith("only members with MANAGE_SERVER can link or unlink")
+    assert not any(c[1] == "/user" for c in api.calls)
+
+
+def test_unlink_is_gated_the_same_way_and_removes_a_link_for_an_approver():
+    client, api = link_setup()
+    asyncio.run(seerr.bot.store.run(core.set_link, "u2", 5, "amy"))
+    say(api, "!request unlink @amy", author="u2")
+    assert link_of("u2") is not None
+    say(api, "!request unlink @amy", msg_id="m2")
+    assert link_of("u2") is None and "unlinked @amy" in client.sent[-1]["content"]
+
+
+def test_one_seerr_user_links_to_at_most_one_member_and_unknown_names_are_reported():
+    client, api = link_setup()
+    say(api, "!request link @amy amy")
+    say(api, "!request link @nick amy", msg_id="m2")
+    assert link_of("u1") is None and "already linked to someone else" in client.sent[-1]["content"]
+    say(api, "!request link @nick ghost", msg_id="m3")
+    assert 'no seerr user called "ghost"' in client.sent[-1]["content"]
+
+
+def test_link_without_a_member_or_with_an_unknown_one_says_how_to_use_it():
+    client, api = link_setup()
+    say(api, "!request link")
+    say(api, "!request link @nobody amy", msg_id="m2")
+    assert client.sent[-1]["content"].startswith("name a member first") and client.sent[-2]["content"].startswith("name a member first")
+
+
+def test_a_bot_that_cannot_read_roles_refuses_link_commands_and_says_what_it_needs():
+    client = harness.setup()
+    api = seerr_api()
+    api.users = USERS
+    say(api, "!request link @amy amy")
+    assert "MANAGE_ROLES" in client.ephemerals[-1]["content"] and link_of("u2") is None
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

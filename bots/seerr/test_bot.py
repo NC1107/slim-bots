@@ -204,44 +204,27 @@ def test_requests_lists_pending_and_says_so_when_there_are_none():
     assert "...and 11 more." in reply
 
 
-def test_request_without_a_link_or_default_user_asks_to_link_first():
+def test_request_without_a_link_or_default_user_asks_for_an_approver():
     client = setup()
     fake = seerr_api()
     with Patched(core, "api", fake):
         process(message("!request dune"))
-    assert "link your seerr account first" in client.sent[-1]["content"] and not any(c[1] == "/search" for c in fake.calls)
+    assert "ask a member who can approve requests to link you" in client.sent[-1]["content"] and not any(c[1] == "/search" for c in fake.calls)
 
 
-def test_link_finds_the_user_by_any_of_their_names_and_refuses_admins_and_taken_accounts():
+def test_account_tells_an_unlinked_member_to_ask_an_approver_and_shows_a_link():
     client = setup()
-    fake = seerr_api()
-    fake.users = [
-        {"id": 5, "displayName": "amy", "jellyfinUsername": "Amy", "permissions": 32},
-        {"id": 1, "displayName": "npc", "permissions": 2},
-    ]
-    with Patched(core, "api", fake):
-        process(message("!request link AMY"))
-        assert asyncio.run(seerr.bot.store.run(core.get_link, "u1"))[0] == 5
-        seerr_cog.GUARD.cooldown._last.clear()
-        process(message("!request link npc", "m2"))
-        assert asyncio.run(seerr.bot.store.run(core.get_link, "u1"))[0] == 5
-        seerr_cog.GUARD.cooldown._last.clear()
-        process(message("!request link amy", "m3", author="u2"))
-    texts = [e["content"] for e in client.ephemerals]
-    assert any("linked you" in t for t in texts) and any("admin accounts cannot be linked" in t for t in texts) and any("already linked" in t for t in texts)
-    assert asyncio.run(seerr.bot.store.run(core.get_link, "u2")) is None
-
-
-def test_link_to_an_unknown_user_and_unlink_and_account_answer_plainly():
-    client = setup()
-    fake = seerr_api()
-    with Patched(core, "api", fake):
-        process(message("!request link ghost"))
-        seerr_cog.GUARD.cooldown._last.clear()
-        process(message("!request account", "m2"), message("!request unlink", "m3"))
-    texts = [e["content"] for e in client.ephemerals]
-    assert any('no seerr user called "ghost"' in t for t in texts)
-    assert any("not linked" in t for t in texts) and any("not linked to a seerr user" in t for t in texts)
+    process(message("!request account"))
+    assert "Ask a member who can approve" in client.ephemerals[-1]["content"]
+    asyncio.run(seerr.bot.store.run(core.set_link, "u1", 5, "amy"))
+    process(message("!request account", "m2"))
+    assert 'linked to the seerr user "amy"' in client.ephemerals[-1]["content"]
+    core.SEERR_DEFAULT_USER_ID = 3
+    try:
+        process(message("!request account", "m3", author="u2"))
+    finally:
+        core.SEERR_DEFAULT_USER_ID = None
+    assert "shared default seerr user" in client.ephemerals[-1]["content"]
 
 
 def test_an_unreachable_seerr_answers_with_a_sentence_not_a_traceback():

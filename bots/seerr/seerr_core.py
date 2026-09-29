@@ -33,7 +33,7 @@ CREATE TABLE IF NOT EXISTS user_links (
 def help_text(prefix):
     return (
         f"commands: `{prefix}request <title>` (pick from buttons), `{prefix}requests` (pending), "
-        f"`{prefix}request link <seerr username>`, `{prefix}request unlink`, `{prefix}request account`."
+        f"`{prefix}request account`; approvers also `{prefix}request link @member <seerr username>` and `{prefix}request unlink @member`."
     )
 
 

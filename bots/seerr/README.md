@@ -22,17 +22,20 @@ Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`.
   Only the member who ran the command can press its buttons, and the chooser expires after five minutes.
   A show is requested with all seasons.
 - `!requests` lists the requests waiting for approval.
-- `!request link <seerr username>`, `!request unlink` and `!request account` manage which Seerr user a member requests as.
+- `!request account` shows which Seerr user you are linked to.
+- `!request link @member <seerr username>` and `!request unlink @member` manage links, and only a member holding the approver permission (below) can use them.
 
 A request is filed as the member's linked Seerr user, so Seerr's own quotas and auto-approve rules apply to them.
-With no link the bot asks the member to link first, unless `SEERR_DEFAULT_USER_ID` names a Seerr user to use instead.
-Admin Seerr accounts cannot be linked, because their requests would skip approval, and one Seerr user links to at most one member.
+An approver may link any Seerr account, an admin one included, which is how the owner gets their requests auto-approved.
+Members cannot link themselves, so nobody can file requests as someone else.
+One Seerr user links to at most one member.
+An unlinked member is told to ask an approver, unless `SEERR_DEFAULT_USER_ID` names a Seerr user to file their requests as.
 
 ## Approve and decline
 
 A new pending request is posted with Approve and Decline buttons.
-Pressing one needs the slim-m permission named by `SEERR_APPROVER_PERMISSION` (default `MANAGE_SERVER`; administrators pass every check).
-The check reads the presser's roles, which needs the bot itself to hold `MANAGE_ROLES`: without it the bot says so instead of guessing, and nobody can approve from the channel.
+Pressing one, and running the link commands, needs the slim-m permission named by `SEERR_APPROVER_PERMISSION` (default `MANAGE_SERVER`; administrators pass every check).
+The check reads the member's roles, which needs the bot itself to hold `MANAGE_ROLES`, because slim-m only lists roles to a holder of that permission and `GET /me` answers only for the caller: without it the bot says so instead of guessing, and nobody can approve from the channel.
 The decision is made with the bot's Seerr key, so Seerr records the bot's account as the decider and the post names the member who pressed.
 
 ## Announcements

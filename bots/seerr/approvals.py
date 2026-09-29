@@ -28,26 +28,25 @@ def buttons_for(request_id):
     ])
 
 
-async def _allowed(interaction):
-    """None when the presser may decide requests, else the ephemeral sentence explaining why not."""
-    bot = interaction.bot
+async def approver_refusal(bot, user_id, what):
+    """None when the member may do `what` (approve, decline, manage links), else the sentence explaining why not."""
     needed = getattr(Permissions, core.SEERR_APPROVER_PERMISSION)
     if not bot.space.roles:
-        return "the bot cannot read roles, so it cannot tell who may approve - an admin needs to give it MANAGE_ROLES."
+        return "the bot cannot read roles, so it cannot tell who may do that - an admin needs to give it MANAGE_ROLES."
     try:
-        member = await bot.space.resolve_member(interaction.user_id)
+        member = await bot.space.resolve_member(user_id)
     except ApiError:
         return "could not look you up - try again."
     if member.has_permission(needed):
         return None
-    return f"only members with {core.SEERR_APPROVER_PERMISSION} can approve or decline requests."
+    return f"only members with {core.SEERR_APPROVER_PERMISSION} can {what}."
 
 
 async def on_decision_press(interaction):
     action, _, raw_id = interaction.custom_id[len(ID_PREFIX):].partition(":")
     if action not in ("approve", "decline") or not raw_id.isdigit():
         return
-    refusal = await _allowed(interaction)
+    refusal = await approver_refusal(interaction.bot, interaction.user_id, "approve or decline requests")
     if refusal:
         with contextlib.suppress(ApiError):
             await interaction.reply_ephemeral(refusal)

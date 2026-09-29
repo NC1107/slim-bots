@@ -7,11 +7,11 @@ from arrkit.guard import UNREACHABLE, Guard
 from slimbots import ApiError
 from slimbots.limits import ValidationError, require_len
 
+import approvals
 import seerr_core as core
 
 GUARD = Guard(core.SERVICE)
 CHOOSER = Chooser("seerrpick:", "request", lambda item: core.result_title(item)[:80], "request")
-SEERR_ADMIN_BIT = 2
 NAME_MAX = 100
 RESERVED = ("link", "unlink", "account", "help")
 
@@ -39,7 +39,7 @@ async def run_request(ctx, title):
         await ctx.reply(str(err))
         return
     if await seerr_user_for(ctx.bot, ctx.author.id) is None:
-        await ctx.reply(f"link your seerr account first: `{ctx.bot.prefix}request link <your seerr username>`.")
+        await ctx.reply("you are not linked to a seerr user yet - ask a member who can approve requests to link you.")
         return
     if await GUARD.throttled(ctx):
         return
@@ -96,52 +96,74 @@ async def run_pending(ctx):
     await ctx.reply(f"{total} waiting for approval:\n" + "\n".join(lines) + more)
 
 
-async def run_link(ctx, name):
-    if await GUARD.throttled(ctx):
+async def _approver_and_target(ctx, rest):
+    """The member a link command names and the text after them, or None after saying what was wrong."""
+    refusal = await approvals.approver_refusal(ctx.bot, ctx.author.id, "link or unlink members")
+    if refusal:
+        await _tell(ctx, refusal, "only approvers can do that.")
+        return None
+    token, _, remainder = (rest or "").strip().partition(" ")
+    member = await ctx.bot.space.get_member(token.lstrip("@")) if token else None
+    if member is None:
+        await ctx.reply(f"name a member first, for example `{ctx.bot.prefix}request link @member <seerr username>`.")
+        return None
+    return member, remainder.strip()
+
+
+async def run_link(ctx, rest):
+    target = await _approver_and_target(ctx, rest)
+    if target is None:
         return
+    member, name = target
     try:
-        name = require_len((name or "").strip(), max_len=NAME_MAX, min_len=1, field="a seerr username")
+        name = require_len(name, max_len=NAME_MAX, min_len=1, field="a seerr username")
     except ValidationError as err:
         await ctx.reply(str(err))
         return
+    if await GUARD.throttled(ctx):
+        return
     user = await GUARD.call(ctx, core.find_user, name)
     if user is None:
-        await _tell(ctx, f'there is no seerr user called "{name}".', "no such seerr user.")
-        return
-    if user.get("permissions", 0) & SEERR_ADMIN_BIT:
-        await _tell(ctx, "admin accounts cannot be linked - their requests would skip approval.", "that account cannot be linked.")
+        await ctx.reply(f'there is no seerr user called "{name}".')
         return
     taken_by = await ctx.bot.store.run(core.owner_of, user["id"])
-    if taken_by not in (None, ctx.author.id):
-        await _tell(ctx, f'"{core.display_name(user)}" is already linked to someone else.', "that seerr user is already linked.")
+    if taken_by not in (None, member.id):
+        await ctx.reply(f'"{core.display_name(user)}" is already linked to someone else.')
         return
-    await ctx.bot.store.run(core.set_link, ctx.author.id, user["id"], core.display_name(user))
-    prefix = ctx.bot.prefix
-    await _tell(ctx, f'linked you to the seerr user "{core.display_name(user)}". `{prefix}request` now files requests as them, and `{prefix}request unlink` undoes it.', "linked.")
+    await ctx.bot.store.run(core.set_link, member.id, user["id"], core.display_name(user))
+    await ctx.reply(f'linked {member.mention()} to the seerr user "{core.display_name(user)}"; their requests are filed as that user.')
 
 
-async def run_unlink(ctx):
-    removed = await ctx.bot.store.run(core.remove_link, ctx.author.id)
-    await _tell(ctx, "unlinked." if removed else "you were not linked to a seerr user.", "done.")
+async def run_unlink(ctx, rest):
+    target = await _approver_and_target(ctx, rest)
+    if target is None:
+        return
+    member, _ = target
+    removed = await ctx.bot.store.run(core.remove_link, member.id)
+    await ctx.reply(f"unlinked {member.mention()}." if removed else f"{member.mention()} was not linked to a seerr user.")
 
 
 async def run_account(ctx):
     link = await ctx.bot.store.run(core.get_link, ctx.author.id)
-    prefix = ctx.bot.prefix
-    text = f'you are linked to the seerr user "{link[1]}".' if link else f"you are not linked. `{prefix}request link <seerr username>` links you."
-    await _tell(ctx, text, f"see `{prefix}request help`.")
+    if link:
+        text = f'you are linked to the seerr user "{link[1]}".'
+    elif core.SEERR_DEFAULT_USER_ID is not None:
+        text = "you are not linked, so your requests are filed as the shared default seerr user."
+    else:
+        text = "you are not linked. Ask a member who can approve requests to link you."
+    await _tell(ctx, text, f"see `{ctx.bot.prefix}request help`.")
 
 
 def setup(bot):
     CHOOSER.register(bot)
 
-    @bot.command(name="request", help="`<title>`, `link <seerr username>`, `unlink`, `account` or `help`", usage="<title>|link|unlink|account|help")
+    @bot.command(name="request", help="`<title>`, `link @member <seerr username>`, `unlink @member`, `account` or `help`", usage="<title>|link @member <seerr user>|unlink @member|account|help")
     async def request_cmd(ctx, sub: str = "help", rest: str = None):
         word = sub.lower()
         if word == "link":
             await run_link(ctx, rest)
         elif word == "unlink":
-            await run_unlink(ctx)
+            await run_unlink(ctx, rest)
         elif word == "account":
             await run_account(ctx)
         elif word == "help":
