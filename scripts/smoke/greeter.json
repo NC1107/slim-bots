@@ -1,0 +1,6 @@
+{
+  "ready_seconds": 8,
+  "steps": [
+    {"say": "!help", "expect_contains": ["commands"], "timeout": 15}
+  ]
+}
