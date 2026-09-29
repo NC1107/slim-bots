@@ -23,7 +23,7 @@ FEATURES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
     (r"\bensure_columns\b|\bbot\.canvas\(|\bbot\.voice\.join\b", "ensure_columns / bot.canvas / bot.voice.join", (0, 4, 0)),
 )
 
-PIN = re.compile(r"^\s*slim-m\s*(?P<op>>=|==|~=|>|<=|<|!=)?\s*(?P<ver>\d[\dA-Za-z.]*)?", re.IGNORECASE)
+PIN = re.compile(r"^\s*slim-m\s*(?P<op>>=|==|~=|>|<=|<|!=)?\s*(?P<ver>\d[\d.a-z]*)?", re.IGNORECASE)
 
 
 def parse_version(text: str) -> tuple[int, ...]:
@@ -83,13 +83,21 @@ def check_bot(bot_dir: Path) -> list[str]:
 SHA = re.compile(r"[0-9a-f]{40}|[0-9a-f]{64}")
 
 
+def listed_remote_refs(root: Path = ROOT) -> list[str]:
+    cmd = ["git", "for-each-ref", "--format=%(refname:short)", "refs/remotes/origin"]
+    out = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False).stdout
+    return [line for line in out.splitlines() if line and not line.endswith("/HEAD")]
+
+
 def resolve_base(base: str, root: Path = ROOT) -> str:
-    """The commit SHA `base` names; git never parses the user string as an option."""
-    cmd = ["git", "rev-parse", "--verify", "--quiet", "--end-of-options", f"{base}^{{commit}}"]
-    done = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=False)
-    sha = done.stdout.strip()
-    if done.returncode != 0 or SHA.fullmatch(sha) is None:
-        raise ValueError(f"refusing --base {base!r}: not a commit in this repository")
+    """The commit SHA of the listed origin ref equal to `base`; the argument itself never reaches git."""
+    ref = next((r for r in listed_remote_refs(root) if r == base), None)
+    if ref is None:
+        raise ValueError(f"refusing --base {base!r}: not a remote-tracking ref of origin")
+    cmd = ["git", "rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"]
+    sha = subprocess.run(cmd, cwd=root, capture_output=True, text=True, check=True).stdout.strip()
+    if SHA.fullmatch(sha) is None:
+        raise ValueError(f"refusing --base {base!r}: did not resolve to a commit")
     return sha
 
 
