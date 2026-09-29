@@ -206,6 +206,15 @@ def test_the_log_and_usage_hint_name_the_configured_prefix():
     assert "try `?automod rules`" in client.sent[-1]["content"]
 
 
+def test_a_message_from_an_author_the_server_cannot_resolve_is_left_alone():
+    client = setup(WORDS=["damn"])
+    client.respond("GET", "/users/ghost", ApiError(404, "not found"))
+    say("damn", user_id="ghost")
+    assert deleted(client) == []
+    say("damn")
+    assert len(deleted(client)) == 1
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

@@ -3,7 +3,7 @@
 
 import sys
 
-from slimbots import ApiError, Bot
+from slimbots import Bot
 from slimbots.migrations import ensure_columns
 
 # A note's box is 220x140, the app's own quick-placement default, so a note this bot places renders identically to a hand-drawn one.
@@ -82,9 +82,8 @@ def resolve_canvas_channel():
 async def name_of(author_id):
     """A display name for crediting who added an item; None if the lookup fails - never worth blocking the note."""
     if author_id not in _names:
-        try:
-            member = await bot.space.fetch_member(author_id)
-        except ApiError:
+        member = await bot.space.find_member(author_id)
+        if member is None:
             return None
         _names[author_id] = member.display_name
     return _names[author_id]

@@ -82,6 +82,11 @@ def test_role_replies_name_the_configured_prefix():
         assert "`?role <name>`" in roles.listing_text()
 
 
+def test_the_roles_setting_parses_into_an_ordered_name_to_id_map():
+    assert roles.ROLES == {"member": "r-member", "helper": "r-helper"}
+    assert list(roles.ROLES) == ["member", "helper"]
+
+
 def test_role_refuses_an_unlisted_name():
     client = setup()
     process(client, message("u1", "!role admin"))
