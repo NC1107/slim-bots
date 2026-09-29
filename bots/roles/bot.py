@@ -10,22 +10,8 @@ from slimbots.http import ApiError, is_forbidden, is_not_found
 LISTING_NAMESPACE = uuid.UUID("d1f6a9d0-0f0f-4b6a-9b0f-2f6b6f0f9a10")
 
 
-def parse_roles(spec):
-    """`"name:uuid,name:uuid"` -> an order-preserving `{name: role_id}`."""
-    roles = {}
-    for pair in spec.split(","):
-        pair = pair.strip()
-        if not pair:
-            continue
-        name, _, role_id = pair.partition(":")
-        if not name or not role_id:
-            raise RuntimeError(f"bad SLIMM_ROLES entry: {pair!r}")
-        roles[name.strip()] = role_id.strip()
-    return roles
-
-
 bot = Bot(prefix="!", require_channels=True)
-ROLES = parse_roles(bot.setting("SLIMM_ROLES", ""))
+ROLES = bot.setting("SLIMM_ROLES", {}, type=dict)
 bot.my_permissions = 0
 _role_permissions_cache = {}
 

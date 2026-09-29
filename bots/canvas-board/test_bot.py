@@ -11,6 +11,7 @@ import bot as board  # noqa: E402
 from slimbots import Store  # noqa: E402
 from slimbots import Canvas  # noqa: E402
 from slimbots.authors import AuthorFilter  # noqa: E402
+from slimbots.http import ApiError  # noqa: E402
 from slimbots.space import Space  # noqa: E402
 from slimbots.testing import FakeAsyncClient  # noqa: E402
 
@@ -63,6 +64,15 @@ def test_add_places_a_note_and_acks():
     process(client, message("!board add buy milk"))
     assert "added as #1: buy milk" in client.sent[-1]["content"]
     assert board.active_items(board.bot.store.connection)[0][2] == "buy milk"
+
+
+def test_name_of_uses_the_roster_and_reads_a_missing_user_as_none():
+    client = setup()
+    client.respond("GET", "/users/gone", ApiError(404, "not found"))
+    calls_before = len(client.calls)
+    assert asyncio.run(board.name_of("u1")) == "Nick"
+    assert len(client.calls) == calls_before
+    assert asyncio.run(board.name_of("gone")) is None
 
 
 def test_add_refuses_text_past_the_length_cap():

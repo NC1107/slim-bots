@@ -13,7 +13,6 @@ REQUEST_TIMEOUT_SECONDS = 20
 PAGE_SIZE = 100
 MAX_PAGES = 10
 MIN_STATUS_INTERVAL_SECONDS = 30
-TRUTHY = ("1", "true", "yes", "on")
 STATE_MARKERS = {"running": "[up]", "starting": "[starting]", "stopping": "[stopping]", "offline": "[down]"}
 
 PELICAN_URL = ""
@@ -70,7 +69,7 @@ def configure(bot):
     global PELICAN_CONTROL_PERMISSION, PELICAN_LOG_CHANNEL, PELICAN_STATUS_CHANNEL, PELICAN_STATUS_INTERVAL
     PELICAN_URL = (bot.setting("PELICAN_URL", required=True) or "").rstrip("/")
     PELICAN_API_KEY = bot.setting("PELICAN_API_KEY", required=True) or ""
-    PELICAN_ALLOW_HTTP = bot.setting("PELICAN_ALLOW_HTTP", "").lower() in TRUTHY
+    PELICAN_ALLOW_HTTP = bot.setting("PELICAN_ALLOW_HTTP", False, type=bool)
     PELICAN_SERVERS = [name.lower() for name in bot.setting("PELICAN_SERVERS", [], type=list)]
     PELICAN_CONTROL_ROLE = bot.setting("PELICAN_CONTROL_ROLE", "")
     PELICAN_CONTROL_PERMISSION = bot.setting("PELICAN_CONTROL_PERMISSION", "MANAGE_SERVER")

@@ -7,6 +7,7 @@ import os
 import sys
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 os.environ.update({"PELICAN_URL": "https://panel.invalid", "PELICAN_API_KEY": "ptlc_secret_key_123"})
@@ -300,6 +301,14 @@ def test_unreachable_panel_is_a_readable_error():
     core.PELICAN_URL = "http://127.0.0.1:1"
     process(client, "u-plain", "!servers")
     assert "can't reach the panel: the panel could not be reached" in last(client)
+
+
+def test_allow_http_reads_as_a_bool_setting():
+    for raw, expected in (("yes", True), ("1", True), ("0", False)):
+        with mock.patch.dict(os.environ, {"PELICAN_ALLOW_HTTP": raw}):
+            core.configure(pelican.bot)
+        assert core.PELICAN_ALLOW_HTTP is expected
+    core.configure(pelican.bot)
 
 
 def test_url_must_be_https_unless_lan_http_is_allowed():

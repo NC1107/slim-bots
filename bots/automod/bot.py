@@ -180,16 +180,6 @@ async def enforce(message, member, channel_name, rule, reason, timeout_seconds):
     await write_modlog(_describe(member, channel_name, rule, reason, outcomes))
 
 
-async def author_of(author_id):
-    member = bot.space.members.get(author_id)
-    if member is not None:
-        return member
-    try:
-        return await bot.space.fetch_member(author_id)
-    except ApiError:
-        return None
-
-
 @bot.event
 async def on_member_join(member):
     _joined_at[member.id] = time.time()
@@ -202,7 +192,7 @@ async def on_raw_message(message):
         return
     if await bot.authors.is_automated(author_id):
         return
-    member = await author_of(author_id)
+    member = await bot.space.find_member(author_id)
     if member is None or member.has_permission(EXEMPT_PERMISSIONS):
         return
     channel = bot.space.channels.get(message.get("channel_id"))
