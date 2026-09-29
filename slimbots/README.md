@@ -33,6 +33,9 @@ if __name__ == "__main__":
 SLIMM_URL=https://your.space SLIMM_BOT_TOKEN=slimbot_... SLIMM_CHANNELS=<channel-uuid> python3 bot.py
 ```
 
+`SLIMM_PREFIX` overrides the prefix a script passes, so bots sharing a channel can each answer their own; `@username <command>` also works for any bot.
+`SLIMM_LISTEN_VOICE_CHATS=1` makes a channel-scoped bot read voice channels' chats too.
+
 A bot token is minted by an admin in the Bots section of Space settings, is shown once, and does not rotate. A `401` is terminal - `bot.run()` treats a revoked token as a reason to stop, not retry.
 
 ## Commands

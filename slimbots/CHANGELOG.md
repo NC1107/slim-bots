@@ -3,6 +3,17 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.5.0
+
+Two ways to scope where and how a bot answers, from one owner report: `!watch` typed in a voice channel's chat went unanswered, and every bot answering `!help` in a shared channel is a mess.
+
+- Cause of the unanswered voice chat: a voice channel's chat is an ordinary channel of its own, and the server delivers its `message.created` to any bot that can view it. `Bot._handle_frame` then dropped the frame because the channel id was not in `channels` (`SLIMM_CHANNELS`, which names the text channel). Nothing on the server was wrong.
+- New `Bot(listen_voice_chats=True)`, or `SLIMM_LISTEN_VOICE_CHATS=1`: a scoped bot also accepts messages (and channel events) from any voice channel's chat. Off by default, so existing bots are unchanged. `bot-jellyfin` turns it on.
+- New `SLIMM_PREFIX`: overrides the `prefix=` a script passes, so an operator can give each bot in a shared channel its own without a code change. The default is still whatever the script passes (`!` in every template).
+- New `Bot(mention_commands=True)` (the default): `@username <command>` runs a command exactly like the prefix does, case-insensitively, and only for this bot's own name. Pass `False` to keep the old prefix-only behaviour.
+- `help` now opens with the bot's name and both ways to call it, for example `**jellyfin commands** (prefix `!`, or `@jellyfin <command>`)`, so several bots answering one channel can be told apart. `Bot.username` is set from `/me` on connect; before that the old header is used.
+- A voice channel created after the bot connects is only recognised after its next reconnect, because `Space.channels` is refreshed on connect.
+
 ## 0.4.4
 
 A prod bug: `!watch` failed with `module 'livekit.rtc' has no attribute 'AudioEncoding'`. 0.4.3's audio-bitrate ceiling called `rtc.AudioEncoding(...)`, but real livekit (1.1.20) re-exports `VideoEncoding` on `rtc` and not `AudioEncoding` - it lives only in the proto. The test fake had defined an `AudioEncoding` the real library does not, so the suite was green while every watch party threw.

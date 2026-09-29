@@ -43,6 +43,9 @@ that channel. It needs `SEND_MESSAGES` and `ATTACH_FILES` there; see "What
 your bot may do" in `docs/bots/building-bots.md` for granting a bot a
 channel overwrite.
 
+The bot also reads every voice channel's chat, so `!watch` works typed into the call you are in; it still needs `VIEW_CHANNEL` and `SEND_MESSAGES` in that voice channel.
+To keep it apart from other bots in a shared channel, set `SLIMM_PREFIX` (for example `jf!`) or address it as `@<its username> watch ...`.
+
 `JELLYFIN_API_KEY` comes from Jellyfin's own Dashboard -> API Keys, as a
 Jellyfin server administrator. It is a credential exactly like a slim-m bot
 token: keep it in the environment, never in source, and this bot never logs
