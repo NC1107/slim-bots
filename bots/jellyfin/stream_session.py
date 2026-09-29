@@ -93,6 +93,7 @@ class WatchSession:
         self.voice_session = voice_session
         self.panel = None
         self.waiting_next = None
+        self.jellyfin_user_id = None
         self._next_timer = None
         self.control_lock = asyncio.Lock()
         self.quality = configured_default()
@@ -304,7 +305,7 @@ class WatchSession:
     async def _upcoming_episode(self):
         """The next episode for the person who started this, or None (a movie, a finale, a Jellyfin hiccup)."""
         with contextlib.suppress(Exception):
-            user_id = await asyncio.to_thread(playback_progress.resolve_user_id)
+            user_id = self.jellyfin_user_id or await asyncio.to_thread(playback_progress.resolve_user_id)
             return await asyncio.to_thread(jellyfin_core.next_episode, self.item, user_id)
         return None
 
@@ -349,7 +350,9 @@ class WatchSession:
         """Best-effort: a Jellyfin hiccup must never interrupt playback."""
         self._last_reported_at = time.monotonic()
         with contextlib.suppress(Exception):
-            await asyncio.to_thread(playback_progress.report_position, self.item_id, seconds, finished=finished)
+            await asyncio.to_thread(
+                playback_progress.report_position, self.item_id, seconds, finished=finished, user_id=self.jellyfin_user_id,
+            )
 
     async def stop(self, *, reason="stopped", announce=True):
         final_position = self.position_seconds

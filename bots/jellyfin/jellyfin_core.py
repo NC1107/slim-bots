@@ -28,7 +28,8 @@ RECENT_MAX_DAYS = 30
 
 HELP_TEXT = (
     "commands: `!jellyfin search <query>`, "
-    f"`!jellyfin recent [days]` (default {RECENT_DEFAULT_DAYS}, max {RECENT_MAX_DAYS})."
+    f"`!jellyfin recent [days]` (default {RECENT_DEFAULT_DAYS}, max {RECENT_MAX_DAYS}), "
+    "`!jellyfin link <jellyfin username>`, `!jellyfin unlink`, `!jellyfin account`."
 )
 
 # What `!watch`/`!subs` need beyond FIELDS: total runtime, and the audio/subtitle track list.
@@ -157,6 +158,9 @@ def init_db(conn):
         """
         CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS posted_items (item_id TEXT PRIMARY KEY, posted_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS user_links (
+            slimm_user_id TEXT PRIMARY KEY, jellyfin_user_id TEXT NOT NULL, jellyfin_name TEXT NOT NULL, linked_at INTEGER NOT NULL
+        );
         """
     )
     conn.commit()

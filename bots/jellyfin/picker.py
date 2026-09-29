@@ -10,8 +10,8 @@ from typing import Any, Awaitable, Callable
 
 from slimbots import ApiError, Button, rows
 
+import accounts
 import jellyfin_core
-import playback_progress
 from stream_session import format_hms
 
 ID_PREFIX = "jfp:"
@@ -134,18 +134,18 @@ async def _redraw(bot, pick):
         await bot.client.edit_components(pick.channel_id, pick.message_id, layout)
 
 
-async def _open_series(pick, series):
-    user_id = await asyncio.to_thread(playback_progress.resolve_user_id)
+async def _open_series(bot, pick, series):
+    user_id = await accounts.user_for(bot, pick.invoker_id)
     seasons = await asyncio.to_thread(jellyfin_core.series_seasons, series["Id"], user_id)
     pick.series, pick.title, pick.page, pick.seasons = series, series.get("Name") or "Series", 0, seasons
     if len(seasons) == 1:
-        await _open_season(pick, seasons[0])
+        await _open_season(bot, pick, seasons[0])
     else:
         pick.view, pick.items = "seasons", seasons
 
 
-async def _open_season(pick, season):
-    user_id = await asyncio.to_thread(playback_progress.resolve_user_id)
+async def _open_season(bot, pick, season):
+    user_id = await accounts.user_for(bot, pick.invoker_id)
     pick.items = await asyncio.to_thread(jellyfin_core.season_episodes, pick.series["Id"], season["Id"], user_id)
     pick.view, pick.page = "episodes", 0
     pick.title = f"{(pick.series or {}).get('Name', 'Series')}, {season.get('Name') or 'season'}"
@@ -157,9 +157,9 @@ async def _select(bot, pick, index):
         return
     if pick.view == "results" and item.get("Type") == "Series":
         pick.results = pick.items
-        await _open_series(pick, item)
+        await _open_series(bot, pick, item)
     elif pick.view == "seasons":
-        await _open_season(pick, item)
+        await _open_season(bot, pick, item)
     else:
         await _close(bot, pick, f"starting **{item.get('Name')}**...")
         await pick.on_choose(item)

@@ -34,7 +34,7 @@ def _default_subtitle(item):
 
 
 async def _next_episode(session):
-    user_id = await asyncio.to_thread(playback_progress.resolve_user_id)
+    user_id = session.jellyfin_user_id or await asyncio.to_thread(playback_progress.resolve_user_id)
     return await asyncio.to_thread(jellyfin_core.next_episode, session.item, user_id)
 
 

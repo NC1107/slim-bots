@@ -1,5 +1,5 @@
 """Reads and writes a Jellyfin user's own playback position, so Continue Watching stays right; see README.md.
-One API key acts as one Jellyfin account, so the position is that account's - `JELLYFIN_USER_ID`, else the first enabled user."""
+The API key can act as any user; the shared default is `JELLYFIN_USER_ID`, else the first enabled user, and a linked member uses theirs."""
 
 from __future__ import annotations
 
@@ -48,9 +48,9 @@ def saved_position_seconds(item, duration_seconds):
     return seconds
 
 
-def fetch_last_watched():
+def fetch_last_watched(user_id=None):
     """The most recently played unfinished video for the account, or None; `/UserItems/Resume` is newest first."""
-    user_id = resolve_user_id()
+    user_id = user_id or resolve_user_id()
     if user_id is None:
         return None
     params = {"userId": user_id, "mediaTypes": "Video", "limit": 1, "fields": jellyfin_core.STREAM_FIELDS}
@@ -68,9 +68,9 @@ def jf_post_json(path, params, body):
         response.read()
 
 
-def report_position(item_id, seconds, *, finished=False):
+def report_position(item_id, seconds, *, finished=False, user_id=None):
     """Writes the position through `POST /UserItems/{id}/UserData`; finishing clears it and marks the item played."""
-    user_id = resolve_user_id()
+    user_id = user_id or resolve_user_id()
     if user_id is None:
         return
     body = {
