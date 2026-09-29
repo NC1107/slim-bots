@@ -40,6 +40,15 @@ class Space:
         self.channels = {c["id"]: Channel(c) for c in channels}
         return self.channels
 
+    def apply_channel_frame(self, frame: dict[str, Any]) -> None:
+        """Applies a `channel.created`, `channel.updated` or `channel.deleted` frame to `.channels`."""
+        kind = frame.get("type")
+        if kind in ("channel.created", "channel.updated"):
+            channel = Channel(frame["channel"])
+            self.channels[channel.id] = channel
+        elif kind == "channel.deleted":
+            self.channels.pop(frame["channel_id"], None)
+
     async def refresh_members(self, *, page_size: int = 200) -> dict[str, Member]:
         """Reloads the full member list, one call per `page_size` members."""
         members: dict[str, Member] = {}

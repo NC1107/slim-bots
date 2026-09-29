@@ -6,9 +6,11 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
 import os
 import sqlite3
 import sys
+import time
 from types import ModuleType
 from typing import Any, Awaitable, Callable, Coroutine
 
@@ -32,6 +34,14 @@ from .voice import Voice
 
 DEFAULT_USER_AGENT = "slimbots/0.3"
 DEFAULT_CURSOR_DB = "slimbots-cursor.db"
+
+log = logging.getLogger(__name__)
+
+# Seconds before an unrecognised channel id may trigger another channel-list refresh.
+CHANNEL_MISS_REFRESH_SECONDS = 30.0
+
+# Frames that can change which channels the bot may see, beyond the channel lifecycle frames themselves.
+_VISIBILITY_FRAMES = frozenset({"overwrite.changed", "role.changed", "member.role_changed"})
 
 EventFrame = tuple[str, "type[Any] | None"]
 
@@ -122,6 +132,8 @@ class Bot:
         self._fatal_error: BaseException | None = None
         self._main_task: asyncio.Task[Any] | None = None
         self._gateway: Gateway | None = None
+        self._clock: Callable[[], float] = time.monotonic
+        self._channel_miss_at: dict[str, float] = {}
         self.store: Store | None = None
         self._extensions: dict[str, ModuleType] = {}
         self.voice = Voice(self)
@@ -362,6 +374,45 @@ class Bot:
         channel = self.space.channels.get(channel_id) if channel_id else None
         return channel is not None and channel.kind == "voice"
 
+    async def _accepts_channel(self, channel_id: str | None, kind: str) -> bool:
+        """`_listens_in`, plus one rate-limited channel refresh when `channel_id` is unknown; logs a drop at debug."""
+        if self._listens_in(channel_id):
+            return True
+        if await self._refresh_on_unknown_channel(channel_id) and self._listens_in(channel_id):
+            return True
+        log.debug("dropped %s frame: not listening in channel %s", kind, channel_id)
+        return False
+
+    async def _refresh_on_unknown_channel(self, channel_id: str | None) -> bool:
+        """Refreshes `space.channels` for an id it lacks, at most once per id per window; True when it refreshed."""
+        if not self.listen_voice_chats or self.space is None or not channel_id or channel_id in self.space.channels:
+            return False
+        now = self._clock()
+        last = self._channel_miss_at.get(channel_id)
+        if last is not None and now - last < CHANNEL_MISS_REFRESH_SECONDS:
+            return False
+        self._channel_miss_at = {c: t for c, t in self._channel_miss_at.items() if now - t < CHANNEL_MISS_REFRESH_SECONDS}
+        self._channel_miss_at[channel_id] = now
+        await self._refresh_channels_guarded()
+        return True
+
+    async def _refresh_channels_guarded(self) -> None:
+        assert self.space is not None
+        await guard_dispatch(self.space.refresh_channels)
+
+    async def _track_channels(self, kind: str, frame: dict[str, Any]) -> None:
+        """Keeps `space.channels` current from the lifecycle frames, and from ones that can change visibility."""
+        if self.space is None:
+            return
+        if kind in ("channel.created", "channel.updated", "channel.deleted"):
+            await guard_dispatch(self._apply_channel_frame, frame)
+        elif kind in _VISIBILITY_FRAMES and (kind != "member.role_changed" or frame.get("user_id") == self.me_id):
+            await self._refresh_channels_guarded()
+
+    async def _apply_channel_frame(self, frame: dict[str, Any]) -> None:
+        assert self.space is not None
+        self.space.apply_channel_frame(frame)
+
     async def _dispatch_not_found(self, message, author_id, invoked_with, raw_args):
         """Off by default: only resolves the author and builds a `ctx` when something is actually listening."""
         author = await self._resolve_author(author_id)
@@ -398,9 +449,10 @@ class Bot:
     async def _handle_frame(self, frame: dict[str, Any]) -> None:
         kind: str = frame.get("type") or ""
         await guard_dispatch(self._dispatch_event, "on_frame", frame)
+        await self._track_channels(kind, frame)
         if kind == "message.created":
             channel_id = frame.get("channel_id")
-            if not self._listens_in(channel_id):
+            if not await self._accepts_channel(channel_id, kind):
                 return
             message = frame.get("message") or {}
             self._note_seq(channel_id, message.get("seq"))
@@ -408,7 +460,7 @@ class Bot:
             self.background(guard_dispatch(self.process_message, message), name=f"message-{message.get('id', '?')}")
             return
         if kind == "interaction.created":
-            if self._listens_in(frame.get("channel_id")):
+            if await self._accepts_channel(frame.get("channel_id"), kind):
                 is_button = frame.get("kind", "button") == "button"
                 dispatch = dispatch_press(self, self._buttons, frame) if is_button else dispatch_ui(self, self._ui, frame)
                 self.background(dispatch, name=f"press-{frame.get('interaction_id', '?')}")
@@ -433,7 +485,7 @@ class Bot:
             return
         channel_event = _CHANNEL_EVENT_FRAMES.get(kind)
         if channel_event:
-            if not self._listens_in(frame.get("channel_id")):
+            if not await self._accepts_channel(frame.get("channel_id"), kind):
                 return
             await self._dispatch_typed(*channel_event, frame)
 
