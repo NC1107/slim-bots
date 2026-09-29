@@ -36,6 +36,7 @@ All of them live under [`bots/`](bots/).
 | [`bots/casino`](bots/casino/) | A currency bot: daily chips, blackjack (double, split, surrender), coinflip, transfers, a leaderboard, and money kept safe under real concurrency. |
 | [`bots/pelican`](bots/pelican/) | Watching and controlling an outside game-server panel (Pelican): a `!servers` status list, a status message edited in place, and role-gated, audit-logged power commands. |
 | [`bots/automod`](bots/automod/) | Moderator-written rules (flood, links, words, mention spam) that delete and time out, log what they did, and stay off until configured. |
+| [`bots/music`](bots/music/) | Playing audio into a voice call: a per-call queue fed from a Jellyfin music library or a direct stream URL, published as a microphone track. |
 
 Every template's README says what it deliberately does not do. That section is
 usually the more useful half.
