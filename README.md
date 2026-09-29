@@ -37,6 +37,7 @@ All of them live under [`bots/`](bots/).
 | [`bots/pelican`](bots/pelican/) | Watching and controlling an outside game-server panel (Pelican): a `!servers` status list, a status message edited in place, and role-gated, audit-logged power commands. |
 | [`bots/automod`](bots/automod/) | Moderator-written rules (flood, links, words, mention spam) that delete and time out, log what they did, and stay off until configured. |
 | [`bots/music`](bots/music/) | Playing audio into a voice call: a per-call queue fed from a Jellyfin music library or a direct stream URL, published as a microphone track. |
+| [`bots/starboard`](bots/starboard/) | Reposting a well-reacted message to a highlights channel, keeping it in sync as the count and the original change, and a weekly digest. |
 
 Every template's README says what it deliberately does not do. That section is
 usually the more useful half.
