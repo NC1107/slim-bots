@@ -175,6 +175,23 @@ def test_server_detail_shows_disk_and_uptime():
     assert "disk 5.0 GiB, uptime 2h 5m" in last(client)
 
 
+class prefixed:
+    """Runs a block with the bot answering to `?`, the way `SLIMM_PREFIX` would set it."""
+
+    def __enter__(self):
+        self.original, pelican.bot.prefix = pelican.bot.prefix, "?"
+
+    def __exit__(self, *_exc):
+        pelican.bot.prefix = self.original
+
+
+def test_no_match_reply_names_the_configured_prefix():
+    client = setup()
+    with prefixed():
+        process(client, "u-plain", "?server nothing")
+    assert "try `?servers`" in last(client)
+
+
 def test_server_name_ambiguous_and_missing():
     client = setup()
     process(client, "u-plain", "!server mine")

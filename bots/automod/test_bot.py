@@ -193,6 +193,19 @@ def test_lift_needs_kick_members_and_calls_the_route():
     assert ("DELETE", "/members/u1/timeout") in [(m, p) for m, p, _, _ in client.calls]
 
 
+def test_the_log_and_usage_hint_name_the_configured_prefix():
+    client = setup(FLOOD_MESSAGES=3, LOG_CHANNEL="general/modlog")
+    original, automod.bot.prefix = automod.bot.prefix, "?"
+    try:
+        for _ in range(4):
+            say("hi")
+        asyncio.run(automod.bot.process_message({"id": "cmd", "channel_id": "c-chat", "author_id": "u1", "content": "?automod nonsense", "seq": 1}))
+    finally:
+        automod.bot.prefix = original
+    assert "`?automod lift " in logged(client)[0]
+    assert "try `?automod rules`" in client.sent[-1]["content"]
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

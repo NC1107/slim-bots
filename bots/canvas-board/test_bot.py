@@ -154,6 +154,23 @@ def test_clear_yes_reply_removes_everything():
     assert board.active_items(board.bot.store.connection) == []
 
 
+class prefixed:
+    """Runs a block with the bot answering to `?`, the way `SLIMM_PREFIX` would set it."""
+
+    def __enter__(self):
+        self.original, board.bot.prefix = board.bot.prefix, "?"
+
+    def __exit__(self, *_exc):
+        board.bot.prefix = self.original
+
+
+def test_board_help_names_the_configured_prefix():
+    client = setup()
+    with prefixed():
+        process(client, message("?board nonsense"))
+    assert "`?board add <text>`" in client.sent[-1]["content"]
+
+
 def test_unrecognised_board_command_shows_help():
     client = setup()
     process(client, message("!board nonsense"))

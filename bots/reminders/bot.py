@@ -231,7 +231,8 @@ async def _create_and_ack(ctx, due_at, text, recur=None):
 
 @bot.group(name="remind", help="`in <duration> <text>`, `at <HH:MM> <text>`, or `every <spec> [at HH:MM] <text>`")
 async def remind(ctx, rest: str = ""):
-    await ctx.reply("try `!remind in 2h <text>`, `!remind at 15:30 <text>`, or `!remind every monday <text>`")
+    p = bot.prefix
+    await ctx.reply(f"try `{p}remind in 2h <text>`, `{p}remind at 15:30 <text>`, or `{p}remind every monday <text>`")
 
 
 @remind.command(name="in", help="Remind you after a duration", usage="<duration> <text>")
@@ -314,7 +315,8 @@ async def reminders_group(ctx, rest: str = ""):
             lines.append(f"{i}. {recurrence.format_local(due_at, tz_name)}{note} - {text}")
         await ctx.reply("\n".join(lines))
         return
-    await ctx.reply("try `!reminders`, `!reminders cancel <n>`, `!reminders edit <n> <text>`, or `!reminders snooze <n> <duration>`")
+    p = bot.prefix
+    await ctx.reply(f"try `{p}reminders`, `{p}reminders cancel <n>`, `{p}reminders edit <n> <text>`, or `{p}reminders snooze <n> <duration>`")
 
 
 @reminders_group.command(name="cancel", help="Cancel one by its listed number", usage="<n>")

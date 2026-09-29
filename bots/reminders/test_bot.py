@@ -110,6 +110,24 @@ def test_remind_bare_shows_the_usage_hint():
     assert "try `!remind" in client.sent[-1]["content"]
 
 
+class prefixed:
+    """Runs a block with the bot answering to `?`, the way `SLIMM_PREFIX` would set it."""
+
+    def __enter__(self):
+        self.original, reminders.bot.prefix = reminders.bot.prefix, "?"
+
+    def __exit__(self, *_exc):
+        reminders.bot.prefix = self.original
+
+
+def test_usage_hints_name_the_configured_prefix():
+    client = setup()
+    with prefixed():
+        process(client, message("?remind"), message("?reminders nonsense", "m2"))
+    assert "try `?remind in 2h" in client.sent[-2]["content"]
+    assert "try `?reminders`" in client.sent[-1]["content"]
+
+
 def test_reminders_lists_pending():
     client = setup()
     process(client, message("!remind in 1h water the plants", "m1"))
