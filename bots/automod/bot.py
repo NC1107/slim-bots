@@ -146,36 +146,38 @@ async def write_modlog(text):
     await bot.client.send(_log_channel_id, text, message_id=str(uuid.uuid4()))
 
 
-def _describe(member, channel_name, rule, reason, done):
+def _describe(member, channel_name, rule, reason, outcomes):
     where = f" in #{channel_name}" if channel_name else ""
-    return f"automod [{rule}] {member.mention()}{where}: {reason} - {', '.join(done)}. undo a timeout with `!automod lift {member.mention()}`"
+    done = [label for label, status in outcomes if status is None] or ["no action taken"]
+    text = f"automod [{rule}] {member.mention()}{where}: {reason} - {', '.join(done)}"
+    failed = [f"{label} refused ({status})" for label, status in outcomes if status is not None]
+    if failed:
+        text += f". could not: {', '.join(failed)} - the bot needs MANAGE_MESSAGES and KICK_MEMBERS"
+    return text + f". undo a timeout with `!automod lift {member.mention()}`"
 
 
-async def _try(done, failed, label, call):
+async def _attempt(label, call):
+    """`(label, None)` when the call went through, `(label, http_status)` when the server refused it."""
     try:
         await call
     except ApiError as err:
-        failed.append(f"{label} refused ({err.status})")
-    else:
-        done.append(label)
+        return label, err.status
+    return label, None
 
 
-async def enforce(message, member, channel_name, rule, reason, timeout):
+async def enforce(message, member, channel_name, rule, reason, timeout_seconds):
     """Deletes the message, times the member out when the rule asks, and logs what actually happened."""
-    done, failed = [], []
-    await _try(done, failed, "message deleted", bot.client.delete_message(message["channel_id"], message["id"]))
-    if timeout:
-        await _try(done, failed, f"timed out {timeout}s", bot.client.time_out_member(member.id, timeout, reason=f"automod: {rule}"))
+    outcomes = [await _attempt("message deleted", bot.client.delete_message(message["channel_id"], message["id"]))]
+    if timeout_seconds:
+        timeout_call = bot.client.time_out_member(member.id, timeout_seconds, reason=f"automod: {rule}")
+        outcomes.append(await _attempt(f"timed out {timeout_seconds}s", timeout_call))
     else:
         await bot.client.send(
             message["channel_id"], f"{member.mention()}, that message was removed by automod ({rule}).",
             message_id=str(uuid.uuid4()),
         )
     await bot.store.run(_log_action, rule)
-    text = _describe(member, channel_name, rule, reason, done or ["no action taken"])
-    if failed:
-        text += f". could not: {', '.join(failed)} - the bot needs MANAGE_MESSAGES and KICK_MEMBERS"
-    await write_modlog(text)
+    await write_modlog(_describe(member, channel_name, rule, reason, outcomes))
 
 
 async def author_of(author_id):

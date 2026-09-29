@@ -74,7 +74,9 @@ def test_every_rule_is_off_by_default_so_nothing_is_touched():
     client = setup()
     for _ in range(30):
         say("hello https://evil.example @a @b @c @d @e @f damn")
-    assert deleted(client) == [] and timed_out(client) == [] and client.sent == []
+    assert deleted(client) == []
+    assert timed_out(client) == []
+    assert client.sent == []
 
 
 def test_flood_times_the_member_out_and_deletes_the_tripping_message():
@@ -86,7 +88,8 @@ def test_flood_times_the_member_out_and_deletes_the_tripping_message():
     assert deleted(client) == [f"/channels/c-chat/messages/{tripped}"]
     assert timed_out(client) == ["/members/u1/timeout"]
     assert any(c[2] == {"duration_seconds": 300, "reason": "automod: flood"} for c in client.calls if c[0] == "PUT")
-    assert "[flood]" in logged(client)[0] and "!automod lift" in logged(client)[0]
+    assert "[flood]" in logged(client)[0]
+    assert "!automod lift" in logged(client)[0]
 
 
 def test_mention_spam_deletes_and_times_out():
@@ -94,7 +97,8 @@ def test_mention_spam_deletes_and_times_out():
     say("@a @b")
     assert deleted(client) == []
     say("@a @b @c")
-    assert len(deleted(client)) == 1 and timed_out(client) == ["/members/u1/timeout"]
+    assert len(deleted(client)) == 1
+    assert timed_out(client) == ["/members/u1/timeout"]
 
 
 def test_deny_list_blocks_a_domain_and_its_subdomains_but_not_others():
@@ -102,7 +106,8 @@ def test_deny_list_blocks_a_domain_and_its_subdomains_but_not_others():
     say("see https://www.evil.example/x?y=1")
     say("see (https://cdn.evil.example)")
     say("see https://good.example/evil.example")
-    assert len(deleted(client)) == 2 and timed_out(client) == []
+    assert len(deleted(client)) == 2
+    assert timed_out(client) == []
     assert any("removed by automod (link)" in s["content"] for s in client.sent)
 
 
@@ -152,7 +157,20 @@ def test_a_refused_action_is_logged_with_the_permission_hint_not_swallowed():
     client.respond("PUT", "/members/u1/timeout", ApiError(403, "forbidden"))
     say("@a @b")
     text = logged(client)[0]
-    assert "message deleted" in text and "timed out 300s refused (403)" in text and "KICK_MEMBERS" in text
+    assert "message deleted" in text
+    assert "timed out 300s refused (403)" in text
+    assert "KICK_MEMBERS" in text
+
+
+def test_a_refused_delete_with_no_timeout_logs_that_no_action_was_taken():
+    client = setup(LINK_POLICY="deny", LINK_DOMAINS=["evil.example"], LOG_CHANNEL="modlog")
+    message_id = "m-refused"
+    client.respond("DELETE", f"/channels/c-chat/messages/{message_id}", ApiError(403, "forbidden"))
+    frame = {"id": message_id, "channel_id": "c-chat", "author_id": "u1", "content": "https://evil.example", "seq": 1}
+    asyncio.run(automod.bot._handle_frame({"type": "message.created", "channel_id": "c-chat", "message": frame}))
+    text = logged(client)[0]
+    assert "no action taken" in text
+    assert "message deleted refused (403)" in text
 
 
 def test_no_log_channel_configured_means_no_log_post():
@@ -168,7 +186,8 @@ def test_lift_needs_kick_members_and_calls_the_route():
     automod.bot.space.members["u-mod"] = mod
     msg = {"id": "cmd", "channel_id": "c-chat", "author_id": "u-mod", "content": "!automod lift @spammer", "seq": 1}
     asyncio.run(automod.bot.process_message(msg))
-    assert "Kick Members" in client.sent[-1]["content"] and timed_out(client) == []
+    assert "Kick Members" in client.sent[-1]["content"]
+    assert timed_out(client) == []
     mod._base_permissions = Permissions.KICK_MEMBERS
     asyncio.run(automod.bot.process_message(msg))
     assert ("DELETE", "/members/u1/timeout") in [(m, p) for m, p, _, _ in client.calls]

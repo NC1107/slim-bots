@@ -38,31 +38,46 @@ class FakeAsyncClient(AsyncClient):
         self, method: str, path: str, body: Any = None, *, params: Any = None, headers: Any = None, **_kwargs: Any,
     ) -> Any:
         self.calls.append((method, path, body, params))
-
-        is_send = method == "POST" and self._MESSAGE_ROUTE.match(path) is not None
-        seq = None
-        if is_send:
-            seq = self._next_seq
-            self._next_seq += 1
-            self.sent.append({"channel_id": path.split("/")[2], "seq": seq, **(body or {})})
-
+        seq = self._record_send(method, path, body)
         key = (method, path)
         if key in self._responses:
-            response = self._responses[key]
-            if isinstance(response, BaseException):
-                raise response
-            return response() if callable(response) else response
-        if is_send:
+            return self._queued(self._responses[key])
+        if seq is not None:
             return {"id": (body or {}).get("id"), "seq": seq}
-        if method in ("PUT", "DELETE") and "/roles/" in path:
-            return None
-        if method == "PUT" and path.startswith("/members/") and path.endswith("/timeout"):
-            return {"user_id": path.split("/")[2], "until": int((time.time() + (body or {})["duration_seconds"]) * 1000)}
-        if method == "DELETE" and path.startswith("/members/") and path.endswith("/timeout"):
-            return None
-        if method == "DELETE" and path.startswith("/channels/") and "/messages/" in path:
-            return None
+        found, default = self._default_response(method, path, body)
+        if found:
+            return default
         raise KeyError(f"FakeAsyncClient: no response queued for {method} {path} - call .respond() first")
+
+    def _record_send(self, method: str, path: str, body: Any) -> int | None:
+        """Numbers and records a message send; None for any other call."""
+        if method != "POST" or self._MESSAGE_ROUTE.match(path) is None:
+            return None
+        seq = self._next_seq
+        self._next_seq += 1
+        self.sent.append({"channel_id": path.split("/")[2], "seq": seq, **(body or {})})
+        return seq
+
+    @staticmethod
+    def _queued(response: Any) -> Any:
+        if isinstance(response, BaseException):
+            raise response
+        return response() if callable(response) else response
+
+    @staticmethod
+    def _default_response(method: str, path: str, body: Any) -> tuple[bool, Any]:
+        """What the real server answers to a route no test queued: `(True, response)`, or `(False, None)` if unknown."""
+        if method in ("PUT", "DELETE") and "/roles/" in path:
+            return True, None
+        if path.startswith("/members/") and path.endswith("/timeout"):
+            if method == "DELETE":
+                return True, None
+            if method == "PUT":
+                until = int((time.time() + (body or {})["duration_seconds"]) * 1000)
+                return True, {"user_id": path.split("/")[2], "until": until}
+        if method == "DELETE" and path.startswith("/channels/") and "/messages/" in path:
+            return True, None
+        return False, None
 
     async def aclose(self) -> None:
         """Closes the real httpx client `AsyncClient.__init__` opened underneath, even though `call` never uses it."""
