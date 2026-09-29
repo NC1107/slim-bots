@@ -252,7 +252,7 @@ def test_a_second_play_queues_and_a_skip_keeps_the_queue():
         await until(lambda: music_cog.active_sessions()["v1"].current is not None)
 
     async def on_second():
-        await until(lambda: music_cog.active_sessions()["v1"].current.url == PUBLIC_URL)
+        await until(lambda: "now playing **stream.mp3**." in replies(client))
 
     scenario(
         client, "~play https://93.184.216.34/long.mp3", playing_long, f"~play {PUBLIC_URL}", "~queue", "~skip", on_second,
