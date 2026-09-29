@@ -16,6 +16,7 @@ EXEMPT = {"ping": {"test_bot.py"}}
 
 # Feature pattern in bot source -> first slim-m release that provides it (see slimbots/CHANGELOG.md).
 FEATURES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    (r"\bbot\.button\b|\bedit_components\b|\back_interaction\b", "message buttons (@bot.button, Interaction)", (0, 6, 0)),
     (r"\breply_ephemeral\b|\bsend_ephemeral\b", "ctx.reply_ephemeral / AsyncClient.send_ephemeral", (0, 6, 0)),
     (r"\bunpublish_screen_share\b", "VoiceSession.unpublish_screen_share", (0, 5, 1)),
     (r"\blisten_voice_chats\b|\bmention_commands\b|\bSLIMM_PREFIX\b", "voice-chat listening / @name commands", (0, 5, 0)),
