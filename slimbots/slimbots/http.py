@@ -10,6 +10,8 @@ from typing import Any, Awaitable, Callable
 import httpx
 
 from .client import socket_url
+from .components import Rows
+from .components import to_wire as components_to_wire
 from .models import Attachment, DmConversation, Message
 
 DEFAULT_TIMEOUT = 15.0
@@ -149,7 +151,7 @@ class AsyncClient:
     async def send(
         self, channel_id: str, content: str, *, message_id: str | None = None, reply_to_id: str | None = None,
         attachment_ids: list[str] | None = None, embeds: list[dict[str, Any]] | None = None,
-        fallback_content: str | None = None,
+        fallback_content: str | None = None, components: Rows | None = None,
     ) -> Message:
         """Posts a message under a stable id; on rejection with `embeds` set, retries once as plain `fallback_content`."""
         message_id = message_id or str(uuid.uuid4())
@@ -160,6 +162,8 @@ class AsyncClient:
             body["attachment_ids"] = attachment_ids
         if embeds:
             body["embeds"] = embeds
+        if components:
+            body["components"] = components_to_wire(components)
         try:
             data = await self.call("POST", f"/channels/{channel_id}/messages", body)
         except ApiError:
@@ -177,6 +181,19 @@ class AsyncClient:
         """Answers the author of `in_reply_to_id` privately; see docs/framework.md."""
         body = {"in_reply_to_id": in_reply_to_id, "content": content}
         return await self.call("POST", f"/channels/{channel_id}/ephemeral-messages", body)
+
+    async def edit_components(
+        self, channel_id: str, message_id: str, components: Rows, *, interaction_id: str | None = None,
+    ) -> Any:
+        """Replaces the buttons on this bot's own message (`[]` clears them); `interaction_id` answers that press."""
+        body: dict[str, Any] = {"components": components_to_wire(components)}
+        if interaction_id:
+            body["interaction_id"] = interaction_id
+        return await self.call("PUT", f"/channels/{channel_id}/messages/{message_id}/components", body)
+
+    async def ack_interaction(self, channel_id: str, interaction_id: str) -> None:
+        """Says a button press was seen and needs no visible answer."""
+        await self.call("POST", f"/channels/{channel_id}/interactions/{interaction_id}/ack")
 
     async def edit_message(self, channel_id: str, message_id: str, content: str) -> Any:
         return await self.call("PATCH", f"/channels/{channel_id}/messages/{message_id}", {"content": content})

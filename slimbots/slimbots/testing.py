@@ -14,6 +14,8 @@ class FakeAsyncClient(AsyncClient):
 
     _MESSAGE_ROUTE = re.compile(r"^/channels/[^/]+/messages$")
     _EPHEMERAL_ROUTE = re.compile(r"^/channels/[^/]+/ephemeral-messages$")
+    _COMPONENTS_ROUTE = re.compile(r"^/channels/[^/]+/messages/[^/]+/components$")
+    _ACK_ROUTE = re.compile(r"^/channels/[^/]+/interactions/[^/]+/ack$")
 
     def __init__(
         self, me_id: str = "bot-1", base: str = "https://fake.invalid",
@@ -23,6 +25,8 @@ class FakeAsyncClient(AsyncClient):
         self.calls: list[tuple[str, str, Any, Any]] = []
         self.sent: list[dict[str, Any]] = []
         self.ephemerals: list[dict[str, Any]] = []
+        self.component_edits: list[dict[str, Any]] = []
+        self.acks: list[str] = []
         self._responses: dict[tuple[str, str], Any] = {}
         self._next_seq = 1
         self.respond("GET", "/me", {"id": me_id})
@@ -49,6 +53,14 @@ class FakeAsyncClient(AsyncClient):
 
         if method == "POST" and self._EPHEMERAL_ROUTE.match(path) is not None:
             self.ephemerals.append({"channel_id": path.split("/")[2], **(body or {})})
+
+        if method == "PUT" and self._COMPONENTS_ROUTE.match(path) is not None:
+            _, _, channel_id, _, message_id, _ = path.split("/")
+            self.component_edits.append({"channel_id": channel_id, "message_id": message_id, **(body or {})})
+            return {"components": (body or {}).get("components", [])}
+        if method == "POST" and self._ACK_ROUTE.match(path) is not None:
+            self.acks.append(path.split("/")[4])
+            return None
 
         key = (method, path)
         if key in self._responses:
