@@ -3,6 +3,10 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## Unreleased
+
+- Fix: `bot-jellyfin` announced the same episode or movie again when Sonarr or a manual replace swapped the file, since the new Jellyfin item has a new id and `DateCreated`. Announcements are now deduped in the bot's sqlite by series/season/episode, and by tmdb/imdb id or name and year for movies, within `JELLYFIN_DEDUPE_DAYS` (default 7, `0` is off). `JELLYFIN_REANNOUNCE_REPLACED=true` restores the old behaviour. The new `posted_media` table is added in place to an existing database.
+
 ## 0.7.1
 
 - Fix: a bot with `listen_voice_chats` never heard a voice channel created, or made visible to it, after it connected. `space.channels` was only loaded on connect.

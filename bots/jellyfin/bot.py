@@ -63,6 +63,7 @@ async def poll_once():
         await bot.store.run(jellyfin_core.mark_posted, [item["Id"] for item in excluded], quiet=True)
         await bot.store.run(jellyfin_core.advance_cursor, max(item["DateCreated"] for item in excluded))
     postable = [item for item in items if not jellyfin_core.is_excluded(item)]
+    by_id = {item["Id"]: item for item in postable}
     for entry in jellyfin_core.build_posts(postable):
         try:
             await send_post(entry)
@@ -71,7 +72,7 @@ async def poll_once():
                 raise
             print(f"send failed, will retry next cycle: {err}", file=sys.stderr)
             break
-        await bot.store.run(jellyfin_core.mark_posted, entry["item_ids"])
+        await bot.store.run(jellyfin_core.mark_posted, entry["item_ids"], items=[by_id[i] for i in entry["item_ids"] if i in by_id])
         await bot.store.run(jellyfin_core.advance_cursor, entry["max_created"])
 
 

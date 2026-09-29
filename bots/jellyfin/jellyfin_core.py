@@ -18,7 +18,7 @@ OVERVIEW_MAX_CHARS = 220
 USER_AGENT = "slimm-bot-jellyfin/1.0"
 NAMESPACE = uuid.UUID("6e6f6220-6a65-6c6c-7966-696e2d626f74")
 
-FIELDS = "Overview,DateCreated,Genres,SeriesId,SeriesName,SeasonName,ParentIndexNumber,IndexNumber,AlbumId,Album,AlbumArtist"
+FIELDS = "Overview,DateCreated,Genres,SeriesId,SeriesName,SeasonName,ParentIndexNumber,IndexNumber,AlbumId,Album,AlbumArtist,ProviderIds,ProductionYear"
 
 COMMAND_COOLDOWN_SECONDS = 20
 MAX_SEARCH_RESULTS = 8
@@ -53,6 +53,8 @@ JELLYFIN_STREAM_WEBRTC_MAX_BITRATE = None
 JELLYFIN_STREAM_AUDIO_MAX_BITRATE = 128_000
 JELLYFIN_AUTOPLAY_NEXT = False
 JELLYFIN_NEXT_WAIT_SECONDS = 180
+JELLYFIN_DEDUPE_DAYS = 7
+JELLYFIN_REANNOUNCE_REPLACED = False
 
 _command_cooldown = Cooldown(COMMAND_COOLDOWN_SECONDS)
 
@@ -78,6 +80,7 @@ def configure(bot):
     global JELLYFIN_STREAM_WIDTH, JELLYFIN_STREAM_HEIGHT, JELLYFIN_STREAM_FPS, JELLYFIN_STREAM_MAX_BITRATE
     global JELLYFIN_STREAM_WEBRTC_MAX_BITRATE, JELLYFIN_STREAM_AUDIO_MAX_BITRATE
     global JELLYFIN_AUTOPLAY_NEXT, JELLYFIN_NEXT_WAIT_SECONDS
+    global JELLYFIN_DEDUPE_DAYS, JELLYFIN_REANNOUNCE_REPLACED
     JELLYFIN_URL = (bot.setting("JELLYFIN_URL", required=True) or "").rstrip("/")
     JELLYFIN_API_KEY = bot.setting("JELLYFIN_API_KEY", required=True) or ""
     JELLYFIN_ITEM_TYPES = bot.setting("JELLYFIN_ITEM_TYPES", ["Movie", "Episode"], type=list)
@@ -94,6 +97,8 @@ def configure(bot):
     JELLYFIN_STREAM_AUDIO_MAX_BITRATE = bot.setting("JELLYFIN_STREAM_AUDIO_MAX_BITRATE", 128_000, type=int)
     JELLYFIN_AUTOPLAY_NEXT = str(bot.setting("JELLYFIN_AUTOPLAY_NEXT", "") or "").lower() in ("1", "true", "yes", "on")
     JELLYFIN_NEXT_WAIT_SECONDS = bot.setting("JELLYFIN_NEXT_WAIT_SECONDS", 180, type=int)
+    JELLYFIN_DEDUPE_DAYS = bot.setting("JELLYFIN_DEDUPE_DAYS", 7, type=int)
+    JELLYFIN_REANNOUNCE_REPLACED = str(bot.setting("JELLYFIN_REANNOUNCE_REPLACED", "") or "").lower() in ("1", "true", "yes", "on")
 
 
 def check_jellyfin_config():
@@ -158,6 +163,7 @@ def init_db(conn):
         """
         CREATE TABLE IF NOT EXISTS state (key TEXT PRIMARY KEY, value TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS posted_items (item_id TEXT PRIMARY KEY, posted_at INTEGER NOT NULL);
+        CREATE TABLE IF NOT EXISTS posted_media (media_key TEXT PRIMARY KEY, posted_at INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS user_links (
             slimm_user_id TEXT PRIMARY KEY, jellyfin_user_id TEXT NOT NULL, jellyfin_name TEXT NOT NULL, linked_at INTEGER NOT NULL
         );
@@ -185,11 +191,44 @@ def already_posted(conn, item_id):
     return conn.execute("SELECT 1 FROM posted_items WHERE item_id = ?", (item_id,)).fetchone() is not None
 
 
-def mark_posted(conn, item_ids, quiet=False):
+def media_keys(item):
+    """Identity that survives a file swap: episodes by series/season/episode, movies by provider ids else name and year."""
+    if item.get("Type") == "Episode":
+        season = item.get("ParentIndexNumber", item.get("SeasonName"))
+        if not item.get("SeriesId") or season is None or item.get("IndexNumber") is None:
+            return []
+        return [f"episode:{item['SeriesId']}:{season}:{item['IndexNumber']}"]
+    if item.get("Type") == "Movie":
+        providers = {k.lower(): str(v) for k, v in (item.get("ProviderIds") or {}).items() if v and k.lower() in ("tmdb", "imdb")}
+        if providers:
+            return [f"movie:{k}:{v}" for k, v in sorted(providers.items())]
+        if item.get("Name") and item.get("ProductionYear"):
+            return [f"movie:name:{item['Name'].strip().lower()}:{item['ProductionYear']}"]
+    return []
+
+
+def announced_recently(conn, item):
+    """True when an item of the same media went out within JELLYFIN_DEDUPE_DAYS; 0 days turns the check off."""
+    if JELLYFIN_DEDUPE_DAYS <= 0:
+        return False
+    since = int(time.time()) - JELLYFIN_DEDUPE_DAYS * 86400
+    return any(
+        conn.execute("SELECT 1 FROM posted_media WHERE media_key = ? AND posted_at > ?", (key, since)).fetchone()
+        for key in media_keys(item)
+    )
+
+
+def mark_posted(conn, item_ids, quiet=False, items=()):
+    """`items` also stamps their media keys, which is what lets a replaced file be recognised later."""
     now = int(time.time())
     conn.executemany(
         "INSERT OR IGNORE INTO posted_items (item_id, posted_at) VALUES (?, ?)",
         [(item_id, 0 if quiet else now) for item_id in item_ids],
+    )
+    conn.executemany(
+        "INSERT INTO posted_media (media_key, posted_at) VALUES (?, ?) "
+        "ON CONFLICT(media_key) DO UPDATE SET posted_at = excluded.posted_at",
+        [(key, now) for item in items for key in media_keys(item)],
     )
     conn.commit()
 
@@ -261,9 +300,20 @@ def items_since(cursor):
 
 
 def fetch_new_items(conn):
+    """Unseen items, minus replacements of media already announced; those are recorded so the window ending cannot resurrect them."""
     cursor = get_cursor(conn) or ""
-    items = items_since(cursor)
-    return [item for item in items if not already_posted(conn, item["Id"])]
+    fresh = [item for item in items_since(cursor) if not already_posted(conn, item["Id"])]
+    if JELLYFIN_REANNOUNCE_REPLACED:
+        return fresh
+    kept, seen = [], set()
+    for item in fresh:
+        keys = media_keys(item)
+        if announced_recently(conn, item) or seen.intersection(keys):
+            mark_posted(conn, [item["Id"]], quiet=True)
+            continue
+        seen.update(keys)
+        kept.append(item)
+    return kept
 
 
 def group_key(item):
