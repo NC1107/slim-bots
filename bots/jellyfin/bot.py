@@ -10,7 +10,10 @@ from slimbots.http import is_token_revoked
 
 import jellyfin_core
 
-bot = Bot(prefix="!", require_channels=True, default_data_path="jellyfin_watch.db", store_migrate=jellyfin_core.init_db)
+bot = Bot(
+    prefix="!", require_channels=True, listen_voice_chats=True,
+    default_data_path="jellyfin_watch.db", store_migrate=jellyfin_core.init_db,
+)
 jellyfin_core.configure(bot)
 
 bot.load_extension("search_cog")

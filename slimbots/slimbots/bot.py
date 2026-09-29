@@ -85,9 +85,13 @@ class Bot:
         user_agent: str = DEFAULT_USER_AGENT, ignore_bots: bool = True, base_delay: float = 1.0,
         max_delay: float = 60.0, help_command: bool = True, channels: set[str] | list[str] | None = None,
         require_channels: bool = False, cursor_path: str | None = None, default_data_path: str | None = None,
-        store_migrate: Callable[[Any], None] | None = None,
+        store_migrate: Callable[[Any], None] | None = None, listen_voice_chats: bool = False,
+        mention_commands: bool = True,
     ) -> None:
-        self.prefix = prefix
+        self.prefix = os.environ.get("SLIMM_PREFIX") or prefix
+        self.username: str | None = None
+        self.mention_commands = mention_commands
+        self.listen_voice_chats = listen_voice_chats or os.environ.get("SLIMM_LISTEN_VOICE_CHATS") == "1"
         self._url = url
         self._token = token
         self.user_agent = user_agent
@@ -289,12 +293,12 @@ class Bot:
         if self.ignore_bots and await self.authors.is_automated(author_id):
             return
 
-        content = message.get("content") or ""
-        if not content.startswith(self.prefix):
+        invocation = self._strip_invocation(message.get("content") or "")
+        if invocation is None:
             await self._dispatch_event("on_message", message)
             return
 
-        invoked_with, _, raw_args = content[len(self.prefix):].partition(" ")
+        invoked_with, _, raw_args = invocation.partition(" ")
         command = self.commands.get(invoked_with)
         if command is None:
             if self._listeners.get("on_command_not_found"):
@@ -309,6 +313,25 @@ class Bot:
             command=command, invoked_with=invoked_with, raw_args=raw_args,
         )
         await self._invoke(ctx, command)
+
+    def _strip_invocation(self, content: str) -> str | None:
+        """The text after the prefix or an `@username` address, or None when `content` addresses this bot by neither."""
+        if content.startswith(self.prefix):
+            return content[len(self.prefix):]
+        if self.mention_commands and self.username:
+            address = f"@{self.username.lower()} "
+            if content.lower().startswith(address):
+                return content[len(address):].lstrip()
+        return None
+
+    def _listens_in(self, channel_id: str | None) -> bool:
+        """Whether frames for `channel_id` are ours: scoped in, or a voice channel's chat when that is opted into."""
+        if self.channels is None or channel_id in self.channels:
+            return True
+        if not self.listen_voice_chats or self.space is None:
+            return False
+        channel = self.space.channels.get(channel_id) if channel_id else None
+        return channel is not None and channel.kind == "voice"
 
     async def _dispatch_not_found(self, message, author_id, invoked_with, raw_args):
         """Off by default: only resolves the author and builds a `ctx` when something is actually listening."""
@@ -348,7 +371,7 @@ class Bot:
         await guard_dispatch(self._dispatch_event, "on_frame", frame)
         if kind == "message.created":
             channel_id = frame.get("channel_id")
-            if self.channels is not None and channel_id not in self.channels:
+            if not self._listens_in(channel_id):
                 return
             message = frame.get("message") or {}
             self._note_seq(channel_id, message.get("seq"))
@@ -375,7 +398,7 @@ class Bot:
             return
         channel_event = _CHANNEL_EVENT_FRAMES.get(kind)
         if channel_event:
-            if self.channels is not None and frame.get("channel_id") not in self.channels:
+            if not self._listens_in(frame.get("channel_id")):
                 return
             await self._dispatch_typed(*channel_event, frame)
 
@@ -407,7 +430,9 @@ class Bot:
 
     async def _connect_once(self, reset_delay: Callable[[], None]) -> None:
         assert self.client is not None and self.space is not None, "_connect_once needs start() to have run"
-        self.me_id = (await self.client.me())["id"]
+        me = await self.client.me()
+        self.me_id = me["id"]
+        self.username = me.get("username")
         await self.space.refresh_channels()
         try:
             await self.space.refresh_roles()

@@ -242,12 +242,20 @@ def build_help_text(bot: Bot, *, command_name: str | None = None) -> str:
     """The auto-generated `help` command's reply: one command or subcommand, or the full list."""
     if command_name:
         return _describe(bot, command_name)
-    lines = [f"**Commands** (prefix `{bot.prefix}`)"]
+    lines = [_help_header(bot)]
     for command in bot.unique_commands():
         usage = f" {command.usage}" if command.usage else ""
         summary = f" - {command.help}" if command.help else ""
         lines.append(f"`{bot.prefix}{command.name}{usage}`{summary}")
     return "\n".join(lines)
+
+
+def _help_header(bot: Bot) -> str:
+    """Names the bot, so several bots answering one channel are told apart."""
+    if not bot.username:
+        return f"**Commands** (prefix `{bot.prefix}`)"
+    address = f", or `@{bot.username} <command>`" if bot.mention_commands else ""
+    return f"**{bot.username} commands** (prefix `{bot.prefix}`{address})"
 
 
 def _describe(bot: Bot, command_name: str) -> str:

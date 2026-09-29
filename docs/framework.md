@@ -121,6 +121,16 @@ A member is in at most one call; if roster data somehow shows otherwise (no time
 `bot.setting(name, default=None, *, type=str, required=False)` reads one of a bot's *own* env vars the same way, converting via `type` (`int`, `float`, or `list` for a comma-separated one) - `bot-jellyfin`'s nine `JELLYFIN_*` variables are the worked example.
 A missing `required=True` value is never raised at the `setting()` call itself (which usually runs at import time, before `Bot.start()`); it is collected and reported together with a missing `SLIMM_URL`/token/channels in the same one-line error when `start()` runs.
 
+## Where a bot listens, and how it is addressed
+
+`channels=`/`SLIMM_CHANNELS` scopes which channels a bot reads.
+A voice channel's chat is a separate channel with its own id, so a bot scoped to a text channel never sees it; `Bot(listen_voice_chats=True)` (or `SLIMM_LISTEN_VOICE_CHATS=1`) also accepts any voice channel's chat.
+The bot still needs `VIEW_CHANNEL` there, and `SEND_MESSAGES` to answer.
+
+Several bots in one channel would all answer `!help`.
+Give each its own prefix with `SLIMM_PREFIX` (it overrides the `prefix=` the script passes), or address one by name with `@username <command>`, which every bot accepts unless built with `mention_commands=False`.
+The default `help` header names the bot and shows both forms.
+
 ## Background tasks
 
 `bot.background(coro, *, name=None)` is the one way a bot should ever start a loop that outlives one command - `bot-casino`'s hourly prune, `bot-reminders`' due-checker and pruner, `bot-jellyfin`'s poll loop.
