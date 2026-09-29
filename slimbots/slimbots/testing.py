@@ -35,6 +35,7 @@ class FakeAsyncClient(AsyncClient):
         self.respond("GET", "/members", [])
         self.respond("GET", "/roles", [])
         self.respond("PUT", "/bots/commands", None)
+        self.respond("PUT", "/bots/ui", None)
 
     def respond(self, method: str, path: str, response: Any) -> None:
         """Queues `response` (or, if callable, its return value) for every future `method path` call."""

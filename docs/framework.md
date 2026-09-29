@@ -274,6 +274,19 @@ A handler that returns without answering is acked for you, so a quiet handler do
 A press is best effort like typing: a bot that was offline never sees it.
 `FakeAsyncClient` records replacements in `client.component_edits` and acks in `client.acks`, and a test can feed a press through `await bot._handle_frame({"type": "interaction.created", ...})`.
 
+## Menu entries and call controls
+
+`@bot.message_menu("translate", "Translate")` adds a row to every message's context menu, and `@bot.call_control("pause", "Pause", icon="pause")` adds a button to the call dock while the bot is on the call (slim-m decision 0045).
+Members see menu rows under the bot's name and a Bot badge, after the app's own rows, so an entry cannot pass for a built-in one.
+At most 5 menu entries and 8 call controls, a 32-character label and a 64-character id of letters, digits and `-_.`; the decorator refuses anything over.
+`permission=Permissions.X` hides the entry from members without that bit and the server refuses their use of it, so unlike a command's permission it is enforced.
+`icon` is for call controls and one of `play`, `pause`, `stop`, `skip_next`, `skip_previous`, `volume`, `volume_off`, `repeat`, `shuffle` or `list`.
+
+The handler is the same as a button's: it gets an `Interaction` with `kind` (`message_menu` or `call_control`), the member (`user_id`, `user_display_name`) and, for a menu entry, the `message_id` it was used on.
+A call control's `message_id` is `None` and `edit_components` raises on it.
+Answer with `reply_ephemeral` or `ack`, within the same 15 minutes; a handler that returns quietly is acked for you.
+The set is registered with `PUT /bots/ui` on every connect, only when the bot declares any, so a bot that removes its last entry keeps the old ones until it registers a set again.
+
 ## Embeds
 
 `ctx.send(content, embed=Embed(...))` and `ctx.reply(...)` send the real `RequestEmbed` wire shape decision 0030 defines (title/description/url/color/author/fields/footer/timestamp/image/thumbnail), capped to the same limits the server enforces (10 embeds/message elsewhere is a bot's own concern; per-embed caps live in `slimbots/embeds.py`).
