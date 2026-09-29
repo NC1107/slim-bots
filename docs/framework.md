@@ -243,6 +243,16 @@ A `@bot.group()` still contributes exactly one entry, whatever it names, not one
 A `requires=` permission becomes the entry's single-bit `permission`, which only hides the row in the composer for a caller who lacks it - it is never enforced against the message a bot receives, so the command's own `requires=` check still runs.
 A 404 or 405 is treated as "server too old" and skipped quietly; any other error (400 naming the violated cap, 403 if the token somehow isn't a bot's) is raised, so the framework works against today's production server exactly as it will against tomorrow's.
 
+## Private replies
+
+`await ctx.reply_ephemeral("you need Manage Server for that")` answers only the author of the message being handled: they see it marked "Only you can see this", on every device, and nobody else does, moderators and the bot's own socket included.
+It calls `POST /channels/{channelId}/ephemeral-messages` (slim-m decision 0037), also available as `bot.client.send_ephemeral(channel_id, in_reply_to_id, content)`.
+The recipient is the author of the message you answer, so it works for a command someone just typed and cannot reach anyone else. That message must be a person's, in that channel, no more than 15 minutes old, and addressed to your bot (it mentions you, replies to one of your messages, or starts with your registered prefix and one of your registered commands), or the server answers 403. You get three per message; the fourth is a 429.
+Nothing is stored: it has no seq, never shows in history, search or sync, is gone on reload, and a member who is offline when it is sent never sees it. Use it for a refusal or a confirmation, not for anything they must not miss. Text only.
+A member who blocked the bot still gets a 200 back, so a bot cannot tell.
+On a server that predates it the call is a 404 or 405 and raises `ApiError`; pass `public_fallback=True` to reply in the channel instead. Only do that for a refusal - never for anything private like a balance.
+`FakeAsyncClient` records each one in `client.ephemerals`, separate from `client.sent`.
+
 ## Embeds
 
 `ctx.send(content, embed=Embed(...))` and `ctx.reply(...)` send the real `RequestEmbed` wire shape decision 0030 defines (title/description/url/color/author/fields/footer/timestamp/image/thumbnail), capped to the same limits the server enforces (10 embeds/message elsewhere is a bot's own concern; per-embed caps live in `slimbots/embeds.py`).

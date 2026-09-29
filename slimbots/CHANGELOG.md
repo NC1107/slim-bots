@@ -5,9 +5,15 @@ This project does not yet follow strict semantic versioning - it is pre-1.0, and
 
 ## 0.6.0 (unreleased)
 
+Ephemeral replies expect a slim-m server with ephemeral messages (decision 0036).
+
 - New `AsyncClient.time_out_member(user_id, duration_seconds, reason=None)` and `lift_member_timeout(user_id)`: put a member in timeout, or take them out of it. The bot needs the moderation permission; a missing one surfaces as the server's error.
 - `FakeClient` records both calls, so a bot's tests can assert on them.
 - `bot-automod` uses them.
+- New `ctx.reply_ephemeral(text)` and `AsyncClient.send_ephemeral(channel_id, in_reply_to_id, text)`: answer only the author of a message, marked "Only you can see this". Never stored, so it is gone on reload and never reaches an offline member.
+- `reply_ephemeral(..., public_fallback=True)` replies in the channel instead on a server that predates it (404/405). A 403 always raises.
+- `FakeAsyncClient` records private answers in `client.ephemerals`, apart from `client.sent`.
+- `bot-greeter` refuses `!welcome here` privately.
 
 ## 0.5.1
 
