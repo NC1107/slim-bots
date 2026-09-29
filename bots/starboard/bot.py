@@ -98,7 +98,8 @@ def render_highlight(message_id, channel_id, author_id, content, attachments, co
     if link:
         header += f" - {link}"
     quote = "\n".join(f"> {line}" for line in content[:MAX_QUOTE_LEN].splitlines()) if content else ""
-    extra = f"(+{attachments} attachment{'s' if attachments != 1 else ''})" if attachments else ""
+    plural = "s" if attachments != 1 else ""
+    extra = f"(+{attachments} attachment{plural})" if attachments else ""
     return "\n".join(part for part in (header, quote, extra) if part)
 
 

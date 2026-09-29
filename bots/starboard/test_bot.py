@@ -175,7 +175,8 @@ def test_attachments_are_counted_in_the_body():
 
 
 def test_highlight_id_is_stable_for_idempotent_retries():
-    assert starboard.highlight_id("m1") == starboard.highlight_id("m1")
+    first, again = starboard.highlight_id("m1"), starboard.highlight_id("m1")
+    assert first == again
     assert starboard.highlight_id("m1") != starboard.highlight_id("m2")
 
 
