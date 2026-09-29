@@ -219,7 +219,7 @@ async def show_permissions(ctx):
     )
 
 
-@bot.command(name="modlog", help="stats/gaps/permissions - this bot's own local transcript", usage="<stats|gaps|permissions>")
+@bot.command(name="modlog", help="Show stats, gaps or permissions from this bot's own local transcript", usage="<stats|gaps|permissions>")
 async def modlog_cmd(ctx, sub: str):
     sub = sub.lower()
     if sub == "stats":

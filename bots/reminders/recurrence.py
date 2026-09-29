@@ -34,11 +34,12 @@ def normalize_weekday(name):
 
 
 def is_valid_timezone(name):
+    """False for every way `ZoneInfo` refuses a name: unknown, malformed, or a path-like or overlong one."""
     try:
         ZoneInfo(name)
-        return True
-    except Exception:
+    except (LookupError, ValueError, OSError):
         return False
+    return True
 
 
 def local_clock_time(now_epoch, hour, minute, tz_name):

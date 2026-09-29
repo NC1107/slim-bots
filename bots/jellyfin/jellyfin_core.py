@@ -1,7 +1,9 @@
 """bot-jellyfin's settings, Jellyfin API client, and post grouping/rendering; see docs/framework.md.
 Never imports `bot` (the entry point) - see "Splitting a bot across files" there for why."""
 
+import http.client
 import json
+import sys
 import time
 import urllib.error
 import urllib.parse
@@ -154,7 +156,8 @@ def jf_get_bytes(path):
     try:
         with urllib.request.urlopen(request, timeout=20) as response:
             return response.read()
-    except Exception:
+    except (OSError, http.client.HTTPException) as err:
+        print(f"jellyfin GET {path.split('?')[0]} failed: {type(err).__name__}: {err}", file=sys.stderr)
         return None
 
 

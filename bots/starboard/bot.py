@@ -2,7 +2,6 @@
 """bot-starboard: reposts well-reacted messages to a highlights channel and posts a weekly digest; see README.md."""
 
 import asyncio
-import os
 import time
 import uuid
 
@@ -72,7 +71,7 @@ def digest_id(period_start):
 
 def link_for(channel_id, message_id):
     """The channel route only: the client has no per-message anchor to link to yet."""
-    template = LINK_TEMPLATE or (os.environ["SLIMM_URL"].rstrip("/") + "/channels/{channel_id}" if os.environ.get("SLIMM_URL") else None)
+    template = LINK_TEMPLATE or (bot.client.base + "/channels/{channel_id}" if bot.client else None)
     return template.format(channel_id=channel_id, message_id=message_id) if template else None
 
 

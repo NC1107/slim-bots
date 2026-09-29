@@ -7,7 +7,6 @@ import sys
 import time
 
 os.environ["STARBOARD_CHANNEL"] = "hl"
-os.environ["SLIMM_URL"] = "https://slim.example"
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import bot as starboard  # noqa: E402
@@ -27,7 +26,7 @@ def setup():
     asyncio.run(starboard.bot.store.open())
     starboard.bot.channels = {"c1"}
     starboard._locks.clear()
-    client = FakeAsyncClient(me_id="bot-1")
+    client = FakeAsyncClient(me_id="bot-1", base="https://slim.example")
     client.respond("GET", "/members", MEMBERS)
     client.respond("GET", "/channels", CHANNELS)
     starboard.bot.client = client
