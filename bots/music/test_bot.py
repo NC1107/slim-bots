@@ -322,9 +322,10 @@ def test_an_empty_call_makes_the_bot_leave():
     async def playing_then_empty():
         await until(lambda: music_cog.active_sessions()["v1"].current is not None)
         music_cog.active_sessions()["v1"].wake_monitor()
-        await until(lambda: music.bot.voice.sessions[0].left)
+        await until(lambda: "music stopped (the call is empty)." in replies(client))
 
     scenario(client, "~play https://93.184.216.34/long.mp3", playing_then_empty)
+    assert music.bot.voice.sessions[0].left
     assert "music stopped (the call is empty)." in replies(client)
     assert music_cog.active_sessions() == {}
 

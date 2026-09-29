@@ -130,6 +130,7 @@ class MusicSession:
     async def stop(self, *, reason="stopped"):
         if self.ended:
             return
+        self.ended = True  # before the kill, so the runner it unblocks cannot start its own leave and cancel this stop
         self.queue.clear()
         self._interrupted = True
         await self._kill_process()
