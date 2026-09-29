@@ -246,8 +246,8 @@ A 404 or 405 is treated as "server too old" and skipped quietly; any other error
 ## Private replies
 
 `await ctx.reply_ephemeral("you need Manage Server for that")` answers only the author of the message being handled: they see it marked "Only you can see this", on every device, and nobody else does, moderators and the bot's own socket included.
-It calls `POST /channels/{channelId}/ephemeral-messages` (slim-m decision 0036), also available as `bot.client.send_ephemeral(channel_id, in_reply_to_id, content)`.
-The recipient is the author of the message you answer, so it works for a command someone just typed and cannot reach anyone else. That message must be a person's, in that channel, and no more than 15 minutes old, or the server answers 403.
+It calls `POST /channels/{channelId}/ephemeral-messages` (slim-m decision 0037), also available as `bot.client.send_ephemeral(channel_id, in_reply_to_id, content)`.
+The recipient is the author of the message you answer, so it works for a command someone just typed and cannot reach anyone else. That message must be a person's, in that channel, no more than 15 minutes old, and addressed to your bot (it mentions you, replies to one of your messages, or starts with your registered prefix and one of your registered commands), or the server answers 403. You get three per message; the fourth is a 429.
 Nothing is stored: it has no seq, never shows in history, search or sync, is gone on reload, and a member who is offline when it is sent never sees it. Use it for a refusal or a confirmation, not for anything they must not miss. Text only.
 A member who blocked the bot still gets a 200 back, so a bot cannot tell.
 On a server that predates it the call is a 404 or 405 and raises `ApiError`; pass `public_fallback=True` to reply in the channel instead. Only do that for a refusal - never for anything private like a balance.
