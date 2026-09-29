@@ -3,6 +3,15 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## Unreleased
+
+Expects a slim-m server with ephemeral messages (decision 0036); intended as 0.6.0, and the orchestrator sets the number.
+
+- New `ctx.reply_ephemeral(text)` and `AsyncClient.send_ephemeral(channel_id, in_reply_to_id, text)`: answer only the author of a message, marked "Only you can see this". Never stored, so it is gone on reload and never reaches an offline member.
+- `reply_ephemeral(..., public_fallback=True)` replies in the channel instead on a server that predates it (404/405). A 403 always raises.
+- `FakeAsyncClient` records private answers in `client.ephemerals`, apart from `client.sent`.
+- `bot-greeter` refuses `!welcome here` privately.
+
 ## 0.5.1
 
 - New `VoiceSession.unpublish_screen_share()`: takes down the pair `publish_screen_share` published, so a bot can republish at another resolution or ceiling (a `VideoSource`'s size is fixed at construction). Safe to call twice.

@@ -13,6 +13,7 @@ class FakeAsyncClient(AsyncClient):
     """Duck-types `AsyncClient`; unstubbed calls raise loud instead of hanging - see docs/framework.md."""
 
     _MESSAGE_ROUTE = re.compile(r"^/channels/[^/]+/messages$")
+    _EPHEMERAL_ROUTE = re.compile(r"^/channels/[^/]+/ephemeral-messages$")
 
     def __init__(
         self, me_id: str = "bot-1", base: str = "https://fake.invalid",
@@ -21,6 +22,7 @@ class FakeAsyncClient(AsyncClient):
         super().__init__(base, token, user_agent)
         self.calls: list[tuple[str, str, Any, Any]] = []
         self.sent: list[dict[str, Any]] = []
+        self.ephemerals: list[dict[str, Any]] = []
         self._responses: dict[tuple[str, str], Any] = {}
         self._next_seq = 1
         self.respond("GET", "/me", {"id": me_id})
@@ -45,6 +47,9 @@ class FakeAsyncClient(AsyncClient):
             self._next_seq += 1
             self.sent.append({"channel_id": path.split("/")[2], "seq": seq, **(body or {})})
 
+        if method == "POST" and self._EPHEMERAL_ROUTE.match(path) is not None:
+            self.ephemerals.append({"channel_id": path.split("/")[2], **(body or {})})
+
         key = (method, path)
         if key in self._responses:
             response = self._responses[key]
@@ -53,6 +58,8 @@ class FakeAsyncClient(AsyncClient):
             return response() if callable(response) else response
         if is_send:
             return {"id": (body or {}).get("id"), "seq": seq}
+        if self.ephemerals and method == "POST" and self._EPHEMERAL_ROUTE.match(path) is not None:
+            return {"id": f"ephemeral-{len(self.ephemerals)}", "channel_id": path.split("/")[2], **(body or {})}
         if method in ("PUT", "DELETE") and "/roles/" in path:
             return None
         raise KeyError(f"FakeAsyncClient: no response queued for {method} {path} - call .respond() first")

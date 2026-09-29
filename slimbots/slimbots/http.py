@@ -173,6 +173,11 @@ class AsyncClient:
             data = await self.call("POST", f"/channels/{channel_id}/messages", body)
         return Message(data, client=self, channel_id=channel_id)
 
+    async def send_ephemeral(self, channel_id: str, in_reply_to_id: str, content: str) -> Any:
+        """Answers the author of `in_reply_to_id` privately; see docs/framework.md."""
+        body = {"in_reply_to_id": in_reply_to_id, "content": content}
+        return await self.call("POST", f"/channels/{channel_id}/ephemeral-messages", body)
+
     async def edit_message(self, channel_id: str, message_id: str, content: str) -> Any:
         return await self.call("PATCH", f"/channels/{channel_id}/messages/{message_id}", {"content": content})
 

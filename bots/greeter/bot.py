@@ -78,7 +78,7 @@ async def welcome(ctx, arg: str = ""):
         await ctx.reply(f"welcomes go to #{channel.name}." if channel else "no welcome channel set - run `!welcome here`.")
         return
     if not ctx.author.has_permission(Permissions.MANAGE_SERVER):
-        await ctx.reply("only someone with Manage Server can move the welcome channel.")
+        await ctx.reply_ephemeral("only someone with Manage Server can move the welcome channel.", public_fallback=True)
         return
     if bot.channel:
         await ctx.reply("this bot's SLIMM_CHANNELS pins the welcome channel; change it there instead.")
