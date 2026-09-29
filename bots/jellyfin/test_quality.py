@@ -8,6 +8,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import quality  # noqa: E402
 import stream_session  # noqa: E402
+import session_registry  # noqa: E402
 import watch_cog  # noqa: E402
 from slimbots.testing import FakeVoiceSession  # noqa: E402
 from test_bot import _fake_start_pipeline, jellyfin, message, movie_for_watch, process, setup_with_voice  # noqa: E402
@@ -18,7 +19,7 @@ def running_session(voice_session=None):
         jellyfin.bot, "c1", "c1", movie_for_watch(), "u1", voice_session or FakeVoiceSession("c1"),
     )
     session._video_source = session._audio_source = object()
-    watch_cog._set_active_session(session)
+    session_registry.add(session)
     return session
 
 
@@ -35,7 +36,7 @@ def patch_pipeline():
 
 def restore_pipeline(original):
     stream_session.WatchSession._start_pipeline, stream_session.WatchSession._teardown_pipeline = original
-    watch_cog._set_active_session(None)
+    session_registry.clear()
 
 
 def test_quality_alone_reports_the_current_setting():
@@ -46,7 +47,7 @@ def test_quality_alone_reports_the_current_setting():
         reply = client.sent[-1]["content"]
         assert "quality is default (" in reply and "low|medium|high" in reply
     finally:
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 def test_quality_needs_a_running_stream():
@@ -62,7 +63,7 @@ def test_quality_rejects_an_unknown_preset():
         process(client, message("!quality ultra"))
         assert 'no quality called "ultra"' in client.sent[-1]["content"]
     finally:
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 def test_quality_refuses_a_non_starter_non_manager():
@@ -74,7 +75,7 @@ def test_quality_refuses_a_non_starter_non_manager():
         assert "only the person who started this" in client.sent[-1]["content"]
         assert session.quality.name == "default"
     finally:
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 def test_quality_republishes_at_the_preset_size_and_keeps_the_position():
@@ -127,7 +128,7 @@ def test_the_stream_url_and_np_embed_follow_the_preset():
         fields = {f["name"]: f["value"] for f in session.now_playing_embed().to_wire()["fields"]}
         assert fields["quality"] == "medium (1280x720, up to 4000 kbps)"
     finally:
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 if __name__ == "__main__":

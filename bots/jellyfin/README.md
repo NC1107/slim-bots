@@ -81,13 +81,21 @@ to stream the result in as a screen share. The bot needs `CONNECT` and
 `SPEAK` in the invoker's channel, the same grants a human sharing their
 screen needs, and says which one is missing if either is absent. Several
 matches prompt a numbered pick, answered the same way `ctx.confirm` waits
-for a reply. Only one watch party runs per deployment at a time, and its
-control commands (`!pause`/`!resume`/`!seek`/`!np`/`!subs`/`!stop`) work
-from any channel this bot listens on, not just the one `!watch` was typed
-in.
+for a reply. One watch party runs per voice channel, so the one bot can
+stream a different title in each call it is in (a second `!watch` in a call
+that already has one is refused, since two shares from one participant would
+read as a single share). The control commands
+(`!pause`/`!resume`/`!seek`/`!np`/`!subs`/`!quality`/`!stop`) work from any
+channel this bot listens on and act on the call the person who typed them
+is in. Someone in no call reaches the party if only one is running, and is
+asked to join the call they mean if several are.
 
 - `!watch <title>` - find the invoker's voice channel, join it, and start
-  playing; confirms with "streaming **title** into #channel-name".
+  playing; confirms with "streaming **title** into #channel-name". If
+  jellyfin already has a saved position for it (past 30 seconds, not in the
+  last minute) the bot asks first: reply `resume` to pick up there or
+  `start` to begin again. With no title, `!watch` offers the account's most
+  recent unfinished item the same way (`/UserItems/Resume`).
 - `!pause` / `!resume` - stops or resumes reading the decoded stream;
   ffmpeg blocks on its own full pipe buffer while paused, so it costs no
   CPU and resumes exactly where it left off.
@@ -95,6 +103,12 @@ in.
   and a bare second count also work).
 - `!np` - an embed with title, position, duration, and subtitle state.
 - `!stop` - ends the stream and leaves the call.
+- Progress: while a stream plays the bot writes its position back to
+  jellyfin every 30 seconds and on `!stop` (`POST /UserItems/{id}/UserData`
+  with `PlaybackPositionTicks` and `LastPlayedDate`), and marks the item
+  played and clears the position when it finishes, so jellyfin's own
+  Continue Watching stays correct. It does not use the `/Sessions/Playing`
+  endpoints, which need a user token rather than the API key.
 - `!subs <lang|off>` - matches a subtitle track by language code or
   display title and restarts the transcode with `SubtitleMethod=Encode`
   burning it in, or clears it with `off`.
@@ -137,6 +151,7 @@ what actually limits going past 720p; see below.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
+| `JELLYFIN_USER_ID` | first enabled user | The jellyfin account whose playback position `!watch` reads and writes. The bot has one API key, so every slim-m user shares this account's position; there is no per-person mapping. |
 | `JELLYFIN_STREAM_WIDTH` | `1280` | The published video width; Jellyfin's own aspect ratio is letterboxed into this. |
 | `JELLYFIN_STREAM_HEIGHT` | `720` | The published video height. |
 | `JELLYFIN_STREAM_FPS` | `30` | The published frame rate. |
@@ -315,9 +330,8 @@ e2e stack above with a bandwidth or quality probe attached.
 - **Catching up a very long outage in one poll.** `MAX_ITEMS_PER_POLL`
   caps how far back a single poll pages; a bigger backlog just takes more
   cycles, never a silently dropped difference.
-- **More than one watch party per deployment at a time.** `!watch` refuses
-  while `watch_cog`'s module-level session is still active; running two
-  bot-jellyfin processes against the same deployment was never a goal.
-- **Changing the published resolution or frame rate mid-stream.** A
-  `!watch` after a `!stop` is how to switch `JELLYFIN_STREAM_WIDTH` et al.,
-  which are read once at bot startup.
+- **Two streams in the same call.** One participant publishing two screen
+  shares reads as one share to the client, so `!watch` refuses a second
+  stream in a call that already has one.
+- **Changing the frame rate mid-stream.** `!quality` changes the size and
+  bitrate; `JELLYFIN_STREAM_FPS` is read once at bot startup.

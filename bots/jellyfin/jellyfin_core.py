@@ -391,9 +391,12 @@ def search_items(query, limit):
     return jf_get("/Items", params).get("Items", [])
 
 
-def fetch_item_for_playback(item_id):
-    """One item's `RunTimeTicks` and `MediaStreams` (audio/subtitle track list) - what `!watch`/`!subs` need."""
-    items = jf_get("/Items", {"ids": item_id, "fields": STREAM_FIELDS}).get("Items", [])
+def fetch_item_for_playback(item_id, user_id=None):
+    """One item's `RunTimeTicks`, `MediaStreams` (audio/subtitle track list) and, given a `user_id`, that user's `UserData` - what `!watch`/`!subs` need."""
+    params = {"ids": item_id, "fields": STREAM_FIELDS}
+    if user_id:
+        params["userId"] = user_id
+    items = jf_get("/Items", params).get("Items", [])
     return items[0] if items else None
 
 

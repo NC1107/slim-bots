@@ -12,6 +12,7 @@ import time
 from slimbots import Embed
 
 import jellyfin_core
+import playback_progress
 from quality import Quality, configured_default
 
 AUDIO_SAMPLE_RATE = 48000
@@ -99,6 +100,8 @@ class WatchSession:
         self.quality = configured_default()
         self.paused = False
         self.finished = False
+        self.ended_naturally = False
+        self._last_reported_at = time.monotonic()
         self._seek_base = 0.0
         self._segment_started_at = time.monotonic()
         self._video_source = None
@@ -130,9 +133,9 @@ class WatchSession:
             audio_max_bitrate=jellyfin_core.JELLYFIN_STREAM_AUDIO_MAX_BITRATE,
         )
 
-    async def start(self):
+    async def start(self, start_seconds=0.0):
         await self._publish()
-        await self._start_pipeline(0.0)
+        await self._start_pipeline(start_seconds)
         self._monitor_task = self.bot.background(self._monitor_loop(), name=f"jellyfin-watch-monitor-{self.voice_channel_id}")
 
     async def _start_pipeline(self, start_seconds):
@@ -272,18 +275,27 @@ class WatchSession:
         await self.seek(position)
 
     async def _handle_finished(self):
+        self.ended_naturally = True
         self.finished = True
         text_channel_id, title = self.text_channel_id, self.title
         await self.stop(reason="finished", announce=False)
         with contextlib.suppress(Exception):
             await self.bot.client.send(text_channel_id, f"finished playing **{title}**.")
 
+    async def _report_progress(self, seconds, *, finished=False):
+        """Best-effort: a Jellyfin hiccup must never interrupt playback."""
+        self._last_reported_at = time.monotonic()
+        with contextlib.suppress(Exception):
+            await asyncio.to_thread(playback_progress.report_position, self.item_id, seconds, finished=finished)
+
     async def stop(self, *, reason="stopped", announce=True):
+        final_position = self.position_seconds
         self.finished = True
         if self._monitor_task is not None:
             self._monitor_task.cancel()
             self._monitor_task = None
         await self._teardown_pipeline()
+        await self._report_progress(final_position, finished=self.ended_naturally)
         await self.voice_session.leave()
         if announce:
             with contextlib.suppress(Exception):
@@ -296,6 +308,8 @@ class WatchSession:
             self._wake_monitor.clear()
             if self.finished:
                 return
+            if playback_progress.report_due(self._last_reported_at):
+                await self._report_progress(self.position_seconds)
             roster = await self.bot.client.voice_roster(self.voice_channel_id)
             others = [p for p in roster.get("participants", []) if p.get("user_id") != self.bot.me_id]
             if not others:

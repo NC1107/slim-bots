@@ -9,28 +9,15 @@ from slimbots.limits import ValidationError, require_len
 from slimbots.voice import VoiceError
 
 import jellyfin_core
+import playback_progress
 import quality
+import session_registry
 from stream_session import StreamError, WatchSession, format_hms, parse_hms
 
 MAX_PICK_RESULTS = 5
 PICK_TIMEOUT_SECONDS = 30
-
-_active_session: WatchSession | None = None
-
-
-def active_session():
-    return _active_session
-
-
-def _set_active_session(session):
-    global _active_session
-    _active_session = session
-
-
-def _channel_name(bot, channel_id):
-    channel = bot.space.channels.get(channel_id)
-    return f"#{channel.name}" if channel is not None else channel_id
-
+RESUME_WORDS = {"resume", "yes", "y"}
+START_OVER_WORDS = {"start", "restart", "no", "n"}
 
 async def _pick_result(ctx, items):
     """Lists up to `MAX_PICK_RESULTS` matches and waits for the invoker's numeric reply, or None on a bad/late one."""
@@ -58,41 +45,88 @@ def _may_control(ctx, session):
     return ctx.author.id == session.started_by_id or ctx.author.has_permission(Permissions.MANAGE_CHANNELS)
 
 
-async def run_watch(ctx, query):
-    if _active_session is not None and not _active_session.finished:
-        await ctx.reply(f"already watching **{_active_session.title}** in this deployment - `!stop` it first.")
-        return
-    if not ctx.channel_id:
-        return
+async def _offer_resume(ctx, title, position):
+    """Asks whether to pick up at `position`; the start second to use, or None when the invoker did not answer."""
+    await ctx.reply(
+        f"**{title}** is at {format_hms(position)} - reply `resume` to pick up there, or `start` to begin from the start."
+    )
+
+    def is_an_answer(message):
+        same_place = message.get("channel_id") == ctx.channel_id and message.get("author_id") == ctx.author.id
+        return same_place and (message.get("content") or "").strip().lower() in RESUME_WORDS | START_OVER_WORDS
+
+    try:
+        message = await ctx.bot.wait_for("on_raw_message", check=is_an_answer, timeout=PICK_TIMEOUT_SECONDS)
+    except asyncio.TimeoutError:
+        await ctx.reply("timed out - `!watch` again to retry.")
+        return None
+    return position if message["content"].strip().lower() in RESUME_WORDS else 0.0
+
+
+async def _find_item(ctx, query):
+    """The playable item for `query`, or the account's last unfinished one when `query` is empty; replies and returns None otherwise."""
+    if not query.strip():
+        last = await asyncio.to_thread(playback_progress.fetch_last_watched)
+        if last is None:
+            await ctx.reply("nothing to resume - `!watch <title>` to pick something.")
+        return last
     try:
         query = require_len(query.strip(), max_len=jellyfin_core.MAX_QUERY_LENGTH, field="a title")
     except ValidationError as err:
         await ctx.reply(str(err))
+        return None
+    results = await asyncio.to_thread(jellyfin_core.search_items, query, jellyfin_core.MAX_SEARCH_RESULTS)
+    playable = [item for item in results if item.get("Type") in ("Movie", "Episode")]
+    if not playable:
+        await ctx.reply(f'nothing playable found for "{query}".')
+        return None
+    return playable[0] if len(playable) == 1 else await _pick_result(ctx, playable)
+
+
+async def _load_for_playback(ctx, item):
+    user_id = await asyncio.to_thread(playback_progress.resolve_user_id)
+    full_item = await asyncio.to_thread(jellyfin_core.fetch_item_for_playback, item["Id"], user_id)
+    if full_item is None:
+        await ctx.reply("could not load that title from jellyfin.")
+    return full_item
+
+
+async def _refuse_if_busy(ctx, voice_channel_id):
+    """One party per call: the bot is one participant there, so a second share would read as the same person's."""
+    running = session_registry.session_for_channel(voice_channel_id)
+    if running is None:
+        return False
+    name = session_registry.channel_name(ctx.bot, voice_channel_id)
+    await ctx.reply(f"already watching **{running.title}** in {name} - `!stop` it first. another call can have its own stream.")
+    return True
+
+
+async def run_watch(ctx, query):
+    if not ctx.channel_id:
         return
     voice_channel_id = await ctx.bot.voice.find_member(ctx.author.id)
     if voice_channel_id is None:
         await ctx.reply("join a voice channel first, then run `!watch` again.")
         return
+    if await _refuse_if_busy(ctx, voice_channel_id):
+        return
     try:
-        results = await asyncio.to_thread(jellyfin_core.search_items, query, jellyfin_core.MAX_SEARCH_RESULTS)
+        item = await _find_item(ctx, query)
+        full_item = await _load_for_playback(ctx, item) if item is not None else None
     except jellyfin_core.JellyfinAuthError:
         await ctx.reply("jellyfin is unavailable right now.")
         return
-    playable = [item for item in results if item.get("Type") in ("Movie", "Episode")]
-    if not playable:
-        await ctx.reply(f'nothing playable found for "{query}".')
-        return
-    item = playable[0]
-    if len(playable) > 1:
-        picked = await _pick_result(ctx, playable)
-        if picked is None:
-            return
-        item = picked
-    full_item = await asyncio.to_thread(jellyfin_core.fetch_item_for_playback, item["Id"])
     if full_item is None:
-        await ctx.reply("could not load that title from jellyfin.")
         return
-    voice_channel_name = _channel_name(ctx.bot, voice_channel_id)
+    duration_seconds = (full_item.get("RunTimeTicks") or 0) / playback_progress.TICKS_PER_SECOND
+    start_seconds = playback_progress.saved_position_seconds(full_item, duration_seconds)
+    if start_seconds:
+        start_seconds = await _offer_resume(ctx, full_item.get("Name") or "this title", start_seconds)
+        if start_seconds is None:
+            return
+    if await _refuse_if_busy(ctx, voice_channel_id):
+        return
+    voice_channel_name = session_registry.channel_name(ctx.bot, voice_channel_id)
     try:
         voice_session = await ctx.bot.voice.join(voice_channel_id)
     except VoiceError as err:
@@ -104,19 +138,19 @@ async def run_watch(ctx, query):
         return
     session = WatchSession(ctx.bot, ctx.channel_id, voice_channel_id, full_item, ctx.author.id, voice_session)
     try:
-        await session.start()
+        await session.start(start_seconds)
     except (StreamError, VoiceError) as err:
         await voice_session.leave()
         await ctx.reply(f"could not start streaming: {err}")
         return
-    _set_active_session(session)
-    await ctx.reply(f"streaming **{session.title}** into {voice_channel_name} ({format_hms(session.duration_seconds)}).")
+    session_registry.add(session)
+    resumed = f", from {format_hms(start_seconds)}" if start_seconds else ""
+    await ctx.reply(f"streaming **{session.title}** into {voice_channel_name} ({format_hms(session.duration_seconds)}{resumed}).")
 
 
 async def run_pause(ctx):
-    session = _active_session
-    if session is None or session.finished:
-        await ctx.reply("nothing is playing.")
+    session = await session_registry.resolve_session(ctx)
+    if session is None:
         return
     if not _may_control(ctx, session):
         await ctx.reply("only the person who started this, or a channel manager, can pause it.")
@@ -128,9 +162,8 @@ async def run_pause(ctx):
 
 
 async def run_resume(ctx):
-    session = _active_session
-    if session is None or session.finished:
-        await ctx.reply("nothing is playing.")
+    session = await session_registry.resolve_session(ctx)
+    if session is None:
         return
     if not _may_control(ctx, session):
         await ctx.reply("only the person who started this, or a channel manager, can resume it.")
@@ -142,9 +175,8 @@ async def run_resume(ctx):
 
 
 async def run_seek(ctx, position_text):
-    session = _active_session
-    if session is None or session.finished:
-        await ctx.reply("nothing is playing.")
+    session = await session_registry.resolve_session(ctx)
+    if session is None:
         return
     if not _may_control(ctx, session):
         await ctx.reply("only the person who started this, or a channel manager, can seek it.")
@@ -159,9 +191,8 @@ async def run_seek(ctx, position_text):
 
 
 async def run_stop(ctx):
-    session = _active_session
-    if session is None or session.finished:
-        await ctx.reply("nothing is playing.")
+    session = await session_registry.resolve_session(ctx)
+    if session is None:
         return
     if not _may_control(ctx, session):
         await ctx.reply("only the person who started this, or a channel manager, can stop it.")
@@ -170,17 +201,15 @@ async def run_stop(ctx):
 
 
 async def run_now_playing(ctx):
-    session = _active_session
-    if session is None or session.finished:
-        await ctx.reply("nothing is playing.")
+    session = await session_registry.resolve_session(ctx)
+    if session is None:
         return
     await ctx.reply(embed=session.now_playing_embed())
 
 
 async def run_subs(ctx, language):
-    session = _active_session
-    if session is None or session.finished:
-        await ctx.reply("nothing is playing.")
+    session = await session_registry.resolve_session(ctx)
+    if session is None:
         return
     if not _may_control(ctx, session):
         await ctx.reply("only the person who started this, or a channel manager, can change subtitles.")
@@ -199,9 +228,8 @@ async def run_subs(ctx, language):
 
 
 async def run_quality(ctx, preset_name):
-    session = _active_session
-    if session is None or session.finished:
-        await ctx.reply("nothing is playing.")
+    session = await session_registry.resolve_session(ctx)
+    if session is None:
         return
     preset_name = (preset_name or "").strip()
     if not preset_name:
@@ -224,7 +252,7 @@ async def run_quality(ctx, preset_name):
 
 
 def setup(bot):
-    @bot.command(name="watch", help="Search Jellyfin and start a watch party in this voice channel", usage="<title>")
+    @bot.command(name="watch", help="Start a watch party in your voice channel; with no title, offers the last thing you were watching", usage="[title]")
     async def watch(ctx, query: str = ""):
         await run_watch(ctx, query)
 
@@ -258,6 +286,6 @@ def setup(bot):
 
     @bot.event
     async def on_voice_activity(event):
-        session = _active_session
-        if session is not None and not session.finished and event.channel_id == session.voice_channel_id:
+        session = session_registry.session_for_channel(event.channel_id)
+        if session is not None:
             session.wake_monitor()

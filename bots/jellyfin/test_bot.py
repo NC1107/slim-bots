@@ -11,7 +11,9 @@ os.environ.setdefault("JELLYFIN_URL", "https://fake-jellyfin.invalid")
 os.environ.setdefault("JELLYFIN_API_KEY", "fake-key")
 
 import bot as jellyfin  # noqa: E402
+import playback_progress  # noqa: E402
 import stream_session  # noqa: E402
+import session_registry  # noqa: E402
 import watch_cog  # noqa: E402
 from slimbots import Permissions, Store  # noqa: E402
 from slimbots.authors import AuthorFilter  # noqa: E402
@@ -109,6 +111,7 @@ def message(content, msg_id="m1"):
 
 
 def setup():
+    playback_progress.JELLYFIN_USER_ID = "jf-user"
     jellyfin.bot.store = Store(":memory:", migrate=jellyfin.jellyfin_core.init_db)
     asyncio.run(jellyfin.bot.store.open())
     jellyfin.bot.channels = {"c1"}
@@ -297,7 +300,7 @@ def setup_with_voice(*, can_publish=True, member_channels=None, voice_channels=N
     jellyfin.bot.voice = FakeVoice(can_publish=can_publish, member_channels=member_channels, join_error=join_error)
     for channel in voice_channels or []:
         jellyfin.bot.space.channels[channel.id] = channel
-    watch_cog._set_active_session(None)
+    session_registry.clear()
     return client
 
 
@@ -319,7 +322,7 @@ def movie_for_watch(item_id="m1", name="Inception", runtime_seconds=7200):
     return {"Id": item_id, "Name": name, "Type": "Movie", "RunTimeTicks": int(runtime_seconds * 10_000_000), "MediaStreams": []}
 
 
-async def _fake_start(self):
+async def _fake_start(self, start_seconds=0.0):
     self._video_source = object()
     self._audio_source = object()
 
@@ -402,7 +405,7 @@ def test_watch_requires_the_invoker_to_be_in_any_voice_call():
     finally:
         stream_session.WatchSession.start = original_start
     assert client.sent[-1]["content"] == "join a voice channel first, then run `!watch` again."
-    assert watch_cog.active_session() is None
+    assert not session_registry.live_sessions()
 
 
 def test_watch_streams_into_the_invokers_own_voice_channel_not_the_text_channel():
@@ -413,7 +416,7 @@ def test_watch_streams_into_the_invokers_own_voice_channel_not_the_text_channel(
     original_search = jellyfin.jellyfin_core.search_items
     original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
     jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
-    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id: movie_for_watch()
+    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id, user_id=None: movie_for_watch()
     original_start = stream_session.WatchSession.start
     stream_session.WatchSession.start = _fake_start
     try:
@@ -423,12 +426,12 @@ def test_watch_streams_into_the_invokers_own_voice_channel_not_the_text_channel(
         jellyfin.jellyfin_core.fetch_item_for_playback = original_fetch
         stream_session.WatchSession.start = original_start
     assert client.sent[-1]["content"] == "streaming **Inception** into #voice-room (2:00:00)."
-    session = watch_cog.active_session()
+    session = session_registry.session_for_channel("v1")
     assert session is not None and session.title == "Inception"
     assert session.text_channel_id == "c1"
     assert session.voice_channel_id == "v1"
     assert jellyfin.bot.voice.sessions[-1].channel_id == "v1"
-    watch_cog._set_active_session(None)
+    session_registry.clear()
 
 
 def test_watch_refuses_when_the_bot_lacks_speak_in_the_invokers_channel():
@@ -439,7 +442,7 @@ def test_watch_refuses_when_the_bot_lacks_speak_in_the_invokers_channel():
     original_search = jellyfin.jellyfin_core.search_items
     original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
     jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
-    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id: movie_for_watch()
+    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id, user_id=None: movie_for_watch()
     try:
         process(client, message("!watch inception"))
     finally:
@@ -447,7 +450,7 @@ def test_watch_refuses_when_the_bot_lacks_speak_in_the_invokers_channel():
         jellyfin.jellyfin_core.fetch_item_for_playback = original_fetch
     assert "need SPEAK" in client.sent[-1]["content"]
     assert "#voice-room" in client.sent[-1]["content"]
-    assert watch_cog.active_session() is None
+    assert not session_registry.live_sessions()
 
 
 def test_watch_names_the_missing_permission_when_the_bot_cannot_connect():
@@ -458,7 +461,7 @@ def test_watch_names_the_missing_permission_when_the_bot_cannot_connect():
     original_search = jellyfin.jellyfin_core.search_items
     original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
     jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
-    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id: movie_for_watch()
+    jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id, user_id=None: movie_for_watch()
     try:
         process(client, message("!watch inception"))
     finally:
@@ -466,23 +469,23 @@ def test_watch_names_the_missing_permission_when_the_bot_cannot_connect():
         jellyfin.jellyfin_core.fetch_item_for_playback = original_fetch
     assert "CONNECT" in client.sent[-1]["content"]
     assert "#voice-room" in client.sent[-1]["content"]
-    assert watch_cog.active_session() is None
+    assert not session_registry.live_sessions()
 
 
 def test_watch_refuses_a_second_stream_while_one_is_active():
     client = setup_with_voice()
-    watch_cog._set_active_session(stream_session.WatchSession(jellyfin.bot, "c1", "c1", movie_for_watch(), "u1", None))
+    session_registry.add(stream_session.WatchSession(jellyfin.bot, "c1", "c1", movie_for_watch(), "u1", None))
     try:
         process(client, message("!watch inception"))
         assert "already watching" in client.sent[-1]["content"]
     finally:
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 def test_pause_then_resume_updates_state():
     client = setup_with_voice()
     session = stream_session.WatchSession(jellyfin.bot, "c1", "c1", movie_for_watch(), "u1", FakeVoiceSession("c1"))
-    watch_cog._set_active_session(session)
+    session_registry.add(session)
     try:
         process(client, message("!pause"))
         assert session.paused
@@ -491,30 +494,30 @@ def test_pause_then_resume_updates_state():
         process(client, message("!resume"))
         assert not session.paused
     finally:
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 def test_pause_refuses_a_non_starter_non_manager():
     client = setup_with_voice()
     session = stream_session.WatchSession(jellyfin.bot, "c1", "c1", movie_for_watch(), "someone-else", FakeVoiceSession("c1"))
-    watch_cog._set_active_session(session)
+    session_registry.add(session)
     try:
         process(client, message("!pause"))
         assert "only the person who started this" in client.sent[-1]["content"]
         assert not session.paused
     finally:
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 def test_stop_allows_a_channel_manager_to_stop_someone_elses_stream():
     client = setup_with_manager()
     session = stream_session.WatchSession(jellyfin.bot, "c1", "c1", movie_for_watch(), "u1", FakeVoiceSession("c1"))
-    watch_cog._set_active_session(session)
+    session_registry.add(session)
     try:
         process(client, {"id": "m2", "author_id": "u2", "channel_id": "c1", "content": "!stop"})
         assert session.finished
     finally:
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 def test_np_reports_nothing_playing_when_idle():
@@ -527,7 +530,7 @@ def test_seek_and_subs_update_the_session():
     client = setup_with_voice()
     session = stream_session.WatchSession(jellyfin.bot, "c1", "c1", movie_for_watch(runtime_seconds=3600), "u1", FakeVoiceSession("c1"))
     session.item["MediaStreams"] = [{"Type": "Subtitle", "Index": 3, "Language": "eng", "DisplayTitle": "English"}]
-    watch_cog._set_active_session(session)
+    session_registry.add(session)
 
     async def fake_seek(self, seconds):
         if self.duration_seconds:
@@ -546,7 +549,7 @@ def test_seek_and_subs_update_the_session():
         assert session.subtitle_label is None
     finally:
         stream_session.WatchSession.seek = original_seek
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 if __name__ == "__main__":
