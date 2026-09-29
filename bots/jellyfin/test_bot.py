@@ -118,6 +118,12 @@ def setup():
     jellyfin.jellyfin_core._command_cooldown._last.clear()
     client = FakeAsyncClient(me_id="bot-1")
     client.respond("GET", "/members", MEMBERS)
+    client.edited = []
+
+    async def record_edit(channel_id, message_id, content):
+        client.edited.append({"channel_id": channel_id, "message_id": message_id, "content": content})
+
+    client.edit_message = record_edit
     jellyfin.bot.client = client
     jellyfin.bot.space = Space(client)
     jellyfin.bot.authors = AuthorFilter(client, space=jellyfin.bot.space, ignore_bots=True)
@@ -439,7 +445,7 @@ def test_watch_streams_into_the_invokers_own_voice_channel_not_the_text_channel(
         jellyfin.jellyfin_core.search_items = original_search
         jellyfin.jellyfin_core.fetch_item_for_playback = original_fetch
         stream_session.WatchSession.start = original_start
-    assert client.sent[-1]["content"] == "streaming **Inception** into #voice-room (2:00:00)."
+    assert client.sent[-1]["content"] == "**Inception** in #voice-room\nplaying - 2:00:00 - 720p - subtitles off"
     session = session_registry.session_for_channel("v1")
     assert session is not None and session.title == "Inception"
     assert session.text_channel_id == "c1"

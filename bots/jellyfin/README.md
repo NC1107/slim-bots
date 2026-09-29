@@ -96,6 +96,11 @@ asked to join the call they mean if several are.
   last minute) the bot asks first: reply `resume` to pick up there or
   `start` to begin again. With no title, `!watch` offers the account's most
   recent unfinished item the same way (`/UserItems/Resume`).
+- The now-playing panel: `!watch` answers with one message that carries buttons and edits itself as the stream changes -
+  Pause/Play, -30s, +30s, Stop, a quality row (Low 480p, Medium 720p, High 1080p; the current one is greyed), Subtitles on/off
+  and, for an episode, Next episode. Every button is disabled once the stream ends. Anyone who is in the call can press them;
+  someone outside it gets a private "join #call to use these controls" and nothing changes. The text commands still work and
+  redraw the panel too. The panel shows the position only while paused (a stopped clock in a message would be wrong within a second); `!np` has the live one.
 - `!pause` / `!resume` - stops or resumes reading the decoded stream;
   ffmpeg blocks on its own full pipe buffer while paused, so it costs no
   CPU and resumes exactly where it left off.
@@ -119,7 +124,7 @@ asked to join the call they mean if several are.
   settings below say, reported as `default`. `high` warns about the
   encode cost measured under "Stream quality".
 
-`!pause`/`!resume`/`!seek`/`!stop`/`!subs`/`!quality <preset>` are refused unless the caller
+The text commands `!pause`/`!resume`/`!seek`/`!stop`/`!subs`/`!quality <preset>` are refused unless the caller
 either started the stream or holds `MANAGE_CHANNELS`. `!watch` itself
 refuses with "join a voice channel first, then run `!watch` again" if the
 invoker is not in any call this bot can see - never "join this channel's

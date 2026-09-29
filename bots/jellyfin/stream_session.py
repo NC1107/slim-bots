@@ -88,15 +88,11 @@ class WatchSession:
         self.bot = bot
         self.text_channel_id = text_channel_id
         self.voice_channel_id = voice_channel_id
-        self.item = item
-        self.item_id = item["Id"]
-        self.title = item.get("Name") or "Unknown title"
-        self.duration_seconds = (item.get("RunTimeTicks") or 0) / 10_000_000
+        self._set_item(item)
         self.started_by_id = started_by_id
         self.voice_session = voice_session
-        self.audio_stream_index = None
-        self.subtitle_stream_index = None
-        self.subtitle_label = None
+        self.panel = None
+        self.control_lock = asyncio.Lock()
         self.quality = configured_default()
         self.paused = False
         self.finished = False
@@ -113,6 +109,15 @@ class WatchSession:
         self._monitor_task = None
         self._tmpdir = None
         self._wake_monitor = asyncio.Event()
+
+    def _set_item(self, item):
+        self.item = item
+        self.item_id = item["Id"]
+        self.title = item.get("Name") or "Unknown title"
+        self.duration_seconds = (item.get("RunTimeTicks") or 0) / 10_000_000
+        self.audio_stream_index = None
+        self.subtitle_stream_index = None
+        self.subtitle_label = None
 
     @property
     def position_seconds(self):
@@ -268,6 +273,18 @@ class WatchSession:
         await self._start_pipeline(position)
         self.paused = was_paused
 
+    async def play_item(self, item, start_seconds=0.0):
+        """Moves the party to another title on the same call, keeping the published share."""
+        await self._report_progress(self.position_seconds)
+        await self._teardown_pipeline()
+        self._set_item(item)
+        self.paused = False
+        await self._start_pipeline(start_seconds)
+
+    async def refresh_panel(self):
+        if self.panel is not None:
+            await self.panel.refresh(self)
+
     async def set_subtitle(self, stream_index, label):
         position = self.position_seconds
         self.subtitle_stream_index = stream_index
@@ -297,6 +314,8 @@ class WatchSession:
         await self._teardown_pipeline()
         await self._report_progress(final_position, finished=self.ended_naturally)
         await self.voice_session.leave()
+        if self.panel is not None:
+            await self.panel.close(self, reason)
         if announce:
             with contextlib.suppress(Exception):
                 await self.bot.client.send(self.text_channel_id, f"stopped **{self.title}** ({reason}).")

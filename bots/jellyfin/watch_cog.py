@@ -8,9 +8,11 @@ from slimbots import Permissions
 from slimbots.limits import ValidationError, require_len
 from slimbots.voice import VoiceError
 
+import controls
 import jellyfin_core
 import playback_progress
 import quality
+import panel
 import session_registry
 from stream_session import StreamError, WatchSession, format_hms, parse_hms
 
@@ -144,8 +146,8 @@ async def run_watch(ctx, query):
         await ctx.reply(f"could not start streaming: {err}")
         return
     session_registry.add(session)
-    resumed = f", from {format_hms(start_seconds)}" if start_seconds else ""
-    await ctx.reply(f"streaming **{session.title}** into {voice_channel_name} ({format_hms(session.duration_seconds)}{resumed}).")
+    session.panel = panel.Panel(ctx.bot, ctx.channel_id, voice_channel_name)
+    await session.panel.post(session, reply_to_id=ctx.message.get("id"))
 
 
 async def run_pause(ctx):
@@ -159,6 +161,7 @@ async def run_pause(ctx):
         await ctx.reply("already paused.")
         return
     await ctx.reply("paused.")
+    await session.refresh_panel()
 
 
 async def run_resume(ctx):
@@ -172,6 +175,7 @@ async def run_resume(ctx):
         await ctx.reply("already playing.")
         return
     await ctx.reply("resumed.")
+    await session.refresh_panel()
 
 
 async def run_seek(ctx, position_text):
@@ -188,6 +192,7 @@ async def run_seek(ctx, position_text):
         return
     await session.seek(seconds)
     await ctx.reply(f"seeked to {format_hms(session.position_seconds)}.")
+    await session.refresh_panel()
 
 
 async def run_stop(ctx):
@@ -218,6 +223,7 @@ async def run_subs(ctx, language):
     if not language or language.lower() == "off":
         await session.set_subtitle(None, None)
         await ctx.reply("subtitles off.")
+        await session.refresh_panel()
         return
     stream = jellyfin_core.find_subtitle_stream(session.item, language)
     if stream is None:
@@ -225,6 +231,7 @@ async def run_subs(ctx, language):
         return
     await session.set_subtitle(stream["Index"], stream.get("DisplayTitle") or stream.get("Language") or language)
     await ctx.reply(f"subtitles set to {session.subtitle_label}.")
+    await session.refresh_panel()
 
 
 async def run_quality(ctx, preset_name):
@@ -249,6 +256,7 @@ async def run_quality(ctx, preset_name):
         return
     note = f" {quality.HEAVY_WARNING}" if preset.is_heavy else ""
     await ctx.reply(f"quality set to {preset.describe()}, resumed at {format_hms(session.position_seconds)}.{note}")
+    await session.refresh_panel()
 
 
 def setup(bot):
@@ -283,6 +291,8 @@ def setup(bot):
     @bot.command(name="quality", help="Show or change the stream quality", usage="[low|medium|high]")
     async def quality_command(ctx, preset: str = ""):
         await run_quality(ctx, preset)
+
+    bot.button(prefix=panel.ID_PREFIX)(controls.on_panel_press)
 
     @bot.event
     async def on_voice_activity(event):

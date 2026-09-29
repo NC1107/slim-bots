@@ -3,7 +3,7 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
-## 0.7.0 (unreleased)
+## 0.7.0
 
 Menu entries and call controls expect a slim-m server with bot-contributed UI (decision 0045, which stacks on decision 0039).
 
@@ -14,7 +14,7 @@ Menu entries and call controls expect a slim-m server with bot-contributed UI (d
 - `Interaction.kind` is new (`button` on a server that does not send it). `reply_ephemeral` and `ack` answer a use as they do a press; `edit_components` raises on a call control.
 - `FakeAsyncClient` answers `PUT /bots/ui`, and `client.calls` records it.
 
-## 0.6.0 (unreleased)
+## 0.6.0
 
 Ephemeral replies expect a slim-m server with ephemeral messages (decision 0036).
 
