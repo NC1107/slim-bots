@@ -1,12 +1,12 @@
 # slimbots
 
-A discord.py-shaped bot framework for [slim-m](https://github.com/NC1107/slim-m): a `Bot()` constructor, `@bot.command`, `ctx`, and a live `Space`/`Canvas` model, plus the safeguards seven real bots each used to rebuild by hand (bot-ignore, cooldowns, permission gates, clean lifecycle, a supervised background task).
+A discord.py-shaped bot framework for [slim-m](https://github.com/Slim-m-org/slim-m): a `Bot()` constructor, `@bot.command`, `ctx`, and a live `Space`/`Canvas` model, plus the safeguards seven real bots each used to rebuild by hand (bot-ignore, cooldowns, permission gates, clean lifecycle, a supervised background task).
 
 ```bash
 pip install slim-m
 ```
 
-The distribution is named `slim-m` on PyPI; the import stays `slimbots`. `bot-casino` in the [slim-bots](https://github.com/NC1107/slim-bots) repo is the reference port built on this; `docs/framework.md` there is the deeper reference for everything this page only shows the shape of.
+The distribution is named `slim-m` on PyPI; the import stays `slimbots`. `bot-casino` in the [slim-bots](https://github.com/Slim-m-org/slim-bots) repo is the reference port built on this; `docs/framework.md` there is the deeper reference for everything this page only shows the shape of.
 
 ## A minimal bot
 
@@ -143,12 +143,12 @@ Pre-stubbed routes (`/me`, `/channels`, `/members`, `/roles`, `/bots/commands`) 
 
 ## Where to go deeper
 
-`docs/framework.md` and the seven bot templates in [slim-bots](https://github.com/NC1107/slim-bots) cover the rest: command registration with the server, channel scoping and durable cursors, cooldowns and permission gates, the Canvas model for the Voice Canvas, typed event dispatch, and every safeguard's own reasoning.
+`docs/framework.md` and the seven bot templates in [slim-bots](https://github.com/Slim-m-org/slim-bots) cover the rest: command registration with the server, channel scoping and durable cursors, cooldowns and permission gates, the Canvas model for the Voice Canvas, typed event dispatch, and every safeguard's own reasoning.
 
 ## Installing an unreleased version
 
 ```
-pip install "slim-m @ git+https://github.com/NC1107/slim-bots.git@main#subdirectory=slimbots"
+pip install "slim-m @ git+https://github.com/Slim-m-org/slim-bots.git@main#subdirectory=slimbots"
 ```
 
 Each template's `requirements.txt` pins one of the two install lines above.

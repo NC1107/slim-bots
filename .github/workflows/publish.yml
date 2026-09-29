@@ -32,6 +32,7 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-latest
+    # The PyPI publisher also names this repo's owner, so a repo move needs a new publisher there first.
     environment: pypi
     permissions:
       id-token: write
