@@ -11,6 +11,7 @@ os.environ.setdefault("JELLYFIN_URL", "https://fake-jellyfin.invalid")
 os.environ.setdefault("JELLYFIN_API_KEY", "fake-key")
 
 import bot as jellyfin  # noqa: E402
+import picker  # noqa: E402
 import playback_progress  # noqa: E402
 import stream_session  # noqa: E402
 import session_registry  # noqa: E402
@@ -307,6 +308,7 @@ def setup_with_voice(*, can_publish=True, member_channels=None, voice_channels=N
     for channel in voice_channels or []:
         jellyfin.bot.space.channels[channel.id] = channel
     session_registry.clear()
+    picker._picks.clear()
     return client
 
 
@@ -419,12 +421,12 @@ def test_watch_passes_a_multi_word_title_whole_to_the_search():
         member_channels={"u1": "v1"}, voice_channels=[Channel({"id": "v1", "name": "voice-room", "kind": "voice"})],
     )
     queries = []
-    original_search = jellyfin.jellyfin_core.search_items
-    jellyfin.jellyfin_core.search_items = lambda query, limit: queries.append(query) or []
+    original_search = jellyfin.jellyfin_core.watch_search
+    jellyfin.jellyfin_core.watch_search = lambda query, limit: queries.append(query) or []
     try:
         process(client, message("!watch two words"))
     finally:
-        jellyfin.jellyfin_core.search_items = original_search
+        jellyfin.jellyfin_core.watch_search = original_search
     assert queries == ["two words"]
 
 
@@ -433,16 +435,16 @@ def test_watch_streams_into_the_invokers_own_voice_channel_not_the_text_channel(
     client = setup_with_voice(
         member_channels={"u1": "v1"}, voice_channels=[Channel({"id": "v1", "name": "voice-room", "kind": "voice"})],
     )
-    original_search = jellyfin.jellyfin_core.search_items
+    original_search = jellyfin.jellyfin_core.watch_search
     original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
-    jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
+    jellyfin.jellyfin_core.watch_search = lambda query, limit: [movie_for_watch()]
     jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id, user_id=None: movie_for_watch()
     original_start = stream_session.WatchSession.start
     stream_session.WatchSession.start = _fake_start
     try:
         process(client, message("!watch inception"))
     finally:
-        jellyfin.jellyfin_core.search_items = original_search
+        jellyfin.jellyfin_core.watch_search = original_search
         jellyfin.jellyfin_core.fetch_item_for_playback = original_fetch
         stream_session.WatchSession.start = original_start
     assert client.sent[-1]["content"] == "**Inception** in #voice-room\nplaying - 2:00:00 - 720p - subtitles off"
@@ -459,14 +461,14 @@ def test_watch_refuses_when_the_bot_lacks_speak_in_the_invokers_channel():
         can_publish=False, member_channels={"u1": "v1"},
         voice_channels=[Channel({"id": "v1", "name": "voice-room", "kind": "voice"})],
     )
-    original_search = jellyfin.jellyfin_core.search_items
+    original_search = jellyfin.jellyfin_core.watch_search
     original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
-    jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
+    jellyfin.jellyfin_core.watch_search = lambda query, limit: [movie_for_watch()]
     jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id, user_id=None: movie_for_watch()
     try:
         process(client, message("!watch inception"))
     finally:
-        jellyfin.jellyfin_core.search_items = original_search
+        jellyfin.jellyfin_core.watch_search = original_search
         jellyfin.jellyfin_core.fetch_item_for_playback = original_fetch
     assert "need SPEAK" in client.sent[-1]["content"]
     assert "#voice-room" in client.sent[-1]["content"]
@@ -478,14 +480,14 @@ def test_watch_names_the_missing_permission_when_the_bot_cannot_connect():
         member_channels={"u1": "v1"}, voice_channels=[Channel({"id": "v1", "name": "voice-room", "kind": "voice"})],
         join_error=VoiceError("needs VIEW_CHANNEL and CONNECT in that channel"),
     )
-    original_search = jellyfin.jellyfin_core.search_items
+    original_search = jellyfin.jellyfin_core.watch_search
     original_fetch = jellyfin.jellyfin_core.fetch_item_for_playback
-    jellyfin.jellyfin_core.search_items = lambda query, limit: [movie_for_watch()]
+    jellyfin.jellyfin_core.watch_search = lambda query, limit: [movie_for_watch()]
     jellyfin.jellyfin_core.fetch_item_for_playback = lambda item_id, user_id=None: movie_for_watch()
     try:
         process(client, message("!watch inception"))
     finally:
-        jellyfin.jellyfin_core.search_items = original_search
+        jellyfin.jellyfin_core.watch_search = original_search
         jellyfin.jellyfin_core.fetch_item_for_playback = original_fetch
     assert "CONNECT" in client.sent[-1]["content"]
     assert "#voice-room" in client.sent[-1]["content"]

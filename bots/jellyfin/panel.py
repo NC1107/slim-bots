@@ -16,6 +16,8 @@ ID_PREFIX = "jf:"
 def _state_text(session):
     if session.finished:
         return "ended"
+    if session.waiting_next is not None:
+        return f"finished - next up: {session.waiting_next.get('Name')}"
     return f"paused at {format_hms(session.position_seconds)}" if session.paused else "playing"
 
 
@@ -35,23 +37,24 @@ def _preset_name(session):
 
 
 def panel_rows(session, *, live=True):
-    """Every button is disabled once nothing is playing."""
+    """Every button is disabled once nothing is playing; between episodes only Next episode and Stop work."""
     off = not live
+    between = live and session.waiting_next is not None
     playing = _preset_name(session)
     quality_row = [
         Button(f"{p.name.title()} {p.height}p", f"{ID_PREFIX}q:{p.name}", style="primary" if p.name == playing else "secondary",
-               disabled=off or p.name == playing)
+               disabled=off or between or p.name == playing)
         for p in quality.PRESETS.values()
     ]
     transport = [
-        Button("Play" if session.paused else "Pause", f"{ID_PREFIX}toggle", style="primary", disabled=off),
-        Button(f"-{SKIP_SECONDS}s", f"{ID_PREFIX}back", disabled=off),
-        Button(f"+{SKIP_SECONDS}s", f"{ID_PREFIX}fwd", disabled=off),
+        Button("Play" if session.paused else "Pause", f"{ID_PREFIX}toggle", style="primary", disabled=off or between),
+        Button(f"-{SKIP_SECONDS}s", f"{ID_PREFIX}back", disabled=off or between),
+        Button(f"+{SKIP_SECONDS}s", f"{ID_PREFIX}fwd", disabled=off or between),
         Button("Stop", f"{ID_PREFIX}stop", style="danger", disabled=off),
     ]
-    extras = [Button("Subtitles off" if session.subtitle_stream_index is not None else "Subtitles on", f"{ID_PREFIX}subs", disabled=off)]
+    extras = [Button("Subtitles off" if session.subtitle_stream_index is not None else "Subtitles on", f"{ID_PREFIX}subs", disabled=off or between)]
     if session.item.get("Type") == "Episode":
-        extras.append(Button("Next episode", f"{ID_PREFIX}next", disabled=off))
+        extras.append(Button("Next episode", f"{ID_PREFIX}next", style="primary" if between else "secondary", disabled=off))
     return rows(transport, quality_row, extras)
 
 

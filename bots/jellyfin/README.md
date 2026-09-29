@@ -80,8 +80,10 @@ see `docs/framework.md`), and joins that one through `bot.voice.join()`
 to stream the result in as a screen share. The bot needs `CONNECT` and
 `SPEAK` in the invoker's channel, the same grants a human sharing their
 screen needs, and says which one is missing if either is absent. Several
-matches prompt a numbered pick, answered the same way `ctx.confirm` waits
-for a reply. One watch party runs per voice channel, so the one bot can
+matches post up to five buttons, and a series leads to season buttons and then
+episode buttons (ten to a page, with Back, Previous and Next page). Only the
+person who typed `!watch` can choose; anyone else gets a private reply saying so.
+The chooser closes itself after five minutes. One watch party runs per voice channel, so the one bot can
 stream a different title in each call it is in (a second `!watch` in a call
 that already has one is refused, since two shares from one participant would
 read as a single share). The control commands
@@ -93,8 +95,7 @@ asked to join the call they mean if several are.
 - `!watch <title>` - find the invoker's voice channel, join it, and start
   playing; confirms with "streaming **title** into #channel-name". If
   jellyfin already has a saved position for it (past 30 seconds, not in the
-  last minute) the bot asks first: reply `resume` to pick up there or
-  `start` to begin again. With no title, `!watch` offers the account's most
+  last minute) the bot asks first with Resume and Start over buttons. With no title, `!watch` offers the account's most
   recent unfinished item the same way (`/UserItems/Resume`).
 - The now-playing panel: `!watch` answers with one message that carries buttons and edits itself as the stream changes -
   Pause/Play, -30s, +30s, Stop, a quality row (Low 480p, Medium 720p, High 1080p; the current one is greyed), Subtitles on/off
@@ -102,6 +103,9 @@ asked to join the call they mean if several are.
   someone outside it gets a private "join #call to use these controls" and nothing changes. The text commands still work and
   redraw the panel too. The panel shows the position only while paused (a stopped clock in a message would be wrong within a second); `!np` has the live one.
 - Call dock: while the bot is in the call the dock shows Play or pause, Back 30s, Forward 30s and Stop (`@bot.call_control`, slimbots 0.7.0). They run the same code as the panel's buttons, for the party in the call the member used them in.
+- When an episode ends and there is a next one, the bot stays in the call and the panel says
+  "finished - next up: ..." with only Next episode and Stop enabled; it leaves after
+  `JELLYFIN_NEXT_WAIT_SECONDS` if nobody presses. A movie or a finale ends the party as before.
 - `!pause` / `!resume` - stops or resumes reading the decoded stream;
   ffmpeg blocks on its own full pipe buffer while paused, so it costs no
   CPU and resumes exactly where it left off.
@@ -158,6 +162,8 @@ what actually limits going past 720p; see below.
 | Variable | Default | What it does |
 | --- | --- | --- |
 | `JELLYFIN_USER_ID` | first enabled user | The jellyfin account whose playback position `!watch` reads and writes. The bot has one API key, so every slim-m user shares this account's position; there is no per-person mapping. |
+| `JELLYFIN_AUTOPLAY_NEXT` | off | When an episode ends, start the next one on its own instead of waiting for Next episode. |
+| `JELLYFIN_NEXT_WAIT_SECONDS` | `180` | How long the bot stays in the call after an episode ends, offering Next episode, before it leaves. |
 | `JELLYFIN_STREAM_WIDTH` | `1280` | The published video width; Jellyfin's own aspect ratio is letterboxed into this. |
 | `JELLYFIN_STREAM_HEIGHT` | `720` | The published video height. |
 | `JELLYFIN_STREAM_FPS` | `30` | The published frame rate. |
@@ -277,8 +283,7 @@ server, two real headless-Chrome web clients) and a real local Jellyfin
   11% in the decoding `ffmpeg`; at 1920x1080 that was roughly 87% plus 25%
   - the LiveKit-side software encode, not the Jellyfin transcode or the
   decoding `ffmpeg`, is what 1080p actually costs.
-- Not exercised live: a title with multiple search matches (the numbered
-  picker), `!subs <lang>` actually burning in a subtitle track (the test
+- Not exercised live in that run: `!subs <lang>` actually burning in a subtitle track (the test
   file carried no subtitle stream), and a deployment where the invoker is
   in a *different* voice channel than the one named (refused by code
   inspection and the unit tests, not by a live attempt).

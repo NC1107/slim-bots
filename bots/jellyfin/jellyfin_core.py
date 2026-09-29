@@ -50,6 +50,8 @@ JELLYFIN_STREAM_MAX_BITRATE = 8_000_000
 # Reused as the WebRTC ceiling too by default - the transcode's own bitrate, not a guess; see README.md.
 JELLYFIN_STREAM_WEBRTC_MAX_BITRATE = None
 JELLYFIN_STREAM_AUDIO_MAX_BITRATE = 128_000
+JELLYFIN_AUTOPLAY_NEXT = False
+JELLYFIN_NEXT_WAIT_SECONDS = 180
 
 _command_cooldown = Cooldown(COMMAND_COOLDOWN_SECONDS)
 
@@ -74,6 +76,7 @@ def configure(bot):
     global JELLYFIN_POLL_SECONDS, JELLYFIN_BATCH_THRESHOLD, JELLYFIN_LIBRARY_ROUTES, JELLYFIN_EXCLUDE_GENRES
     global JELLYFIN_STREAM_WIDTH, JELLYFIN_STREAM_HEIGHT, JELLYFIN_STREAM_FPS, JELLYFIN_STREAM_MAX_BITRATE
     global JELLYFIN_STREAM_WEBRTC_MAX_BITRATE, JELLYFIN_STREAM_AUDIO_MAX_BITRATE
+    global JELLYFIN_AUTOPLAY_NEXT, JELLYFIN_NEXT_WAIT_SECONDS
     JELLYFIN_URL = (bot.setting("JELLYFIN_URL", required=True) or "").rstrip("/")
     JELLYFIN_API_KEY = bot.setting("JELLYFIN_API_KEY", required=True) or ""
     JELLYFIN_ITEM_TYPES = bot.setting("JELLYFIN_ITEM_TYPES", ["Movie", "Episode"], type=list)
@@ -88,6 +91,8 @@ def configure(bot):
     JELLYFIN_STREAM_MAX_BITRATE = bot.setting("JELLYFIN_STREAM_MAX_BITRATE", 8_000_000, type=int)
     JELLYFIN_STREAM_WEBRTC_MAX_BITRATE = bot.setting("JELLYFIN_STREAM_WEBRTC_MAX_BITRATE", None, type=int) or JELLYFIN_STREAM_MAX_BITRATE
     JELLYFIN_STREAM_AUDIO_MAX_BITRATE = bot.setting("JELLYFIN_STREAM_AUDIO_MAX_BITRATE", 128_000, type=int)
+    JELLYFIN_AUTOPLAY_NEXT = str(bot.setting("JELLYFIN_AUTOPLAY_NEXT", "") or "").lower() in ("1", "true", "yes", "on")
+    JELLYFIN_NEXT_WAIT_SECONDS = bot.setting("JELLYFIN_NEXT_WAIT_SECONDS", 180, type=int)
 
 
 def check_jellyfin_config():
@@ -389,6 +394,24 @@ def search_items(query, limit):
     }
     params = {k: v for k, v in params.items() if v is not None}
     return jf_get("/Items", params).get("Items", [])
+
+
+def watch_search(query, limit):
+    """Matches `!watch` can start or drill into: movies and episodes to play, series to browse."""
+    params = {"searchTerm": query, "recursive": "true", "fields": FIELDS, "includeItemTypes": "Movie,Series,Episode", "limit": limit}
+    return jf_get("/Items", params).get("Items", [])
+
+
+def series_seasons(series_id, user_id=None):
+    params = {"userId": user_id} if user_id else {}
+    return jf_get(f"/Shows/{series_id}/Seasons", params).get("Items", [])
+
+
+def season_episodes(series_id, season_id, user_id=None):
+    params = {"seasonId": season_id, "fields": STREAM_FIELDS}
+    if user_id:
+        params["userId"] = user_id
+    return jf_get(f"/Shows/{series_id}/Episodes", params).get("Items", [])
 
 
 def fetch_item_for_playback(item_id, user_id=None):
