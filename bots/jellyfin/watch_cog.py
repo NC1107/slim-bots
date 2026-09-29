@@ -9,6 +9,7 @@ from slimbots.limits import ValidationError, require_len
 from slimbots.voice import VoiceError
 
 import jellyfin_core
+import quality
 from stream_session import StreamError, WatchSession, format_hms, parse_hms
 
 MAX_PICK_RESULTS = 5
@@ -197,6 +198,31 @@ async def run_subs(ctx, language):
     await ctx.reply(f"subtitles set to {session.subtitle_label}.")
 
 
+async def run_quality(ctx, preset_name):
+    session = _active_session
+    if session is None or session.finished:
+        await ctx.reply("nothing is playing.")
+        return
+    preset_name = (preset_name or "").strip()
+    if not preset_name:
+        await ctx.reply(f"quality is {session.quality.describe()}. change it with `!quality <{'|'.join(quality.PRESETS)}>`.")
+        return
+    preset = quality.find_preset(preset_name)
+    if preset is None:
+        await ctx.reply(f'no quality called "{preset_name}" - try {quality.preset_names()}.')
+        return
+    if not _may_control(ctx, session):
+        await ctx.reply("only the person who started this, or a channel manager, can change the quality.")
+        return
+    try:
+        await session.set_quality(preset)
+    except (StreamError, VoiceError) as err:
+        await ctx.reply(f"could not switch quality: {err}")
+        return
+    note = f" {quality.HEAVY_WARNING}" if preset.is_heavy else ""
+    await ctx.reply(f"quality set to {preset.describe()}, resumed at {format_hms(session.position_seconds)}.{note}")
+
+
 def setup(bot):
     @bot.command(name="watch", help="Search Jellyfin and start a watch party in this voice channel", usage="<title>")
     async def watch(ctx, query: str = ""):
@@ -225,6 +251,10 @@ def setup(bot):
     @bot.command(name="subs", help="Set or turn off burned-in subtitles", usage="<lang|off>")
     async def subs(ctx, language: str = ""):
         await run_subs(ctx, language)
+
+    @bot.command(name="quality", help="Show or change the stream quality", usage="[low|medium|high]")
+    async def quality_command(ctx, preset: str = ""):
+        await run_quality(ctx, preset)
 
     @bot.event
     async def on_voice_activity(event):

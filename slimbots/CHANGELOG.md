@@ -3,6 +3,12 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.5.1
+
+- New `VoiceSession.unpublish_screen_share()`: takes down the pair `publish_screen_share` published, so a bot can republish at another resolution or ceiling (a `VideoSource`'s size is fixed at construction). Safe to call twice.
+- `FakeVoiceSession` gains `publish_count`/`unpublish_count` and the matching `unpublish_screen_share()`.
+- `bot-jellyfin` uses it for `!quality <low|medium|high>`.
+
 ## 0.5.0
 
 Two ways to scope where and how a bot answers, from one owner report: `!watch` typed in a voice channel's chat went unanswered, and every bot answering `!help` in a shared channel is a mess.
