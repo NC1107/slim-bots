@@ -46,7 +46,7 @@ class Member:
 
 
 class Channel:
-    """A slim-m channel."""
+    """A slim-m channel; `.restricted` is True when @everyone cannot view it, None when the server did not say."""
 
     def __init__(self, data: dict[str, Any]) -> None:
         self.id: str = data["id"]
@@ -54,6 +54,7 @@ class Channel:
         self.kind = data.get("kind", "text")
         self.topic = data.get("topic")
         self.category_id = data.get("category_id")
+        self.restricted: bool | None = data.get("restricted")
 
     def __repr__(self) -> str:
         return f"Channel(id={self.id!r}, name={self.name!r})"
@@ -107,8 +108,14 @@ class Message:
         self.seq = data.get("seq")
         self.content = data.get("content")
         self.author_id = data.get("author_id")
+        self.attachments: list[Attachment] = [Attachment(a) for a in data.get("attachments") or []]
         self._client = client
         self._raw = data
+
+    @classmethod
+    async def fetch(cls, client: AsyncClient, channel_id: str, message_id: str) -> Message:
+        """One message by id, even one this bot never saw live; see `AsyncClient.get_message`."""
+        return await client.get_message(channel_id, message_id)
 
     async def edit(self, content: str) -> Message:
         """Edits this message; allowed for the author, or a member with MANAGE_MESSAGES."""

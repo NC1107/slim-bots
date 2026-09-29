@@ -6,6 +6,8 @@ import time
 import uuid
 
 from slimbots import Bot
+from slimbots.http import ApiError
+from slimbots.migrations import ensure_columns
 
 
 def init_db(conn):
@@ -33,6 +35,8 @@ def init_db(conn):
         """
     )
     conn.commit()
+    for table in ("seen", "starred"):
+        ensure_columns(conn, table, {"attachment_ids": "TEXT NOT NULL DEFAULT ''"})
 
 
 bot = Bot(prefix="!", require_channels=True, default_data_path="starboard.db", store_migrate=init_db)
@@ -70,8 +74,8 @@ def digest_id(period_start):
 
 
 def link_for(channel_id, message_id):
-    """The channel route only: the client has no per-message anchor to link to yet."""
-    template = LINK_TEMPLATE or (bot.client.base + "/channels/{channel_id}" if bot.client else None)
+    """The client's per-message route, which opens the channel scrolled to the message."""
+    template = LINK_TEMPLATE or (bot.client.base + "/channels/{channel_id}/m/{message_id}" if bot.client else None)
     return template.format(channel_id=channel_id, message_id=message_id) if template else None
 
 
@@ -90,26 +94,32 @@ def snippet(text, limit):
     return flat if len(flat) <= limit else flat[: limit - 3] + "..."
 
 
-def render_highlight(message_id, channel_id, author_id, content, attachments, count):
+def split_ids(joined):
+    return [i for i in joined.split(",") if i]
+
+
+def render_highlight(message_id, channel_id, author_id, content, attachments, attachment_ids, count):
     """One highlight's whole body; an edit only carries `content`, so the count and the quote live together."""
     header = f"{EMOJI} {count} - {author_label(author_id)} in {channel_label(channel_id)}"
     link = link_for(channel_id, message_id)
     if link:
         header += f" - {link}"
     quote = "\n".join(f"> {line}" for line in content[:MAX_QUOTE_LEN].splitlines()) if content else ""
-    plural = "s" if attachments != 1 else ""
-    extra = f"(+{attachments} attachment{plural})" if attachments else ""
+    left_out = attachments - len(split_ids(attachment_ids))
+    plural = "s" if left_out != 1 else ""
+    extra = f"(+{left_out} attachment{plural} not shown)" if left_out > 0 else ""
     return "\n".join(part for part in (header, quote, extra) if part)
 
 
 # --- durable state ---
 
 
-def remember_message(conn, message_id, channel_id, author_id, content, attachments):
+def remember_message(conn, message_id, channel_id, author_id, content, attachments, attachment_ids):
     conn.execute(
-        "INSERT INTO seen (message_id, channel_id, author_id, content, attachments, seen_at) VALUES (?, ?, ?, ?, ?, ?) "
-        "ON CONFLICT(message_id) DO UPDATE SET content = excluded.content, attachments = excluded.attachments",
-        (message_id, channel_id, author_id, content, attachments, int(time.time())),
+        "INSERT INTO seen (message_id, channel_id, author_id, content, attachments, attachment_ids, seen_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(message_id) DO UPDATE SET content = excluded.content, "
+        "attachments = excluded.attachments, attachment_ids = excluded.attachment_ids",
+        (message_id, channel_id, author_id, content, attachments, attachment_ids, int(time.time())),
     )
     conn.commit()
 
@@ -122,13 +132,13 @@ def update_content(conn, message_id, content):
 
 def seen_row(conn, message_id):
     return conn.execute(
-        "SELECT message_id, channel_id, author_id, content, attachments FROM seen WHERE message_id = ?", (message_id,)
+        "SELECT message_id, channel_id, author_id, content, attachments, attachment_ids FROM seen WHERE message_id = ?", (message_id,)
     ).fetchone()
 
 
 def starred_row(conn, message_id):
     return conn.execute(
-        "SELECT message_id, channel_id, author_id, content, attachments, highlight_id, count "
+        "SELECT message_id, channel_id, author_id, content, attachments, attachment_ids, highlight_id, count "
         "FROM starred WHERE message_id = ?",
         (message_id,),
     ).fetchone()
@@ -136,8 +146,9 @@ def starred_row(conn, message_id):
 
 def add_starred(conn, seen, hl_id, count):
     conn.execute(
-        "INSERT OR IGNORE INTO starred (message_id, channel_id, author_id, content, attachments, highlight_id, count, starred_at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT OR IGNORE INTO starred "
+        "(message_id, channel_id, author_id, content, attachments, attachment_ids, highlight_id, count, starred_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (*seen, hl_id, count, int(time.time())),
     )
     conn.commit()
@@ -194,14 +205,34 @@ def is_source(channel_id):
     return channel_id != STARBOARD_CHANNEL
 
 
+async def is_automated(author_id):
+    """A bot's or webhook's own post is never mirrored, and neither is one of this bot's."""
+    return author_id == bot.me_id or await bot.authors.is_automated(author_id)
+
+
+def leaks(origin_id):
+    """True unless the origin is known public or the highlights channel is known restricted; the @everyone-wide flag only."""
+    channels = bot.space.channels
+    origin, target = channels.get(origin_id), channels.get(STARBOARD_CHANNEL)
+    origin_public = origin is not None and origin.restricted is False
+    target_restricted = target is not None and target.restricted is True
+    return not (origin_public or target_restricted)
+
+
+def attachment_ids_of(attachments):
+    return ",".join(a.id for a in attachments)
+
+
 @bot.event
 async def on_raw_message(message):
     channel_id = message.get("channel_id")
-    if not is_source(channel_id) or not message.get("id") or not message.get("author_id"):
+    author_id = message.get("author_id")
+    if not is_source(channel_id) or not message.get("id") or not author_id or await is_automated(author_id):
         return
+    attachments = message.get("attachments") or []
     await bot.store.run(
-        remember_message, message["id"], channel_id, message["author_id"],
-        message.get("content") or "", len(message.get("attachments") or []),
+        remember_message, message["id"], channel_id, author_id, message.get("content") or "",
+        len(attachments), ",".join(a["id"] for a in attachments if a.get("id")),
     )
 
 
@@ -215,25 +246,56 @@ async def on_reactions_changed(event):
         if existing is not None:
             await refresh_highlight(existing, count)
         elif count >= THRESHOLD:
-            await post_highlight(event.message_id, count)
+            await post_highlight(event.channel_id, event.message_id, count)
 
 
-async def post_highlight(message_id, count):
-    seen = await bot.store.run(seen_row, message_id)
+async def fetch_unseen(channel_id, message_id):
+    """Reads a message this bot never saw live, and remembers it unless an automated account wrote it."""
+    try:
+        message = await bot.client.get_message(channel_id, message_id)
+    except ApiError as err:
+        print(f"starboard: {message_id} reached the threshold but could not be fetched: {err}", flush=True)
+        return None
+    if not message.author_id or await is_automated(message.author_id):
+        return None
+    await bot.store.run(
+        remember_message, message_id, channel_id, message.author_id, message.content or "",
+        len(message.attachments), attachment_ids_of(message.attachments),
+    )
+    return await bot.store.run(seen_row, message_id)
+
+
+async def send_highlight(seen, hl_id, count):
+    """Carries the original's attachments by id; without ATTACH_FILES the highlight goes out as text alone."""
+    ids = split_ids(seen[5])
+    body = render_highlight(*seen, count)
+    try:
+        await bot.client.send(STARBOARD_CHANNEL, body, message_id=hl_id, attachment_ids=ids or None)
+    except ApiError as err:
+        if not ids:
+            raise
+        print(f"starboard: sending {seen[0]} with its attachments failed ({err}); sending text only", flush=True)
+        await bot.client.send(STARBOARD_CHANNEL, body, message_id=hl_id)
+
+
+async def post_highlight(channel_id, message_id, count):
+    if leaks(channel_id):
+        print(f"starboard: {message_id} is in a channel that may be restricted, and the highlights channel is not, so it is not mirrored", flush=True)
+        return
+    seen = await bot.store.run(seen_row, message_id) or await fetch_unseen(channel_id, message_id)
     if seen is None:
-        print(f"starboard: {message_id} reached {count} but was never seen live, so it cannot be mirrored", flush=True)
         return
     hl_id = highlight_id(message_id)
-    await bot.client.send(STARBOARD_CHANNEL, render_highlight(*seen, count), message_id=hl_id)
+    await send_highlight(seen, hl_id, count)
     await bot.store.run(add_starred, seen, hl_id, count)
 
 
 async def refresh_highlight(existing, count):
-    message_id, channel_id, author_id, content, attachments, hl_id, old_count = existing
+    *message, hl_id, old_count = existing
     if count == old_count:
         return
-    await bot.client.edit_message(STARBOARD_CHANNEL, hl_id, render_highlight(message_id, channel_id, author_id, content, attachments, count))
-    await bot.store.run(set_count, message_id, count)
+    await bot.client.edit_message(STARBOARD_CHANNEL, hl_id, render_highlight(*message, count))
+    await bot.store.run(set_count, message[0], count)
 
 
 @bot.event
@@ -245,8 +307,8 @@ async def on_message_edited(event):
         await bot.store.run(update_content, message_id, event.message.get("content") or "")
         existing = await bot.store.run(starred_row, message_id)
         if existing is not None:
-            hl_id = existing[5]
-            await bot.client.edit_message(STARBOARD_CHANNEL, hl_id, render_highlight(*existing[:5], existing[6]))
+            *message, hl_id, count = existing
+            await bot.client.edit_message(STARBOARD_CHANNEL, hl_id, render_highlight(*message, count))
 
 
 @bot.event
@@ -257,7 +319,7 @@ async def on_message_deleted(event):
         existing = await bot.store.run(starred_row, event.message_id)
         await bot.store.run(forget_message, event.message_id)
         if existing is not None:
-            await bot.client.delete_message(STARBOARD_CHANNEL, existing[5])
+            await bot.client.delete_message(STARBOARD_CHANNEL, existing[6])
 
 
 # --- weekly digest ---

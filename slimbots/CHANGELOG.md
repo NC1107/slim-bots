@@ -3,6 +3,15 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.9.0
+
+- `AsyncClient.get_message(channel_id, message_id)` and `Message.fetch(client, channel_id, message_id)` read one message by id, even one the bot never saw live.
+  A channel the bot cannot view answers the same 404 as a missing message.
+- `Message.attachments` is a list of `Attachment`, so a bot can pass their ids to `send(attachment_ids=...)`.
+- `Channel.restricted` is `True` when `@everyone` cannot view the channel, and `None` when the server did not send it.
+- Bots that use these need `slim-m>=0.9.0`; `scripts/check_bot_pr.py` enforces it.
+- `bot-starboard` fetches a message it never saw, mirrors attachments, never mirrors a bot's or webhook's message, and will not mirror a possibly restricted channel into a public highlights channel.
+
 ## 0.8.0
 
 - `space.find_member(user_id)` returns the cached member, else fetches it once, else `None`. `Bot._resolve_author` uses it.
