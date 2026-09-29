@@ -83,7 +83,9 @@ def test_an_admin_can_move_the_welcome_here_and_it_sticks():
 def test_a_member_without_manage_server_cannot_move_it():
     client = setup()
     command(client, "!welcome here", author_permissions=0)
-    assert "Manage Server" in client.sent[-1]["content"]
+    assert "Manage Server" in client.ephemerals[-1]["content"]
+    assert client.ephemerals[-1]["in_reply_to_id"] == "m1"
+    assert not client.sent, "the refusal is private, so nothing is posted to the channel"
     join(client)
     assert client.sent[-1]["channel_id"] == "c-chat"
 

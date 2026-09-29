@@ -6,6 +6,8 @@ import asyncio
 import contextlib
 from typing import TYPE_CHECKING, Any
 
+from .http import ApiError
+
 if TYPE_CHECKING:
     from .bot import Bot
     from .commands import Command
@@ -83,6 +85,19 @@ class Context:
         return await self.bot.client.send(
             self.channel_id, body_content, reply_to_id=self.message.get("id"), embeds=embeds, fallback_content=fallback
         )
+
+    async def reply_ephemeral(self, content: str, *, public_fallback: bool = False) -> Any:
+        """Answers only this message's author, never stored; see docs/framework.md for the rules."""
+        assert self.bot.client is not None
+        assert self.channel_id is not None, "reply_ephemeral() needs this message's channel_id, which was missing"
+        message_id = self.message.get("id")
+        assert message_id is not None, "reply_ephemeral() answers a message, and this one has no id"
+        try:
+            return await self.bot.client.send_ephemeral(self.channel_id, message_id, content)
+        except ApiError as err:
+            if public_fallback and err.status in (404, 405):
+                return await self.reply(content)
+            raise
 
     def typing(self) -> _Typing:
         """`async with ctx.typing():` shows a typing indicator for the block's whole duration, not just one refresh."""

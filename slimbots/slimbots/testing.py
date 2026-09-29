@@ -14,6 +14,7 @@ class FakeAsyncClient(AsyncClient):
     """Duck-types `AsyncClient`; unstubbed calls raise loud instead of hanging - see docs/framework.md."""
 
     _MESSAGE_ROUTE = re.compile(r"^/channels/[^/]+/messages$")
+    _EPHEMERAL_ROUTE = re.compile(r"^/channels/[^/]+/ephemeral-messages$")
 
     def __init__(
         self, me_id: str = "bot-1", base: str = "https://fake.invalid",
@@ -22,6 +23,7 @@ class FakeAsyncClient(AsyncClient):
         super().__init__(base, token, user_agent)
         self.calls: list[tuple[str, str, Any, Any]] = []
         self.sent: list[dict[str, Any]] = []
+        self.ephemerals: list[dict[str, Any]] = []
         self._responses: dict[tuple[str, str], Any] = {}
         self._next_seq = 1
         self.respond("GET", "/me", {"id": me_id})
@@ -39,6 +41,7 @@ class FakeAsyncClient(AsyncClient):
     ) -> Any:
         self.calls.append((method, path, body, params))
         seq = self._record_send(method, path, body)
+        self._record_ephemeral(method, path, body)
         key = (method, path)
         if key in self._responses:
             return self._queued(self._responses[key])
@@ -58,15 +61,20 @@ class FakeAsyncClient(AsyncClient):
         self.sent.append({"channel_id": path.split("/")[2], "seq": seq, **(body or {})})
         return seq
 
+    def _record_ephemeral(self, method: str, path: str, body: Any) -> None:
+        if method == "POST" and self._EPHEMERAL_ROUTE.match(path) is not None:
+            self.ephemerals.append({"channel_id": path.split("/")[2], **(body or {})})
+
     @staticmethod
     def _queued(response: Any) -> Any:
         if isinstance(response, BaseException):
             raise response
         return response() if callable(response) else response
 
-    @staticmethod
-    def _default_response(method: str, path: str, body: Any) -> tuple[bool, Any]:
+    def _default_response(self, method: str, path: str, body: Any) -> tuple[bool, Any]:
         """What the real server answers to a route no test queued: `(True, response)`, or `(False, None)` if unknown."""
+        if method == "POST" and self._EPHEMERAL_ROUTE.match(path) is not None:
+            return True, {"id": f"ephemeral-{len(self.ephemerals)}", "channel_id": path.split("/")[2], **(body or {})}
         if method in ("PUT", "DELETE") and "/roles/" in path:
             return True, None
         if path.startswith("/members/") and path.endswith("/timeout"):
