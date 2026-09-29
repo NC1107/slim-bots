@@ -65,7 +65,16 @@ tested here - there was only the one live server to test against.
 - `!jellyfin recent [days]` (default 7, max 30) - reuses the same
   `DateCreated` paging the poll loop uses, against a wall-clock cutoff
   instead of the stored cursor.
-- `!jellyfin help` (or any unrecognised `!jellyfin ...`) - the two above.
+- `!jellyfin link <jellyfin username>` - maps you to that jellyfin account (the admin key lists users; disabled ones are refused).
+  Resume position, "continue watching" (`!watch` with no title) and the season and episode lists then use your account, and
+  progress from a stream you started is written to it. Everyone else keeps using the shared account. The answer is private.
+- `!jellyfin unlink` - removes the mapping. `!jellyfin account` - shows which account you are on, privately.
+- `!jellyfin help` (or any unrecognised `!jellyfin ...`) - the list.
+
+The mapping lives in the bot's own sqlite (`user_links`, added with `CREATE TABLE IF NOT EXISTS`, so an existing database picks it up on start).
+One jellyfin user can be linked to one member at a time. There is no password check, so a link is a claim: anyone can link to an
+account nobody else has claimed yet. That is fine for a home server and worth knowing before pointing this at a larger one.
+Progress goes to the account of whoever started the stream, not to everyone watching it.
 
 Both real commands share one `cooldown=` on the command itself, and their
 input is bounded (`require_len`/`require_int`) before it ever reaches a
@@ -161,7 +170,7 @@ what actually limits going past 720p; see below.
 
 | Variable | Default | What it does |
 | --- | --- | --- |
-| `JELLYFIN_USER_ID` | first enabled user | The jellyfin account whose playback position `!watch` reads and writes. The bot has one API key, so every slim-m user shares this account's position; there is no per-person mapping. |
+| `JELLYFIN_USER_ID` | first enabled user | The shared jellyfin account `!watch` reads and writes for a member who has not run `!jellyfin link`. |
 | `JELLYFIN_AUTOPLAY_NEXT` | off | When an episode ends, start the next one on its own instead of waiting for Next episode. |
 | `JELLYFIN_NEXT_WAIT_SECONDS` | `180` | How long the bot stays in the call after an episode ends, offering Next episode, before it leaves. |
 | `JELLYFIN_STREAM_WIDTH` | `1280` | The published video width; Jellyfin's own aspect ratio is letterboxed into this. |

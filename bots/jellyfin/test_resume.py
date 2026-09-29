@@ -140,7 +140,7 @@ def test_watch_with_no_title_offers_the_last_unfinished_item():
     client = voice_client()
     last = with_position(movie_for_watch(item_id="m9", name="Heat"), 900)
     with Patched(
-        (playback_progress, "fetch_last_watched", lambda: last),
+        (playback_progress, "fetch_last_watched", lambda user_id=None: last),
         (jellyfin_core, "fetch_item_for_playback", lambda item_id, user_id=None: last),
     ):
         started = run_watch_pressing("!watch", "jfp:resume")
@@ -150,7 +150,7 @@ def test_watch_with_no_title_offers_the_last_unfinished_item():
 
 def test_watch_with_no_title_and_nothing_to_resume_says_so():
     client = voice_client()
-    with Patched((playback_progress, "fetch_last_watched", lambda: None)):
+    with Patched((playback_progress, "fetch_last_watched", lambda user_id=None: None)):
         started = run_watch_pressing("!watch")
     assert started == []
     assert client.sent[-1]["content"].startswith("nothing to resume")
@@ -170,7 +170,7 @@ def test_an_item_with_no_saved_position_starts_without_a_prompt():
 def test_stop_reports_the_position_and_finishing_marks_it_played():
     reports = []
 
-    def record(item_id, seconds, *, finished=False):
+    def record(item_id, seconds, *, finished=False, user_id=None):
         reports.append((item_id, round(seconds), finished))
 
     with Patched((playback_progress, "report_position", record)):

@@ -8,6 +8,7 @@ from functools import partial
 from slimbots.limits import ValidationError, require_len
 from slimbots.voice import VoiceError
 
+import accounts
 import jellyfin_core
 import panel
 import picker
@@ -31,7 +32,8 @@ async def _refuse_if_busy(ctx, voice_channel_id):
 async def _find_item(ctx, query):
     """The item to play for `query`; None after a reply or once a button chooser has taken over."""
     if not query.strip():
-        last = await asyncio.to_thread(playback_progress.fetch_last_watched)
+        user_id = await accounts.user_for(ctx.bot, ctx.author.id)
+        last = await asyncio.to_thread(playback_progress.fetch_last_watched, user_id)
         if last is None:
             await ctx.reply("nothing to resume - `!watch <title>` to pick something.")
         return last
@@ -55,7 +57,7 @@ async def _find_item(ctx, query):
 
 
 async def _load_for_playback(ctx, item):
-    user_id = await asyncio.to_thread(playback_progress.resolve_user_id)
+    user_id = await accounts.user_for(ctx.bot, ctx.author.id)
     full_item = await asyncio.to_thread(jellyfin_core.fetch_item_for_playback, item["Id"], user_id)
     if full_item is None:
         await ctx.reply("could not load that title from jellyfin.")
@@ -109,6 +111,7 @@ async def launch(ctx, full_item, start_seconds):
         await voice_session.leave()
         await ctx.reply(f"could not start streaming: {err}")
         return
+    session.jellyfin_user_id = await accounts.user_for(ctx.bot, ctx.author.id)
     session_registry.add(session)
     session.panel = panel.Panel(ctx.bot, ctx.channel_id, voice_channel_name)
     await session.panel.post(session, reply_to_id=ctx.message.get("id"))

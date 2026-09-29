@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 from slimbots.limits import ValidationError, require_int, require_len
 
+import accounts
 import jellyfin_core
 
 
@@ -64,12 +65,18 @@ async def run_recent(ctx, days_text):
 
 
 def setup(bot):
-    @bot.command(name="jellyfin", help="`search <query>`, `recent [days]`, or `help`", usage="search|recent|help ...")
+    @bot.command(name="jellyfin", help="`search`, `recent`, `link <jellyfin user>`, `unlink`, `account` or `help`", usage="search|recent|link|unlink|account|help ...")
     async def jellyfin_cmd(ctx, sub: str = "help", rest: str = None):
         sub = sub.lower()
         if sub == "search" and rest:
             await run_search(ctx, rest)
         elif sub == "recent":
             await run_recent(ctx, rest)
+        elif sub == "link":
+            await accounts.run_link(ctx, rest)
+        elif sub == "unlink":
+            await accounts.run_unlink(ctx)
+        elif sub == "account":
+            await accounts.run_account(ctx)
         else:
             await ctx.reply(jellyfin_core.HELP_TEXT)
