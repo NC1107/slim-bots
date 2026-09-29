@@ -121,3 +121,38 @@ async def test_dm_helpers_wrap_the_right_routes():
     client.respond("DELETE", "/dms/u2", None)
     await client.close_dm("u2")
     assert ("DELETE", "/dms/u2") in [(m, p) for m, p, _, _ in client.calls]
+
+
+async def test_get_message_fetches_one_by_id_with_its_attachments():
+    client = FakeAsyncClient()
+    client.respond(
+        "GET", "/channels/c1/messages/m1",
+        {"id": "m1", "content": "hi", "author_id": "u1", "attachments": [{"id": "abc", "filename": "a.png"}]},
+    )
+    message = await client.get_message("c1", "m1")
+    assert isinstance(message, Message)
+    assert (message.id, message.channel_id, message.author_id) == ("m1", "c1", "u1")
+    assert [a.id for a in message.attachments] == ["abc"]
+    assert ("GET", "/channels/c1/messages/m1", None, None) in client.calls
+
+
+async def test_message_fetch_goes_through_get_message():
+    client = FakeAsyncClient()
+    client.respond("GET", "/channels/c1/messages/m1", {"id": "m1", "content": "hi"})
+    message = await Message.fetch(client, "c1", "m1")
+    assert message.content == "hi"
+    assert message.attachments == []
+
+
+async def test_get_message_surfaces_a_404_as_an_api_error():
+    from slimbots.http import ApiError, is_not_found
+
+    client = FakeAsyncClient()
+
+    client.respond("GET", "/channels/c1/messages/gone", ApiError(404, {"error": "message not found"}))
+    try:
+        await client.get_message("c1", "gone")
+    except ApiError as err:
+        assert is_not_found(err)
+    else:
+        raise AssertionError("expected ApiError")

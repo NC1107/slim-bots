@@ -210,6 +210,11 @@ class AsyncClient:
         """Says a button press was seen and needs no visible answer."""
         await self.call("POST", f"/channels/{channel_id}/interactions/{interaction_id}/ack")
 
+    async def get_message(self, channel_id: str, message_id: str) -> Message:
+        """Fetches one message by id; a channel the bot cannot view answers the same 404 as a missing message."""
+        data = await self.call("GET", f"/channels/{channel_id}/messages/{message_id}")
+        return Message(data, client=self, channel_id=channel_id)
+
     async def edit_message(self, channel_id: str, message_id: str, content: str) -> Any:
         return await self.call("PATCH", f"/channels/{channel_id}/messages/{message_id}", {"content": content})
 

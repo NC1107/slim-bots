@@ -16,6 +16,7 @@ EXEMPT = {"ping": {"test_bot.py"}}
 
 # Feature pattern in bot source -> first slim-m release that provides it (see slimbots/CHANGELOG.md).
 FEATURES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    (r"\bget_message\b|\bMessage\.fetch\b|\.restricted\b", "AsyncClient.get_message and Channel.restricted", (0, 9, 0)),
     (r"\bspace\.find_member\b|\bsetting\([^)]*\btype=(?:bool|dict)\b", "space.find_member and bool/dict settings", (0, 8, 0)),
     (r"\bbot\.call_control\b|\bbot\.message_menu\b", "call controls and message menu entries", (0, 7, 0)),
     (r"\btime_out_member\b|\blift_member_timeout\b", "AsyncClient.time_out_member / lift_member_timeout", (0, 6, 0)),
