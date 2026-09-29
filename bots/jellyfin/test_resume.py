@@ -10,6 +10,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import jellyfin_core  # noqa: E402
 import playback_progress  # noqa: E402
 import stream_session  # noqa: E402
+import session_registry  # noqa: E402
 import watch_cog  # noqa: E402
 from slimbots.models import Channel  # noqa: E402
 from slimbots.testing import FakeVoiceSession  # noqa: E402
@@ -44,7 +45,7 @@ class Patched:
     def __exit__(self, *_exc):
         for module, name, value in self.saved:
             setattr(module, name, value)
-        watch_cog._set_active_session(None)
+        session_registry.clear()
 
 
 def run_watch_with_reply(text, reply):

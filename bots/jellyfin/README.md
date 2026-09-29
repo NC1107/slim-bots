@@ -81,10 +81,14 @@ to stream the result in as a screen share. The bot needs `CONNECT` and
 `SPEAK` in the invoker's channel, the same grants a human sharing their
 screen needs, and says which one is missing if either is absent. Several
 matches prompt a numbered pick, answered the same way `ctx.confirm` waits
-for a reply. Only one watch party runs per deployment at a time, and its
-control commands (`!pause`/`!resume`/`!seek`/`!np`/`!subs`/`!stop`) work
-from any channel this bot listens on, not just the one `!watch` was typed
-in.
+for a reply. One watch party runs per voice channel, so the one bot can
+stream a different title in each call it is in (a second `!watch` in a call
+that already has one is refused, since two shares from one participant would
+read as a single share). The control commands
+(`!pause`/`!resume`/`!seek`/`!np`/`!subs`/`!quality`/`!stop`) work from any
+channel this bot listens on and act on the call the person who typed them
+is in. Someone in no call reaches the party if only one is running, and is
+asked to join the call they mean if several are.
 
 - `!watch <title>` - find the invoker's voice channel, join it, and start
   playing; confirms with "streaming **title** into #channel-name". If
@@ -326,9 +330,8 @@ e2e stack above with a bandwidth or quality probe attached.
 - **Catching up a very long outage in one poll.** `MAX_ITEMS_PER_POLL`
   caps how far back a single poll pages; a bigger backlog just takes more
   cycles, never a silently dropped difference.
-- **More than one watch party per deployment at a time.** `!watch` refuses
-  while `watch_cog`'s module-level session is still active; running two
-  bot-jellyfin processes against the same deployment was never a goal.
-- **Changing the published resolution or frame rate mid-stream.** A
-  `!watch` after a `!stop` is how to switch `JELLYFIN_STREAM_WIDTH` et al.,
-  which are read once at bot startup.
+- **Two streams in the same call.** One participant publishing two screen
+  shares reads as one share to the client, so `!watch` refuses a second
+  stream in a call that already has one.
+- **Changing the frame rate mid-stream.** `!quality` changes the size and
+  bitrate; `JELLYFIN_STREAM_FPS` is read once at bot startup.
