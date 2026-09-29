@@ -1,0 +1,4 @@
+# The shared half of bots/sonarr, bots/radarr and bots/seerr; they pin the same floor.
+websockets>=12
+httpx>=0.27
+slim-m>=0.7.1

@@ -1,0 +1,5 @@
+# Seerr is plain HTTP/JSON via urllib, run off the event loop with asyncio.to_thread.
+websockets>=12
+httpx>=0.27
+# Buttons (`bot.button`, `edit_components`) arrived in 0.6.0.
+slim-m>=0.7.1
