@@ -53,6 +53,10 @@ A bot token is minted by an admin in the Bots section of Space settings, is
 shown once, and does not rotate. A `401` is terminal: it means the token was
 revoked, so exit rather than retrying.
 
+## Shipping a bot
+
+Every bot PR follows [`docs/shipping-a-bot.md`](docs/shipping-a-bot.md): tests, an in-app test in a private channel (`scripts/smoke_bot.py`), review and adversarial passes, a UI pass, and a rollout step.
+
 ## Conventions
 
 These are the same rules slim-m itself uses, and CI is not enforcing them here

@@ -117,3 +117,21 @@ jobs:
       - name: Run the real-livekit suite (surface, fake conformance, connect and publish)
         working-directory: slimbots
         run: python -m pytest -q tests_livekit
+
+  bot-checklist:
+    # Cheap structure gate for bot PRs; the rest of docs/shipping-a-bot.md is a human checklist.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Install pytest (hash-locked, wheel-only)
+        run: "python -m pip install --only-binary=:all: --require-hashes -r slimbots/requirements-ci.lock.txt"
+      - name: Test the checker and the smoke harness
+        run: python -m pytest -q scripts/tests
+      - name: Check the bots this PR changes
+        if: github.event_name == 'pull_request'
+        run: python scripts/check_bot_pr.py --base "origin/${{ github.base_ref }}"
