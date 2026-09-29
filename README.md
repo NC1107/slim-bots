@@ -1,11 +1,11 @@
 # slim-bots
 
-Bot templates for [slim-m](https://github.com/NC1107/slim-m).
+Bot templates for [slim-m](https://github.com/Slim-m-org/slim-m).
 
 Each directory is a working bot, meant to be copied rather than imported - a
 bot is an ordinary program holding a token, not something this repo runs
 for you. The protocol underneath all of it is documented in slim-m's
-[`docs/bots/building-bots.md`](https://github.com/NC1107/slim-m/blob/main/docs/bots/building-bots.md).
+[`docs/bots/building-bots.md`](https://github.com/Slim-m-org/slim-m/blob/main/docs/bots/building-bots.md).
 
 Read that first. Then pick the template closest to what you want.
 
