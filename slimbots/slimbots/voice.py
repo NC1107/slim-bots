@@ -47,6 +47,7 @@ class VoiceSession:
         self.can_publish = can_publish
         self.rtc = rtc
         self._heartbeat_task: asyncio.Task[Any] | None = None
+        self._screen_share_sids: list[str] = []
 
     def start_heartbeat(self) -> None:
         """Runs the REST heartbeat as a `bot.background()` task; see `crates/slimm-server/src/voice/heartbeat.rs`."""
@@ -81,7 +82,7 @@ class VoiceSession:
         )
         video_source = rtc.VideoSource(width, height, is_screencast=True)
         video_track = rtc.LocalVideoTrack.create_video_track("screen", video_source)
-        await self.room.local_participant.publish_track(
+        video_publication = await self.room.local_participant.publish_track(
             video_track,
             rtc.TrackPublishOptions(
                 source=rtc.TrackSource.SOURCE_SCREENSHARE, video_encoding=video_encoding,
@@ -90,11 +91,20 @@ class VoiceSession:
         )
         audio_source = rtc.AudioSource(sample_rate, num_channels)
         audio_track = rtc.LocalAudioTrack.create_audio_track("screen-audio", audio_source)
-        await self.room.local_participant.publish_track(
+        audio_publication = await self.room.local_participant.publish_track(
             audio_track,
             rtc.TrackPublishOptions(source=rtc.TrackSource.SOURCE_SCREENSHARE_AUDIO, audio_encoding=audio_encoding),
         )
+        self._screen_share_sids = [
+            sid for sid in (getattr(p, "sid", None) for p in (video_publication, audio_publication)) if sid
+        ]
         return video_source, audio_source
+
+    async def unpublish_screen_share(self) -> None:
+        """Takes down the pair `publish_screen_share` made, so a bot can republish at another size or ceiling; safe to call twice."""
+        sids, self._screen_share_sids = self._screen_share_sids, []
+        for sid in sids:
+            await self.room.local_participant.unpublish_track(sid)
 
     async def leave(self) -> None:
         """Stops the heartbeat, disconnects from the room, and forgets the heartbeat server-side; safe to call twice."""

@@ -98,8 +98,14 @@ in.
 - `!subs <lang|off>` - matches a subtitle track by language code or
   display title and restarts the transcode with `SubtitleMethod=Encode`
   burning it in, or clears it with `off`.
+- `!quality [low|medium|high]` - alone, reports the current quality.
+  With a preset (480p at 1.5 Mbps, 720p at 4 Mbps, 1080p at 8 Mbps) it
+  restarts the transcode and republishes the share at that size from the
+  current position. A stream starts at whatever the `JELLYFIN_STREAM_*`
+  settings below say, reported as `default`. `high` warns about the
+  encode cost measured under "Stream quality".
 
-`!pause`/`!resume`/`!seek`/`!stop`/`!subs` are refused unless the caller
+`!pause`/`!resume`/`!seek`/`!stop`/`!subs`/`!quality <preset>` are refused unless the caller
 either started the stream or holds `MANAGE_CHANNELS`. `!watch` itself
 refuses with "join a voice channel first, then run `!watch` again" if the
 invoker is not in any call this bot can see - never "join this channel's

@@ -12,6 +12,7 @@ import time
 from slimbots import Embed
 
 import jellyfin_core
+from quality import Quality, configured_default
 
 AUDIO_SAMPLE_RATE = 48000
 AUDIO_CHANNELS = 2
@@ -95,6 +96,7 @@ class WatchSession:
         self.audio_stream_index = None
         self.subtitle_stream_index = None
         self.subtitle_label = None
+        self.quality = configured_default()
         self.paused = False
         self.finished = False
         self._seek_base = 0.0
@@ -119,14 +121,17 @@ class WatchSession:
         """Called from an `on_voice_activity` handler to check the roster now instead of on the next poll tick."""
         self._wake_monitor.set()
 
-    async def start(self):
+    async def _publish(self):
         self._video_source, self._audio_source = await self.voice_session.publish_screen_share(
-            width=jellyfin_core.JELLYFIN_STREAM_WIDTH, height=jellyfin_core.JELLYFIN_STREAM_HEIGHT,
+            width=self.quality.width, height=self.quality.height,
             sample_rate=AUDIO_SAMPLE_RATE, num_channels=AUDIO_CHANNELS,
-            video_max_bitrate=jellyfin_core.JELLYFIN_STREAM_WEBRTC_MAX_BITRATE,
+            video_max_bitrate=self.quality.publish_bitrate,
             video_max_framerate=float(jellyfin_core.JELLYFIN_STREAM_FPS),
             audio_max_bitrate=jellyfin_core.JELLYFIN_STREAM_AUDIO_MAX_BITRATE,
         )
+
+    async def start(self):
+        await self._publish()
         await self._start_pipeline(0.0)
         self._monitor_task = self.bot.background(self._monitor_loop(), name=f"jellyfin-watch-monitor-{self.voice_channel_id}")
 
@@ -138,12 +143,12 @@ class WatchSession:
         os.mkfifo(audio_fifo)
         url = jellyfin_core.build_stream_url(
             self.item_id, start_seconds=start_seconds, audio_stream_index=self.audio_stream_index,
-            subtitle_stream_index=self.subtitle_stream_index,
+            subtitle_stream_index=self.subtitle_stream_index, max_width=self.quality.width,
+            video_bitrate=self.quality.video_bitrate,
         )
         headers = f"Authorization: {jellyfin_core.jellyfin_auth_header()}\r\n"
         video_args = build_video_args(
-            url, headers, video_fifo, width=jellyfin_core.JELLYFIN_STREAM_WIDTH,
-            height=jellyfin_core.JELLYFIN_STREAM_HEIGHT, fps=jellyfin_core.JELLYFIN_STREAM_FPS,
+            url, headers, video_fifo, width=self.quality.width, height=self.quality.height, fps=jellyfin_core.JELLYFIN_STREAM_FPS,
         )
         audio_args = build_audio_args(url, headers, audio_fifo)
         self._video_process = await asyncio.create_subprocess_exec(
@@ -161,7 +166,7 @@ class WatchSession:
         """Reads fixed-size I420 frames and paces them to `JELLYFIN_STREAM_FPS`; pausing just stops reading the fifo,
         so ffmpeg blocks on its own full pipe buffer instead of needing a separate pause signal."""
         rtc = self.voice_session.rtc
-        width, height = jellyfin_core.JELLYFIN_STREAM_WIDTH, jellyfin_core.JELLYFIN_STREAM_HEIGHT
+        width, height = self.quality.width, self.quality.height
         frame_size = frame_byte_size(width, height)
         frame_interval = 1.0 / jellyfin_core.JELLYFIN_STREAM_FPS
         handle = await asyncio.to_thread(open, fifo_path, "rb")
@@ -249,6 +254,17 @@ class WatchSession:
         await self._start_pipeline(seconds)
         self.paused = was_paused
 
+    async def set_quality(self, quality: Quality):
+        """Republishes at the new size and ceilings, then resumes the transcode from the current position."""
+        position = self.position_seconds
+        was_paused = self.paused
+        await self._teardown_pipeline()
+        await self.voice_session.unpublish_screen_share()
+        self.quality = quality
+        await self._publish()
+        await self._start_pipeline(position)
+        self.paused = was_paused
+
     async def set_subtitle(self, stream_index, label):
         position = self.position_seconds
         self.subtitle_stream_index = stream_index
@@ -292,6 +308,7 @@ class WatchSession:
         if self.duration_seconds:
             embed.add_field("duration", format_hms(self.duration_seconds), inline=True)
         embed.add_field("state", "paused" if self.paused else "playing", inline=True)
+        embed.add_field("quality", self.quality.describe(), inline=True)
         if self.subtitle_label:
             embed.add_field("subtitles", self.subtitle_label, inline=True)
         return embed

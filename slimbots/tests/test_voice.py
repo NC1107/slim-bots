@@ -17,10 +17,14 @@ from slimbots import voice as voice_module
 class FakeLocalParticipant:
     def __init__(self) -> None:
         self.published: list[tuple[Any, Any]] = []
+        self.unpublished: list[str] = []
+
+    async def unpublish_track(self, track_sid: str) -> None:
+        self.unpublished.append(track_sid)
 
     async def publish_track(self, track: Any, options: Any) -> Any:
         self.published.append((track, options))
-        return SimpleNamespace(sid="pub-1")
+        return SimpleNamespace(sid=f"pub-{len(self.published)}")
 
 
 class FakeRoom:
@@ -204,3 +208,18 @@ def test_audio_encoding_prefers_the_public_name_when_present() -> None:
     rtc = SimpleNamespace(AudioEncoding=lambda max_bitrate=None: SimpleNamespace(max_bitrate=max_bitrate))
     enc = voice_module._audio_encoding(rtc, 96_000)
     assert enc.max_bitrate == 96_000
+
+
+def test_unpublish_screen_share_takes_down_both_tracks_once(monkeypatch: pytest.MonkeyPatch) -> None:
+    bot, client, room = make_bot()
+    monkeypatch.setattr(voice_module, "load_rtc", lambda: fake_rtc_module(room))
+
+    async def run() -> None:
+        session = await bot.voice.join("c1")
+        await session.publish_screen_share(width=1280, height=720)
+        await session.unpublish_screen_share()
+        await session.unpublish_screen_share()
+        assert room.local_participant.unpublished == ["pub-1", "pub-2"]
+        session._heartbeat_task.cancel()
+
+    asyncio.run(run())

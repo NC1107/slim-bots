@@ -71,6 +71,8 @@ class FakeVoiceSession:
         self.rtc: Any = None
         self.heartbeat_started = False
         self.published: dict[str, Any] | None = None
+        self.publish_count = 0
+        self.unpublish_count = 0
         self.left = False
 
     def start_heartbeat(self) -> None:
@@ -83,12 +85,18 @@ class FakeVoiceSession:
     ) -> tuple[Any, Any]:
         if not self.can_publish:
             raise VoiceError("this token cannot publish - the bot needs SPEAK in this channel")
+        self.publish_count += 1
         self.published = {
             "width": width, "height": height, "sample_rate": sample_rate, "num_channels": num_channels,
             "video_max_bitrate": video_max_bitrate, "video_max_framerate": video_max_framerate,
             "audio_max_bitrate": audio_max_bitrate,
         }
         return FakeVideoSource(), FakeAudioSource()
+
+    async def unpublish_screen_share(self) -> None:
+        if self.published is not None:
+            self.unpublish_count += 1
+            self.published = None
 
     async def leave(self) -> None:
         self.left = True

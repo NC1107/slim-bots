@@ -412,12 +412,14 @@ def find_subtitle_stream(item, language):
     return None
 
 
-def build_stream_url(item_id, *, start_seconds=0.0, audio_stream_index=None, subtitle_stream_index=None):
+def build_stream_url(
+    item_id, *, start_seconds=0.0, audio_stream_index=None, subtitle_stream_index=None, max_width=None, video_bitrate=None,
+):
     """A progressive H.264/AAC transcode URL, seekable via `StartTimeTicks`; see README.md's watch-party section.
     `Container=mkv`, not `ts` - a live Jellyfin 12.1 server's `ts` progressive mux silently drops the audio stream."""
     params = {
         "Static": "false", "VideoCodec": "h264", "AudioCodec": "aac", "Container": "mkv",
-        "MaxWidth": JELLYFIN_STREAM_WIDTH, "VideoBitrate": JELLYFIN_STREAM_MAX_BITRATE,
+        "MaxWidth": max_width or JELLYFIN_STREAM_WIDTH, "VideoBitrate": video_bitrate or JELLYFIN_STREAM_MAX_BITRATE,
         "StartTimeTicks": int(start_seconds * 10_000_000),
     }
     if audio_stream_index is not None:
