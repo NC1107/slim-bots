@@ -3,7 +3,7 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
-## Unreleased
+## 0.7.1
 
 - Fix: a bot with `listen_voice_chats` never heard a voice channel created, or made visible to it, after it connected. `space.channels` was only loaded on connect.
 - `space.channels` now follows `channel.created`, `channel.updated` and `channel.deleted`, and is reloaded on `overwrite.changed`, `role.changed` and the bot's own `member.role_changed`, since those can make a channel newly visible.
