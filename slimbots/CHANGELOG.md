@@ -3,6 +3,12 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.6.0 (unreleased)
+
+- New `AsyncClient.time_out_member(user_id, duration_seconds, reason=None)` and `lift_member_timeout(user_id)`: put a member in timeout, or take them out of it. The bot needs the moderation permission; a missing one surfaces as the server's error.
+- `FakeClient` records both calls, so a bot's tests can assert on them.
+- `bot-automod` uses them.
+
 ## 0.5.1
 
 - New `VoiceSession.unpublish_screen_share()`: takes down the pair `publish_screen_share` published, so a bot can republish at another resolution or ceiling (a `VideoSource`'s size is fixed at construction). Safe to call twice.
