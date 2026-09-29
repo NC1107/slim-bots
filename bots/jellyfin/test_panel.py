@@ -221,6 +221,64 @@ def test_the_text_pause_command_redraws_the_panel():
     session_registry.clear()
 
 
+def use_control(client, session, control_id, *, user_id="u1", channel_id="v1"):
+    frame = {
+        "type": "interaction.created", "kind": "call_control", "interaction_id": f"c-{len(client.acks)}-{len(client.ephemerals)}",
+        "channel_id": channel_id, "custom_id": control_id, "user_id": user_id, "user_display_name": user_id, "created_at": 1,
+    }
+
+    async def deliver():
+        await jellyfin.bot._handle_frame(frame)
+        await asyncio.gather(*list(jellyfin.bot._background_tasks))
+
+    asyncio.run(deliver())
+
+
+def test_the_call_dock_registers_play_pause_skips_and_stop():
+    entries = [entry.to_wire() for entry, _ in jellyfin.bot._ui.controls.values()]
+    assert [(e["id"], e["icon"]) for e in entries] == [
+        ("jf-playpause", "pause"), ("jf-back", "skip_previous"), ("jf-forward", "skip_next"), ("jf-stop", "stop"),
+    ]
+
+
+def test_dock_play_pause_and_skips_share_the_panel_handlers():
+    client = client_in_call()
+    session = started_session(client)
+    use_control(client, session, "jf-playpause")
+    assert session.paused and "Play" in labels(client.component_edits[-1]["components"])
+    use_control(client, session, "jf-forward")
+    assert round(session.calls[-1]) == 30 and session.paused
+    use_control(client, session, "jf-playpause")
+    use_control(client, session, "jf-forward")
+    assert round(session.calls[-1]) == 60 and not session.paused
+    session_registry.clear()
+
+
+def test_dock_stop_ends_the_party_and_disables_the_panel():
+    client = client_in_call()
+    session = started_session(client)
+    use_control(client, session, "jf-stop")
+    assert session.finished
+    assert all(b.get("disabled") for row in client.component_edits[-1]["components"] for b in row["buttons"])
+    session_registry.clear()
+
+
+def test_dock_control_from_outside_the_call_is_refused_privately():
+    client = client_in_call()
+    session = started_session(client)
+    use_control(client, session, "jf-stop", user_id="u9")
+    assert not session.finished
+    assert "join #voice-room" in client.ephemerals[-1]["content"]
+    session_registry.clear()
+
+
+def test_dock_control_with_nothing_playing_answers_privately():
+    client = client_in_call()
+    session_registry.clear()
+    use_control(client, None, "jf-playpause")
+    assert client.ephemerals[-1]["content"] == "nothing is playing in your call."
+
+
 def test_next_episode_lookup_skips_the_current_item():
     seen = {}
 

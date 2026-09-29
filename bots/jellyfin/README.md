@@ -101,6 +101,7 @@ asked to join the call they mean if several are.
   and, for an episode, Next episode. Every button is disabled once the stream ends. Anyone who is in the call can press them;
   someone outside it gets a private "join #call to use these controls" and nothing changes. The text commands still work and
   redraw the panel too. The panel shows the position only while paused (a stopped clock in a message would be wrong within a second); `!np` has the live one.
+- Call dock: while the bot is in the call the dock shows Play or pause, Back 30s, Forward 30s and Stop (`@bot.call_control`, slimbots 0.7.0). They run the same code as the panel's buttons, for the party in the call the member used them in.
 - `!pause` / `!resume` - stops or resumes reading the decoded stream;
   ffmpeg blocks on its own full pipe buffer while paused, so it costs no
   CPU and resumes exactly where it left off.

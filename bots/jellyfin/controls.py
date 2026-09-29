@@ -106,3 +106,28 @@ async def on_panel_press(interaction):
         await _refuse(interaction, "that watch party has ended - `!watch` starts another.")
         return
     await run_control(interaction, session, interaction.custom_id[len(ID_PREFIX):])
+
+
+CALL_CONTROLS = (
+    ("jf-playpause", "Play or pause", "pause", "toggle"),
+    ("jf-back", f"Back {SKIP_SECONDS}s", "skip_previous", "back"),
+    ("jf-forward", f"Forward {SKIP_SECONDS}s", "skip_next", "fwd"),
+    ("jf-stop", "Stop", "stop", "stop"),
+)
+
+
+def call_control_handler(action):
+    """A dock control acts on the party in the call it was used in, through the same path as a panel button."""
+
+    async def handler(interaction):
+        bot = interaction.bot
+        session = session_registry.session_for_channel(interaction.channel_id)
+        if session is None:
+            voice_channel_id = await bot.voice.find_member(interaction.user_id)
+            session = session_registry.session_for_channel(voice_channel_id)
+        if session is None:
+            await _refuse(interaction, "nothing is playing in your call.")
+            return
+        await run_control(interaction, session, action)
+
+    return handler
