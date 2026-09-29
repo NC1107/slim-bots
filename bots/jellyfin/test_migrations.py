@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""bot-jellyfin's schema is unchanged since 0.2.0; this pins that down so a future column addition
-here gets the same migration treatment as canvas-board's and casino's. Run directly: python3 test_migrations.py."""
+"""A 0.2.0 database opens in place and gains `posted_media`; this pins that a new table never costs old state.
+Run directly: python3 test_migrations.py."""
 
 import os
 import sqlite3
@@ -38,6 +38,20 @@ def test_init_db_on_a_carried_over_database_does_not_lose_posted_items():
     conn = a_0_2_0_database()
     jellyfin_core.init_db(conn)
     assert jellyfin_core.already_posted(conn, "m1")
+
+
+def test_init_db_on_a_carried_over_database_adds_the_media_table_and_keeps_working():
+    conn = a_0_2_0_database()
+    jellyfin_core.init_db(conn)
+    jellyfin_core.mark_posted(conn, ["e1"], items=[{"Type": "Episode", "SeriesId": "s", "ParentIndexNumber": 1, "IndexNumber": 2}])
+    assert conn.execute("SELECT media_key FROM posted_media").fetchall() == [("episode:s:1:2",)]
+    assert jellyfin_core.already_posted(conn, "m1")
+
+
+def test_init_db_twice_is_harmless():
+    conn = a_0_2_0_database()
+    jellyfin_core.init_db(conn)
+    jellyfin_core.init_db(conn)
 
 
 if __name__ == "__main__":

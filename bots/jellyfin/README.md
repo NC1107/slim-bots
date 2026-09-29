@@ -190,6 +190,8 @@ what actually limits going past 720p; see below.
 | `JELLYFIN_BATCH_THRESHOLD` | `3` | More than this many ungrouped items of the same type in one poll collapse into one summary message. |
 | `JELLYFIN_LIBRARY_ROUTES` | unset | `libraryId:channelId,...` - send one library's posts to its own channel instead of `bot.channel`. A library not listed still falls back to `bot.channel`. |
 | `JELLYFIN_EXCLUDE_GENRES` | unset | Comma-separated, case-insensitive. An item carrying any of these genres is dropped before it is ever grouped into a post - still recorded in `posted_items` and still advances the cursor, so it is never re-considered on a later poll. |
+| `JELLYFIN_DEDUPE_DAYS` | `7` | A movie or episode is not announced again within this many days of its last announcement, even under a new item id. Episodes match on series, season and episode number. Movies match on tmdb or imdb id, else name and year. `0` turns it off. |
+| `JELLYFIN_REANNOUNCE_REPLACED` | off | Set to `true` to announce a replaced file as new again, the old behaviour. |
 | `SLIMM_DB_PATH` | `jellyfin_watch.db` | Where the Jellyfin cursor and dedupe table live. |
 
 ## Cold start
@@ -249,8 +251,10 @@ A message carries exactly one poster. Checked against the live channel on 2026-0
 `poster.jpg` attachment and an embed with no image, and the web client draws the image once. The two sizes that once read as
 a double upload are one file in two units - the api reports bytes (481585) and the client shows KiB under the image (470.3 KB).
 
-The same episode can still be posted more than once, and that is Jellyfin, not the poster path. When Sonarr replaces a file
-Jellyfin makes a new item with a new id and a new `DateCreated`, so the dedupe by item id treats it as new.
+When Sonarr replaces a file, Jellyfin makes a new item with a new id and a new `DateCreated`, so the dedupe by item id alone
+treats it as new. `posted_media` records each announced episode (series, season, episode) and movie (provider ids, else name
+and year) with a timestamp, and a replacement inside `JELLYFIN_DEDUPE_DAYS` is recorded as seen and not posted.
+The table is created with `CREATE TABLE IF NOT EXISTS`, so an existing database picks it up on the next start.
 A series that arrives episode by episode over an hour also gets one grouped post per poll.
 
 ## What was and was not verified in this port
