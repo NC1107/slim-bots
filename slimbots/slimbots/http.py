@@ -146,6 +146,16 @@ class AsyncClient:
     async def unassign_role(self, user_id: str, role_id: str) -> None:
         await self.call("DELETE", f"/members/{user_id}/roles/{role_id}")
 
+    async def time_out_member(self, user_id: str, duration_seconds: int, *, reason: str | None = None) -> Any:
+        """Needs KICK_MEMBERS; returns `{user_id, until}`, `until` in Unix milliseconds. The server caps it at 28 days."""
+        return await self.call(
+            "PUT", f"/members/{user_id}/timeout", {"duration_seconds": duration_seconds, "reason": reason},
+        )
+
+    async def lift_member_timeout(self, user_id: str) -> None:
+        """Needs KICK_MEMBERS; idempotent, so lifting one that already lapsed is not an error."""
+        await self.call("DELETE", f"/members/{user_id}/timeout")
+
     async def send(
         self, channel_id: str, content: str, *, message_id: str | None = None, reply_to_id: str | None = None,
         attachment_ids: list[str] | None = None, embeds: list[dict[str, Any]] | None = None,

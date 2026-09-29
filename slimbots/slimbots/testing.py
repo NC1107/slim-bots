@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from typing import Any
 
 from .http import AsyncClient
@@ -54,6 +55,12 @@ class FakeAsyncClient(AsyncClient):
         if is_send:
             return {"id": (body or {}).get("id"), "seq": seq}
         if method in ("PUT", "DELETE") and "/roles/" in path:
+            return None
+        if method == "PUT" and path.startswith("/members/") and path.endswith("/timeout"):
+            return {"user_id": path.split("/")[2], "until": int((time.time() + (body or {})["duration_seconds"]) * 1000)}
+        if method == "DELETE" and path.startswith("/members/") and path.endswith("/timeout"):
+            return None
+        if method == "DELETE" and path.startswith("/channels/") and "/messages/" in path:
             return None
         raise KeyError(f"FakeAsyncClient: no response queued for {method} {path} - call .respond() first")
 
