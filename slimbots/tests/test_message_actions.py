@@ -93,6 +93,20 @@ async def test_upload_attachment_returns_something_send_accepts():
     assert message.id == "m2"
 
 
+async def test_time_out_member_puts_the_duration_and_returns_the_deadline():
+    client = FakeAsyncClient()
+    result = await client.time_out_member("u1", 600, reason="flood")
+    assert ("PUT", "/members/u1/timeout", {"duration_seconds": 600, "reason": "flood"}, None) in client.calls
+    assert result["user_id"] == "u1"
+    assert result["until"] > 0
+
+
+async def test_lift_member_timeout_calls_the_delete_route():
+    client = FakeAsyncClient()
+    await client.lift_member_timeout("u1")
+    assert ("DELETE", "/members/u1/timeout") in [(m, p) for m, p, _, _ in client.calls]
+
+
 async def test_dm_helpers_wrap_the_right_routes():
     client = FakeAsyncClient()
     client.respond("GET", "/dms", [{"channel_id": "dm1", "user": {"id": "u2"}, "unread": 3, "created_at": 1}])

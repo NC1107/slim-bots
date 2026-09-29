@@ -22,7 +22,7 @@ deliberate; see `bots/ping`'s own README before "fixing" it.
 
 ## The templates
 
-They all live under [`bots/`](bots/).
+All of them live under [`bots/`](bots/).
 
 | Directory | What it is for |
 | --- | --- |
@@ -35,6 +35,7 @@ They all live under [`bots/`](bots/).
 | [`bots/jellyfin`](bots/jellyfin/) | Polling an outside service (Jellyfin) instead of slim-m's own events, batching a library scan into one message instead of forty, and answering `!jellyfin search`/`recent`. |
 | [`bots/casino`](bots/casino/) | A currency bot: daily chips, blackjack (double, split, surrender), coinflip, transfers, a leaderboard, and money kept safe under real concurrency. |
 | [`bots/pelican`](bots/pelican/) | Watching and controlling an outside game-server panel (Pelican): a `!servers` status list, a status message edited in place, and role-gated, audit-logged power commands. |
+| [`bots/automod`](bots/automod/) | Moderator-written rules (flood, links, words, mention spam) that delete and time out, log what they did, and stay off until configured. |
 
 Every template's README says what it deliberately does not do. That section is
 usually the more useful half.
