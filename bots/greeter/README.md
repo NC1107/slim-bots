@@ -7,7 +7,7 @@ Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`.
 `on_member_join(member)` is one `@bot.event` handler instead of a manual
 frame-type dispatch, and `Bot` itself owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/
 `SLIMM_CHANNELS` - this script never imports `os`, reading `GREETER_MESSAGE`
-and `GREETER_TITLE` through `bot.setting()` instead. `bot-ping` stays free
+through `bot.setting()` instead. `bot-ping` stays free
 of the library on purpose; see its own README.
 
 ```bash
@@ -42,16 +42,12 @@ guessing a channel.
   the message text. `{member}` becomes an `@mention` of whoever joined; any
   other `{...}` is left alone and would raise on a genuine typo, logged by
   the framework's own `guard_dispatch` rather than crashing the bot.
-- `GREETER_TITLE` (default `New member`) - the embed's title.
 - `GREETER_CHANNEL` (default `general/chat`) - see above.
 
-## Why an embed rides alongside the plain text
+## Why there is no embed
 
-`Embed(title=, description=)` carries the same message a plain-text client
-already sees in `content`, so nothing is lost for an older client - see
-`../../docs/framework.md`'s embeds section for the fallback path. A future
-version could add the new member's avatar or join count once slim-m's
-embed schema (decision 0030) grows an image field a bot can point at one.
+The welcome is plain `content`, because the `@mention` in it is what notifies the new member.
+An embed repeating the same text showed the welcome twice, and its body does not render the mention as a pill.
 
 ## What this deliberately does not do
 

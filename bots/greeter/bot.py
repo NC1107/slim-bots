@@ -3,7 +3,7 @@
 
 import sqlite3
 
-from slimbots import Bot, Embed, Permissions
+from slimbots import Bot, Permissions
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -14,7 +14,6 @@ def init_db(conn: sqlite3.Connection) -> None:
 bot = Bot(prefix="!", default_data_path="greeter.db", store_migrate=init_db)
 
 GREETER_MESSAGE = bot.setting("GREETER_MESSAGE", "Welcome, {member}! Make yourself at home.")
-GREETER_TITLE = bot.setting("GREETER_TITLE", "New member")
 GREETER_CHANNEL = bot.setting("GREETER_CHANNEL", "general/chat")
 
 CHANNEL_KEY = "welcome_channel"
@@ -65,9 +64,7 @@ async def on_member_join(member):
     if channel_id is None:
         print(f"no welcome channel: nothing matches GREETER_CHANNEL={GREETER_CHANNEL!r}; run !welcome here")
         return
-    text = welcome_text(member)
-    embed = Embed(title=GREETER_TITLE, description=text)
-    await bot.client.send(channel_id, text, embeds=[embed.to_wire()], fallback_content=text)
+    await bot.client.send(channel_id, welcome_text(member))
 
 
 @bot.command(name="welcome", help="where welcomes go; `here` moves them to this channel", usage="[here]")

@@ -65,7 +65,7 @@ def test_by_default_the_welcome_goes_to_chat_in_general_not_a_chat_elsewhere():
     join(client)
     assert client.sent[-1]["channel_id"] == "c-chat"
     assert "@newbie" in client.sent[-1]["content"]
-    assert client.sent[-1]["embeds"][0]["description"] == client.sent[-1]["content"]
+    assert not client.sent[-1].get("embeds"), "one welcome: the content already carries the mention that pings"
 
 
 def test_an_admin_can_move_the_welcome_here_and_it_sticks():
