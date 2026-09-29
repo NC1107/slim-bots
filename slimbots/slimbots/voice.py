@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import logging
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -11,6 +12,8 @@ from .http import ApiError, is_forbidden
 
 if TYPE_CHECKING:
     from .bot import Bot
+
+log = logging.getLogger(__name__)
 
 HEARTBEAT_INTERVAL_SECONDS = 15.0
 
@@ -115,8 +118,8 @@ class VoiceSession:
         assert self._bot.client is not None, "a voice session needs an open Bot connection"
         try:
             await self._bot.client.forget_voice_heartbeat(self.channel_id)
-        except Exception:
-            pass
+        except Exception as err:
+            log.warning("could not forget the voice heartbeat for %s: %s", self.channel_id, err)
 
 
 class Voice:

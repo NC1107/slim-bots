@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from slimbots import Bot, VoiceError
+from slimbots.http import ApiError
 from slimbots.testing import FakeAsyncClient
 from slimbots import voice as voice_module
 
@@ -176,6 +177,21 @@ def test_leave_disconnects_and_forgets_the_heartbeat(monkeypatch: pytest.MonkeyP
 
     asyncio.run(run())
     assert ("DELETE", "/channels/c1/voice/heartbeat", None, None) in client.calls
+
+
+def test_leave_logs_when_the_heartbeat_cannot_be_forgotten(monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    bot, client, room = make_bot()
+    client.respond("DELETE", "/channels/c1/voice/heartbeat", ApiError(500, "boom"))
+    monkeypatch.setattr(voice_module, "load_rtc", lambda: fake_rtc_module(room))
+
+    async def run() -> None:
+        session = await bot.voice.join("c1")
+        await session.leave()
+
+    with caplog.at_level("WARNING", logger="slimbots.voice"):
+        asyncio.run(run())
+    assert room.disconnected
+    assert "could not forget the voice heartbeat for c1" in caplog.text
 
 
 def test_load_rtc_raises_a_clear_voice_error_when_livekit_is_missing() -> None:

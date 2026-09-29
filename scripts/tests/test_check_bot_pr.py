@@ -123,3 +123,14 @@ def test_main_rejects_option_like_base():
     with pytest.raises(SystemExit) as exc:
         c.main(["--base=--output=/tmp/x"])
     assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("code", [
+    "member = await bot.space.find_member(author_id)\n",
+    'ROUTES = bot.setting("ROUTES", {}, type=dict)\n',
+    'AUTOPLAY = bot.setting("AUTOPLAY", False, type=bool)\n',
+])
+def test_the_0_8_features_need_a_0_8_pin(tmp_path, code):
+    (problem,) = c.check_bot(make_bot(tmp_path, "b", req="slim-m>=0.7.1\n", code=code))
+    assert "needs >=0.8.0" in problem
+    assert c.check_bot(make_bot(tmp_path / "ok", "b", req="slim-m>=0.8.0\n", code=code)) == []

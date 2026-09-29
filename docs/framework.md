@@ -67,6 +67,7 @@ A prefixed message naming no registered command is silent by default - it fires 
 
 Store your own data under `member.storage_key` (an alias for the stable slim-m user id, never `username`, which can change).
 Look a stored key back up to a live member with `await bot.space.member_for_key(key)` or `await bot.space.resolve_member(key)`, which fetches directly if the id fell out of the cached roster.
+`await bot.space.find_member(user_id)` is the same cache-then-fetch but returns `None` instead of raising when the user is gone.
 One line each way, by construction: neither name is spelled `id`, so a bot cannot casually key on the wrong field.
 
 ## The Space model
@@ -118,7 +119,7 @@ A member is in at most one call; if roster data somehow shows otherwise (no time
 `Bot(require_channels=True)` folds a missing `SLIMM_CHANNELS` into the same one-line `RuntimeError` as a missing URL/token, instead of the bot re-checking it.
 `bot.channel` is the lone configured channel when `channels` names exactly one - the common case for a bot that posts to one place.
 
-`bot.setting(name, default=None, *, type=str, required=False)` reads one of a bot's *own* env vars the same way, converting via `type` (`int`, `float`, or `list` for a comma-separated one) - `bot-jellyfin`'s nine `JELLYFIN_*` variables are the worked example.
+`bot.setting(name, default=None, *, type=str, required=False)` reads one of a bot's *own* env vars the same way, converting via `type` (`int`, `float`, `bool`, `list` for a comma-separated one, or `dict` for comma-separated `key:value` pairs; a malformed pair is reported at `start()`) - `bot-jellyfin`'s nine `JELLYFIN_*` variables are the worked example.
 A missing `required=True` value is never raised at the `setting()` call itself (which usually runs at import time, before `Bot.start()`); it is collected and reported together with a missing `SLIMM_URL`/token/channels in the same one-line error when `start()` runs.
 
 ## Where a bot listens, and how it is addressed

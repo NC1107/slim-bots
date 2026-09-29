@@ -78,7 +78,7 @@ An unrecognised or bare invocation falls back to the group's own function. `bot-
 
 ## Settings
 
-`bot.setting(name, default=None, *, type=str, required=False)` reads one of a bot's *own* env vars the same way `Bot` reads its three, converting via `type` (`int`, `float`, or `list` for a comma-separated one):
+`bot.setting(name, default=None, *, type=str, required=False)` reads one of a bot's *own* env vars the same way `Bot` reads its three, converting via `type` (`int`, `float`, `bool`, `list` for a comma-separated one, or `dict` for comma-separated `key:value` pairs):
 
 ```python
 JELLYFIN_URL = bot.setting("JELLYFIN_URL", required=True)
