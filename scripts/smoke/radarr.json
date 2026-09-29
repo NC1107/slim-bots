@@ -1,0 +1,9 @@
+{
+  "ready_seconds": 8,
+  "env": {"RADARR_URL": "http://127.0.0.1:1", "RADARR_API_KEY": "smoke"},
+  "steps": [
+    {"say": "!radarr help", "expect_contains": ["commands"], "timeout": 15},
+    {"say": "!radarr search", "expect_contains": ["between"], "timeout": 15},
+    {"say": "!radarr queue", "expect_contains": ["unavailable"], "timeout": 15}
+  ]
+}

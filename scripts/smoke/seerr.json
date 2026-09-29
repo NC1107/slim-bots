@@ -1,0 +1,10 @@
+{
+  "ready_seconds": 8,
+  "env": {"SEERR_URL": "http://127.0.0.1:1", "SEERR_API_KEY": "smoke"},
+  "steps": [
+    {"say": "!request help", "expect_contains": ["commands"], "timeout": 15},
+    {"say": "!request account", "expect_contains": ["not linked"], "timeout": 15},
+    {"say": "!request dune", "expect_contains": ["link your seerr account"], "timeout": 15},
+    {"say": "!requests", "expect_contains": ["unavailable"], "timeout": 15}
+  ]
+}
