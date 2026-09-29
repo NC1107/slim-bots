@@ -1,0 +1,2 @@
+# The real livekit the jellyfin bot image installs; pinned so a livekit release cannot turn CI red on its own.
+livekit==1.1.20
