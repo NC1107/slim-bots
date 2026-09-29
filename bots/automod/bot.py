@@ -232,7 +232,7 @@ def rules_summary():
     return lines
 
 
-@bot.command(name="automod", help="rules/stats/lift - what is on, what it did, and undo a timeout", usage="<rules|stats|lift @member>")
+@bot.command(name="automod", help="Show the rules that are on, what they did, or lift a timeout", usage="<rules|stats|lift @member>")
 async def automod_cmd(ctx, sub: str, member: Member = None):
     sub = sub.lower()
     if sub == "rules":

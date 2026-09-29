@@ -16,27 +16,14 @@ python3 bot.py
 ```
 
 Built on the `slimbots` `Bot` framework - see `../../docs/framework.md`.
-`Bot` owns `SLIMM_URL`/`SLIMM_BOT_TOKEN`/`SLIMM_CHANNELS` and the seq
-cursor for the `!jellyfin` command surface; every `JELLYFIN_*` variable is
-read through `bot.setting()` (two of them, `JELLYFIN_URL`/`JELLYFIN_API_KEY`,
-as `required=True`, so a missing one is reported the same clear way as a
-missing `SLIMM_URL`) and `bot.data_path` (from `SLIMM_DB_PATH`) is where
-its own tables live - this script never imports `os` itself, since the
-framework has no opinion on Jellyfin beyond owning that plumbing. The
-Jellyfin side is plain HTTP/JSON via `urllib`,
-run off the event loop with `asyncio.to_thread` rather than rewritten onto
-`httpx`: it is called at most once per `JELLYFIN_POLL_SECONDS` from the poll
-loop, and cooldown-guarded from a command, so blocking it briefly costs
-nothing worth a second HTTP stack.
+`Bot` owns `SLIMM_URL`, `SLIMM_BOT_TOKEN`, `SLIMM_CHANNELS` and `SLIMM_DB_PATH` (where this bot's own tables live); every `JELLYFIN_*` variable is read through `bot.setting()`.
+A missing `JELLYFIN_URL` or `JELLYFIN_API_KEY` is reported in the same start-up error as a missing `SLIMM_URL`.
+The Jellyfin side is plain HTTP/JSON via `urllib`, run off the event loop with `asyncio.to_thread`.
+It is called at most once per `JELLYFIN_POLL_SECONDS` and cooldown-guarded from a command, so it does not need `httpx`.
 
-**This bot always connects now.** The earlier version only opened a
-websocket when a separate `SLIMM_COMMAND_CHANNEL` was set, so a poll-only
-deployment never held a connection at all. Porting onto `Bot` means every
-ported template shares one connection model instead of some being outbound
--only scripts and some being full bots; `SLIMM_CHANNELS` now does both jobs
-- where new-item posts land by default, and where `!jellyfin` is answered.
-A deployment that wants poll-only in spirit can simply not grant the bot
-`SEND_MESSAGES` anywhere commands would be answered.
+The bot always holds a websocket connection.
+`SLIMM_CHANNELS` is both where new-item posts land by default and where `!jellyfin` is answered.
+A deployment that only wants the new-item posts can simply not grant the bot `SEND_MESSAGES` anywhere commands would be answered.
 
 `SLIMM_CHANNELS` should name exactly one channel here - `bot.channel` is
 that channel. It needs `SEND_MESSAGES` and `ATTACH_FILES` there; see "What

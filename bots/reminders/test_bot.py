@@ -169,6 +169,12 @@ def test_timezone_rejects_an_unknown_name():
     assert "isn't a timezone" in client.sent[-1]["content"]
 
 
+def test_timezone_rejects_names_the_zoneinfo_loader_raises_other_errors_for():
+    for name in ("../etc/passwd", "a" * 300, "America"):
+        assert not reminders.recurrence.is_valid_timezone(name)
+    assert reminders.recurrence.is_valid_timezone("America/New_York")
+
+
 def test_pending_cap_refuses_a_new_reminder():
     client = setup()
     for i in range(reminders.MAX_PENDING_PER_USER):

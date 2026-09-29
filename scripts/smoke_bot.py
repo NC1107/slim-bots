@@ -1,14 +1,5 @@
 #!/usr/bin/env python3
-"""Boots one bot against a real slim-m server and runs its manifest of commands in a private channel.
-
-For the owner or orchestrator, never CI. Needs (all from env, none printed):
-  SLIMM_URL                  server root
-  SLIMM_BOT_TOKEN            the bot's token
-  SLIMM_SMOKE_TESTER_TOKEN   a second account (user or bot) that types the commands
-  SLIMM_SMOKE_CHANNEL        a private channel holding only those two accounts
-  SLIMM_SMOKE_PRIVATE=1      your statement that the channel really is private
-The transcript is written to smoke-transcripts/smoke-<bot>-<timestamp>.md for the PR as evidence.
-"""
+"""Boots one bot against a real slim-m server and runs its command manifest in a private channel; never CI."""
 
 from __future__ import annotations
 
@@ -32,6 +23,13 @@ BOT_NAME = re.compile(r"[a-z0-9][a-z0-9-]*")
 MAX_STEPS = 50
 MAX_TIMEOUT = 120
 MAX_READY = 60
+ENV_HELP = """Needs (all from env, none printed):
+  SLIMM_URL                  server root
+  SLIMM_BOT_TOKEN            the bot's token
+  SLIMM_SMOKE_TESTER_TOKEN   a second account (user or bot) that types the commands
+  SLIMM_SMOKE_CHANNEL        a private channel holding only those two accounts
+  SLIMM_SMOKE_PRIVATE=1      your statement that the channel really is private
+The transcript is written to smoke-transcripts/smoke-<bot>-<timestamp>.md for the PR as evidence."""
 REQUIRED_ENV = ("SLIMM_URL", "SLIMM_BOT_TOKEN", "SLIMM_SMOKE_TESTER_TOKEN", "SLIMM_SMOKE_CHANNEL")
 
 
@@ -133,7 +131,7 @@ def render(bot: str, results: list[dict[str, Any]]) -> str:
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(description=__doc__, epilog=ENV_HELP, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("bot", help="directory name under bots/")
     ap.add_argument("--manifest", help="file name under scripts/smoke/, default <bot>.json")
     args = ap.parse_args(argv)

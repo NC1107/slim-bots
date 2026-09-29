@@ -13,7 +13,6 @@ REQUEST_TIMEOUT_SECONDS = 20
 PAGE_SIZE = 100
 MAX_PAGES = 10
 MIN_STATUS_INTERVAL_SECONDS = 30
-POWER_SIGNALS = ("start", "stop", "restart")
 TRUTHY = ("1", "true", "yes", "on")
 STATE_MARKERS = {"running": "[up]", "starting": "[starting]", "stopping": "[stopping]", "offline": "[down]"}
 
