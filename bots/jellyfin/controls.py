@@ -18,6 +18,8 @@ from stream_session import StreamError
 
 def preflight(session, action):
     """A reason the action cannot run right now, else None; checked before the press is acknowledged."""
+    if session.waiting_next is not None and action not in ("next", "stop"):
+        return "that episode has finished - press Next episode, or Stop."
     if action == "subs" and session.subtitle_stream_index is None and not jellyfin_core.subtitle_streams(session.item):
         return "this title has no subtitle tracks."
     if action.startswith("q:") and quality.find_preset(action[2:]) is None:
@@ -37,7 +39,7 @@ async def _next_episode(session):
 
 
 async def _play_next(session):
-    upcoming = await _next_episode(session)
+    upcoming = session.waiting_next or await _next_episode(session)
     if upcoming is None:
         return "that was the last episode."
     await session.play_item(upcoming)

@@ -92,6 +92,8 @@ class WatchSession:
         self.started_by_id = started_by_id
         self.voice_session = voice_session
         self.panel = None
+        self.waiting_next = None
+        self._next_timer = None
         self.control_lock = asyncio.Lock()
         self.quality = configured_default()
         self.paused = False
@@ -275,9 +277,12 @@ class WatchSession:
 
     async def play_item(self, item, start_seconds=0.0):
         """Moves the party to another title on the same call, keeping the published share."""
-        await self._report_progress(self.position_seconds)
+        await self._report_progress(self.position_seconds, finished=self.ended_naturally)
+        self._cancel_next_timer()
         await self._teardown_pipeline()
         self._set_item(item)
+        self.waiting_next = None
+        self.ended_naturally = False
         self.paused = False
         await self._start_pipeline(start_seconds)
 
@@ -291,8 +296,49 @@ class WatchSession:
         self.subtitle_label = label
         await self.seek(position)
 
+    def _cancel_next_timer(self):
+        timer, self._next_timer = self._next_timer, None
+        if timer is not None and timer is not asyncio.current_task():
+            timer.cancel()
+
+    async def _upcoming_episode(self):
+        """The next episode for the person who started this, or None (a movie, a finale, a Jellyfin hiccup)."""
+        with contextlib.suppress(Exception):
+            user_id = await asyncio.to_thread(playback_progress.resolve_user_id)
+            return await asyncio.to_thread(jellyfin_core.next_episode, self.item, user_id)
+        return None
+
+    async def _hold_for_next(self, upcoming):
+        """Keeps the call after an episode ends: plays the next one, or waits for a press before leaving."""
+        await self._report_progress(self.duration_seconds, finished=True)
+        if jellyfin_core.JELLYFIN_AUTOPLAY_NEXT:
+            await self.play_item(upcoming)
+            await self.refresh_panel()
+            return
+        self.waiting_next = upcoming
+        self.paused = True
+        self._seek_base = self.duration_seconds
+        self._next_timer = self.bot.background(self._leave_after_wait(), name=f"jellyfin-next-{self.voice_channel_id}")
+        await self.refresh_panel()
+        with contextlib.suppress(Exception):
+            await self.bot.client.send(
+                self.text_channel_id, f"finished **{self.title}**. next up: **{upcoming.get('Name')}** - press Next episode on the panel.",
+            )
+
+    async def _leave_after_wait(self):
+        await asyncio.sleep(jellyfin_core.JELLYFIN_NEXT_WAIT_SECONDS)
+        if self.waiting_next is not None and not self.finished:
+            await self._end_after_finish()
+
     async def _handle_finished(self):
         self.ended_naturally = True
+        upcoming = await self._upcoming_episode()
+        if upcoming is not None and not self.finished:
+            await self._hold_for_next(upcoming)
+            return
+        await self._end_after_finish()
+
+    async def _end_after_finish(self):
         self.finished = True
         text_channel_id, title = self.text_channel_id, self.title
         await self.stop(reason="finished", announce=False)
@@ -311,6 +357,7 @@ class WatchSession:
         if self._monitor_task is not None:
             self._monitor_task.cancel()
             self._monitor_task = None
+        self._cancel_next_timer()
         await self._teardown_pipeline()
         await self._report_progress(final_position, finished=self.ended_naturally)
         await self.voice_session.leave()
@@ -327,7 +374,7 @@ class WatchSession:
             self._wake_monitor.clear()
             if self.finished:
                 return
-            if playback_progress.report_due(self._last_reported_at):
+            if self.waiting_next is None and playback_progress.report_due(self._last_reported_at):
                 await self._report_progress(self.position_seconds)
             roster = await self.bot.client.voice_roster(self.voice_channel_id)
             others = [p for p in roster.get("participants", []) if p.get("user_id") != self.bot.me_id]
