@@ -59,6 +59,14 @@ def _error_from_response(response: httpx.Response) -> ApiError:
     return ApiError(response.status_code, detail)
 
 
+def _rich(attachment_ids: list[str] | None, embeds: list[dict[str, Any]] | None) -> dict[str, Any]:
+    """The optional files and embeds of a private message, left out of the body when empty."""
+    return {
+        **({"attachment_ids": attachment_ids} if attachment_ids else {}),
+        **({"embeds": embeds} if embeds else {}),
+    }
+
+
 class AsyncClient:
     """An authenticated async slim-m REST client for one bot token."""
 
@@ -187,14 +195,20 @@ class AsyncClient:
             data = await self.call("POST", f"/channels/{channel_id}/messages", body)
         return Message(data, client=self, channel_id=channel_id)
 
-    async def send_ephemeral(self, channel_id: str, in_reply_to_id: str, content: str) -> Any:
+    async def send_ephemeral(
+        self, channel_id: str, in_reply_to_id: str, content: str, *,
+        attachment_ids: list[str] | None = None, embeds: list[dict[str, Any]] | None = None,
+    ) -> Any:
         """Answers the author of `in_reply_to_id` privately; see docs/framework.md."""
-        body = {"in_reply_to_id": in_reply_to_id, "content": content}
+        body = {"in_reply_to_id": in_reply_to_id, "content": content, **_rich(attachment_ids, embeds)}
         return await self.call("POST", f"/channels/{channel_id}/ephemeral-messages", body)
 
-    async def send_ephemeral_to_press(self, channel_id: str, interaction_id: str, content: str) -> Any:
+    async def send_ephemeral_to_press(
+        self, channel_id: str, interaction_id: str, content: str, *,
+        attachment_ids: list[str] | None = None, embeds: list[dict[str, Any]] | None = None,
+    ) -> Any:
         """Answers whoever pressed the button behind `interaction_id`; a separate field from a message anchor."""
-        body = {"interaction_id": interaction_id, "content": content}
+        body = {"interaction_id": interaction_id, "content": content, **_rich(attachment_ids, embeds)}
         return await self.call("POST", f"/channels/{channel_id}/ephemeral-messages", body)
 
     async def edit_components(

@@ -11,6 +11,7 @@ from .ui import UiRoutes
 
 if TYPE_CHECKING:
     from .bot import Bot
+    from .embeds import Embed
 
 ButtonHandler = Callable[["Interaction"], Awaitable[Any]]
 
@@ -31,10 +32,15 @@ class Interaction:
         self.bot = bot
         self.answered = False
 
-    async def reply_ephemeral(self, content: str) -> Any:
+    async def reply_ephemeral(
+        self, content: str = "", *, embed: Embed | None = None, attachment_ids: list[str] | None = None,
+    ) -> Any:
         """Answers only the member who pressed; the server allows three of these per press."""
         assert self.bot.client is not None
-        result = await self.bot.client.send_ephemeral_to_press(self.channel_id, self.id, content)
+        result = await self.bot.client.send_ephemeral_to_press(
+            self.channel_id, self.id, content,
+            attachment_ids=attachment_ids, embeds=[embed.to_wire()] if embed else None,
+        )
         self.answered = True
         return result
 

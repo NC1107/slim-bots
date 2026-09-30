@@ -86,17 +86,23 @@ class Context:
             self.channel_id, body_content, reply_to_id=self.message.get("id"), embeds=embeds, fallback_content=fallback
         )
 
-    async def reply_ephemeral(self, content: str, *, public_fallback: bool = False) -> Any:
+    async def reply_ephemeral(
+        self, content: str = "", *, embed: Embed | None = None, attachment_ids: list[str] | None = None,
+        public_fallback: bool = False,
+    ) -> Any:
         """Answers only this message's author, never stored; see docs/framework.md for the rules."""
         assert self.bot.client is not None
         assert self.channel_id is not None, "reply_ephemeral() needs this message's channel_id, which was missing"
         message_id = self.message.get("id")
         assert message_id is not None, "reply_ephemeral() answers a message, and this one has no id"
         try:
-            return await self.bot.client.send_ephemeral(self.channel_id, message_id, content)
+            return await self.bot.client.send_ephemeral(
+                self.channel_id, message_id, content,
+                attachment_ids=attachment_ids, embeds=[embed.to_wire()] if embed else None,
+            )
         except ApiError as err:
             if public_fallback and err.status in (404, 405):
-                return await self.reply(content)
+                return await self.reply(content, embed=embed)
             raise
 
     def typing(self) -> _Typing:
