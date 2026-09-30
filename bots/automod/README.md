@@ -52,8 +52,8 @@ Anyone holding `MANAGE_MESSAGES` is exempt from every rule, as are other bots.
 
 ## What this deliberately does not do
 
-- **Remember across a restart.** Flood counters and join times live in memory.
-  A restart forgives everyone, and a member who joined before the bot started is never treated as new.
+- **Remember across a restart.** Flood counters live in memory, so a restart forgives everyone.
+  New-member status comes from the server's join time and survives restarts.
 - **Catch what it was offline for.** It acts on live `message.created` frames only.
   A message posted while it was disconnected is never checked; slim-m does not yet give moderation events a `seq` to catch up from.
 - **Edit-evasion.** An edited message is not rechecked.

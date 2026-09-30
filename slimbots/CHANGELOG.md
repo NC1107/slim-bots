@@ -3,6 +3,11 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.9.1
+
+- `Member.joined_at` is the server's account creation time in Unix milliseconds, or `None` when the payload has none. Since one deployment is one community, it is the join time.
+- Bots that use it need `slim-m>=0.9.1`; `scripts/check_bot_pr.py` enforces it.
+
 ## 0.9.0
 
 - `AsyncClient.get_message(channel_id, message_id)` and `Message.fetch(client, channel_id, message_id)` read one message by id, even one the bot never saw live.

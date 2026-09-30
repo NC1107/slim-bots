@@ -22,6 +22,8 @@ class Member:
         self.role_ids: list[str] = list(data.get("role_ids") or [])
         self.roles: list[str] = list(data.get("roles") or [])
         self.timed_out_until = data.get("timed_out_until")
+        # The server's account creation time; one deployment is one community, so it is also the join time.
+        self.joined_at: int | None = data.get("created_at")
         self._base_permissions = base_permissions
 
     @property
