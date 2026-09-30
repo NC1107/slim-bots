@@ -112,7 +112,7 @@ jobs:
         run: python -m pytest -q tests_livekit
 
   bot-checklist:
-    # Cheap structure gate for bot PRs; the rest of docs/shipping-a-bot.md is a human checklist.
+    # Cheap structure and hygiene gate for bot PRs; the rest of docs/shipping-a-bot.md is a human checklist.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -123,8 +123,10 @@ jobs:
           python-version: "3.12"
       - name: Install pytest (hash-locked, wheel-only)
         run: "python -m pip install --only-binary=:all: --require-hashes -r slimbots/requirements-ci.lock.txt"
-      - name: Test the checker and the smoke harness
+      - name: Test the checkers, the smoke harness and that bots/_template passes them
         run: python -m pytest -q scripts/tests
+      - name: Check repo hygiene (em dash, emoji, one-line comments)
+        run: python scripts/check_hygiene.py
       - name: Check the bots this PR changes
         if: github.event_name == 'pull_request'
         run: python scripts/check_bot_pr.py --base "origin/${{ github.base_ref }}"
