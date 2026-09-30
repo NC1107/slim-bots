@@ -50,3 +50,25 @@ def test_a_session_connects_and_publishes_both_screen_share_tracks() -> None:
             await room.disconnect()
 
     assert asyncio.run(run()) == 2
+
+
+def test_unpublish_screen_share_removes_both_tracks_and_allows_a_republish() -> None:
+    rtc = load_rtc()
+
+    async def run() -> list[int]:
+        room = rtc.Room()
+        await room.connect(URL, mint_token("slimbots-ci-unpublish", "bot"), options=rtc.RoomOptions(auto_subscribe=False))
+        try:
+            session = VoiceSession(Bot(prefix="!"), "c1", room, True, rtc)
+            counts = []
+            await session.publish_screen_share(width=320, height=180)
+            counts.append(len(room.local_participant.track_publications))
+            await session.unpublish_screen_share()
+            counts.append(len(room.local_participant.track_publications))
+            await session.publish_screen_share(width=640, height=360)
+            counts.append(len(room.local_participant.track_publications))
+            return counts
+        finally:
+            await room.disconnect()
+
+    assert asyncio.run(run()) == [2, 0, 2]
