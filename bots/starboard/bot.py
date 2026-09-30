@@ -42,7 +42,7 @@ def init_db(conn):
 bot = Bot(prefix="!", require_channels=True, default_data_path="starboard.db", store_migrate=init_db)
 
 STARBOARD_CHANNEL = bot.setting("STARBOARD_CHANNEL", required=True)
-EMOJI = bot.setting("STARBOARD_EMOJI", "⭐")
+EMOJI = bot.setting("STARBOARD_EMOJI", "\u2b50")
 THRESHOLD = bot.setting("STARBOARD_THRESHOLD", 3, type=int)
 DIGEST_DAYS = bot.setting("STARBOARD_DIGEST_DAYS", 7, type=int)
 DIGEST_TOP = bot.setting("STARBOARD_DIGEST_TOP", 5, type=int)
@@ -57,7 +57,7 @@ DAY = 86400
 
 def normalize(emoji):
     """Drops the variation selector, so a client that appends one still matches the configured emoji."""
-    return emoji.replace("️", "")
+    return emoji.replace("\ufe0f", "")
 
 
 def count_for(reactions):

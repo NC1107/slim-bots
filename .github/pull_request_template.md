@@ -12,6 +12,10 @@ Card:
 - [ ] UI pass done for member-visible output: desktop and phone width, error replies (screenshot)
 - [ ] Rollout: PyPI version and CHANGELOG entry, `slim-m>=` pin in requirements.txt, prod image pin, compose entry
 
+## Permissions
+
+What the bot needs, and why each one (for example `SEND_MESSAGES` in its channel, `MANAGE_ROLES` to hand out a role). Write "none beyond reading and posting" if that is all.
+
 ## Acceptance criteria and evidence
 
 ## What I could not verify

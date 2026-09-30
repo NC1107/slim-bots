@@ -58,3 +58,13 @@ It is a heuristic: a table of feature names to first release in the script, matc
 It does not see features missing from the table, calls made through an alias, or a pin that is high enough but wrong for other reasons.
 Add a row to the table when the library gains a feature.
 Passes 1 and 3 to 6 are not machine-checked; the PR template is the only enforcement, and no CI step calls a model or needs an API key.
+
+## What CI runs on every PR
+
+- `bot-templates`: each bot's own `test_bot.py` and its other `test_*.py`, with no server involved.
+- `bot-checklist`: `scripts/check_bot_pr.py` on the bots the PR changed, the tests for the checker, the smoke harness and `bots/_template`, and `scripts/check_hygiene.py`, which fails on an em dash, an emoji, or a plain comment longer than one line anywhere in the repo.
+- `slimbots` and `typecheck`: the library's suite, docstring length and pyright.
+
+A new bot can start from `bots/_template`, whose own tests prove a copy passes all of the above.
+
+The in-app smoke test (pass 3) is not in CI: it needs a real deployment, accounts and a private channel, so the contributor runs it and attaches the transcript.

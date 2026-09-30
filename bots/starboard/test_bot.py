@@ -28,7 +28,7 @@ CHANNELS = [
     {"id": "hl", "name": "highlights", "kind": "text", "restricted": False},
     {"id": "priv", "name": "staff", "kind": "text", "restricted": True},
 ]
-STAR = "⭐"
+STAR = "\u2b50"
 
 
 def setup():
@@ -132,7 +132,7 @@ def test_only_the_configured_emoji_counts():
 def test_variation_selector_still_matches():
     client = setup()
     created()
-    react(3, emoji=STAR + "️")
+    react(3, emoji=STAR + "\ufe0f")
     assert len(client.sent) == 1
 
 

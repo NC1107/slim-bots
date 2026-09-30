@@ -9,6 +9,18 @@ for you. The protocol underneath all of it is documented in slim-m's
 
 Read that first. Then pick the template closest to what you want.
 
+## Not a marketplace
+
+This is a set of examples the project maintains, and nothing more.
+There is no registry, no rating, no install step and no list that means "approved".
+A bot here being listed says that it builds, that its tests pass and that the project keeps it working against slim-m, not that it is safe to hand a token to.
+
+A bot is a program on your machine holding a long-lived credential in your Space.
+The code you read is not guaranteed to be the code you run, so read it, pin what you run, and decide for yourself.
+That is also why nothing installs a bot for you: you clone one and run it.
+
+New here? [`docs/getting-started.md`](docs/getting-started.md) goes from wanting a bot to having one running, and [`bots/_template`](bots/_template/) is the copy-me starting point.
+
 ## The library
 
 [`slimbots/`](slimbots/) is a discord.py-shaped framework: a `Bot()` constructor, `@bot.command` with typed argument conversion, `ctx`, and a live `Space`/`Canvas` model (members/channels/roles, a channel's Voice Canvas).
@@ -26,6 +38,7 @@ All of them live under [`bots/`](bots/).
 
 | Directory | What it is for |
 | --- | --- |
+| [`bots/_template`](bots/_template/) | Copy this to start a bot: a command, a button, a private reply and durable state, with tests that need no server. |
 | [`bots/ping`](bots/ping/) | The smallest thing that connects and answers. Start here. |
 | [`bots/greeter`](bots/greeter/) | Posts a welcome message when someone joins, the worked example for `on_member_join`. |
 | [`bots/reminders`](bots/reminders/) | Durable state, recurring reminders, timezones, and a persisted cursor. |
@@ -62,15 +75,15 @@ revoked, so exit rather than retrying.
 
 ## Shipping a bot
 
-Every bot PR follows [`docs/shipping-a-bot.md`](docs/shipping-a-bot.md): tests, an in-app test in a private channel (`scripts/smoke_bot.py`), review and adversarial passes, a UI pass, and a rollout step.
+Every bot PR follows [`docs/shipping-a-bot.md`](docs/shipping-a-bot.md), which also lists what CI checks for you: tests, an in-app test in a private channel (`scripts/smoke_bot.py`), review and adversarial passes, a UI pass, and a rollout step.
 
 ## Conventions
 
-These are the same rules slim-m itself uses, and CI is not enforcing them here
-yet, so they are on you:
+These are the same rules slim-m itself uses.
+CI enforces the first two through `scripts/check_hygiene.py` (run it locally), and docstrings are capped at two lines by the `slimbots` suite:
 
 - plain `#` comments are one line; put longer reasoning in a docstring or the README
-- no em dash, and no emoji
+- no em dash, and no emoji (a reaction emoji in data is written as a `\u` escape)
 - Python 3 standard library where it will do the job
 
 ## Licence
