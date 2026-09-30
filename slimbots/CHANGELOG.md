@@ -3,6 +3,12 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.9.3
+
+- `ctx.reply_ephemeral` and `interaction.reply_ephemeral` take `embed=` and `attachment_ids=`, and `AsyncClient.send_ephemeral` and `send_ephemeral_to_press` take `embeds=` and `attachment_ids=`.
+  An attachment must already be fetchable by the bot and the member.
+- Bots that use them need `slim-m>=0.9.3`; `scripts/check_bot_pr.py` enforces it.
+
 ## 0.9.2
 
 - `Bot.moderation_head` is the `moderation_seq` the server's `hello` carried on the current connection, or `None` when the server sent none. It is set before `on_ready`.

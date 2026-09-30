@@ -51,6 +51,27 @@ def test_pin_at_feature_version_passes(tmp_path):
     assert c.check_bot(bot) == []
 
 
+@pytest.mark.parametrize(
+    "code",
+    [
+        "await ctx.reply_ephemeral('hi', embed=Embed(title='x'))\n",
+        "await ctx.reply_ephemeral(\n    'hi',\n    attachment_ids=ids,\n)\n",
+        "await client.send_ephemeral_to_press(c, i, '', embeds=[e])\n",
+    ],
+)
+def test_private_reply_embeds_and_files_need_0_9_3(tmp_path, code):
+    bot = make_bot(tmp_path, "b", req="slim-m>=0.9.2\n", code=code)
+    (problem,) = c.check_bot(bot)
+    assert "needs >=0.9.3" in problem
+    bot = make_bot(tmp_path, "b2", req="slim-m>=0.9.3\n", code=code)
+    assert c.check_bot(bot) == []
+
+
+def test_a_plain_private_reply_keeps_its_old_floor(tmp_path):
+    bot = make_bot(tmp_path, "b", req="slim-m>=0.6.0\n", code="await ctx.reply_ephemeral('hi')\n")
+    assert c.check_bot(bot) == []
+
+
 def test_bare_slim_m_counts_as_no_floor(tmp_path):
     bot = make_bot(tmp_path, "b", req="slim-m\n", code="Bot(listen_voice_chats=True)\n")
     assert len(c.check_bot(bot)) == 1

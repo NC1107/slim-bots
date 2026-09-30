@@ -16,6 +16,11 @@ EXEMPT = {"ping": {"test_bot.py"}}
 
 # Feature pattern in bot source -> first slim-m release that provides it (see slimbots/CHANGELOG.md).
 FEATURES: tuple[tuple[str, str, tuple[int, ...]], ...] = (
+    (
+        r"(?s)\b(?:reply_ephemeral|send_ephemeral(?:_to_press)?)\(.{0,400}?\b(?:embeds?|attachment_ids)\s*=",
+        "embeds and files on a private reply",
+        (0, 9, 3),
+    ),
     (r"\bmoderation_head\b", "Bot.moderation_head", (0, 9, 2)),
     (r"\.joined_at\b", "Member.joined_at", (0, 9, 1)),
     (r"\bget_message\b|\bMessage\.fetch\b|\.restricted\b", "AsyncClient.get_message and Channel.restricted", (0, 9, 0)),
