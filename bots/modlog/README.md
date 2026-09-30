@@ -36,6 +36,7 @@ command traffic - never a substitute for `GET /reports/history`.
   own transcript, not an audit trail.
 - `!modlog gaps` - the last several reconnect gaps this bot noticed, each a
   permanent hole in the log rather than something a later event fills in.
+  It also says how many times the server's moderation cursor was ahead of this log.
 - `!modlog permissions` - exactly what `MANAGE_MESSAGES` and `MANAGE_ROLES`
   would each add, on demand.
 
@@ -154,12 +155,24 @@ decision 0028, not something to route around here.
   delete.** `role.changed` fires for all four and says only the id. Naming
   which one happened would need `GET /roles` (`MANAGE_ROLES`) plus a
   before/after diff, and this bot does not hold that permission on purpose.
-- **Persist the name and role-name caches.** Only `events` and `gaps` live
+- **Persist the name and role-name caches.** Only `events`, `gaps` and the moderation cursor tables live
   in `SLIMM_DB_PATH`; the in-memory lookups are cheap to rebuild from the
   next few events and simply start cold again after a restart.
 - **Watch more than these five events.** Reactions, threads, polls, pins,
   and canvas activity all have their own event types and are out of scope
   here - see the other bots here and slim-m's `docs/bots/building-bots.md`.
+
+## Moderation cursor
+
+The five moderation frames carry a deployment-wide `seq`, and the server's `hello` carries the current head as `moderation_seq`.
+This bot persists the largest `seq` it has seen, and on every connect compares it with the head (`bot.moderation_head`, needs `slim-m>=0.9.2`).
+The first connect only seeds it.
+A head still ahead of everything received after a short wait is logged as a gap marker in the transcript and the bot's stdout, and counted by `!modlog gaps`.
+The cursor is clock-seeded, so the first reconnect after a server restart always reads as a possible gap, which is the safe direction.
+To keep that apart from a real hole, the bot also reads `/version` on each connect and remembers a build fingerprint (the release version plus its capability list, the only build signal `/version` exposes).
+A gap where the fingerprint changed is recorded as "server restarted, events may have been missed"; one on an unchanged fingerprint is a plain gap, and `!modlog gaps` counts them separately.
+Two deploys of `main` with the same version and capabilities look identical, so those still read as plain gaps.
+The first connect seeds the seq and the fingerprint and records nothing.
 
 ## Output
 

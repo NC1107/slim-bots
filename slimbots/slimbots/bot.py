@@ -138,6 +138,7 @@ class Bot:
         self._fatal_error: BaseException | None = None
         self._main_task: asyncio.Task[Any] | None = None
         self._gateway: Gateway | None = None
+        self.moderation_head: int | None = None
         self._clock: Callable[[], float] = time.monotonic
         self._channel_miss_at: dict[str, float] = {}
         self.store: Store | None = None
@@ -550,6 +551,8 @@ class Bot:
 
         async with await Gateway.open(self.client) as gateway:
             self._gateway = gateway
+            head = gateway.hello.get("moderation_seq")
+            self.moderation_head = head if isinstance(head, int) else None
             try:
                 reset_delay()
                 await self._dispatch_event("on_ready")

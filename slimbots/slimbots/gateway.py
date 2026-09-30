@@ -16,8 +16,9 @@ PROTOCOL = 1
 class Gateway:
     """An open, hello-shaken slim-m websocket connection for an `AsyncClient`."""
 
-    def __init__(self, socket: Any) -> None:
+    def __init__(self, socket: Any, hello: dict[str, Any] | None = None) -> None:
         self._socket = socket
+        self.hello: dict[str, Any] = hello or {}
 
     @classmethod
     async def open(cls, client: AsyncClient, *, protocol: int = PROTOCOL) -> Gateway:
@@ -31,7 +32,7 @@ class Gateway:
         except BaseException:
             await socket.close()
             raise
-        return cls(socket)
+        return cls(socket, hello)
 
     async def frames(self) -> AsyncIterator[dict[str, Any]]:
         async for raw in self._socket:

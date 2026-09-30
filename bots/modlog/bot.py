@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """bot-modlog: mirrors timeouts, kicks, restores, and role changes into a channel; see README.md."""
 
+import asyncio
 import time
 import uuid
 from datetime import datetime, timezone
@@ -13,6 +14,9 @@ GAP_RECORD_THRESHOLD_SECONDS = 5
 # Five minutes: shorter drops are gateway blips, and a notice for each buried the log in noise.
 GAP_NOTICE_THRESHOLD_SECONDS = 300
 MAX_GAPS_SHOWN = 10
+# A moderation frame at or below the hello head can still land just after it, so a hole is judged only after this wait.
+MODERATION_SETTLE_SECONDS = 5
+MODERATION_FRAMES = frozenset({"member.timeout", "member.removed", "member.restored", "member.role_changed", "role.changed"})
 
 
 def init_db(conn):
@@ -28,6 +32,18 @@ def init_db(conn):
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             reconnected_at INTEGER NOT NULL,
             downtime_seconds INTEGER NOT NULL
+        );
+        CREATE TABLE IF NOT EXISTS moderation_state (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            last_seq INTEGER NOT NULL,
+            build TEXT
+        );
+        CREATE TABLE IF NOT EXISTS moderation_gaps (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            noticed_at INTEGER NOT NULL,
+            last_seq INTEGER NOT NULL,
+            head INTEGER NOT NULL,
+            after_restart INTEGER NOT NULL DEFAULT 0
         );
         """
     )
@@ -93,6 +109,89 @@ def note_alive():
 def _record_gap(conn, downtime):
     conn.execute("INSERT INTO gaps (reconnected_at, downtime_seconds) VALUES (?, ?)", (int(time.time()), downtime))
     conn.commit()
+
+
+def _load_moderation_state(conn):
+    """(last_seq, build) as persisted, or None before the first connect."""
+    return conn.execute("SELECT last_seq, build FROM moderation_state WHERE id = 1").fetchone()
+
+
+def _load_moderation_seq(conn):
+    row = _load_moderation_state(conn)
+    return row[0] if row else None
+
+
+def _store_moderation_seq(conn, seq):
+    conn.execute(
+        "INSERT INTO moderation_state (id, last_seq) VALUES (1, ?) ON CONFLICT (id) DO UPDATE SET last_seq = MAX(last_seq, excluded.last_seq)",
+        (seq,),
+    )
+    conn.commit()
+
+
+def _store_build(conn, build):
+    conn.execute("UPDATE moderation_state SET build = ? WHERE id = 1", (build,))
+    conn.commit()
+
+
+def _record_moderation_gap(conn, last_seq, head, text, after_restart):
+    conn.execute(
+        "INSERT INTO moderation_gaps (noticed_at, last_seq, head, after_restart) VALUES (?, ?, ?, ?)",
+        (int(time.time()), last_seq, head, int(after_restart)),
+    )
+    conn.execute("INSERT INTO events (ts, kind, text) VALUES (?, 'gap', ?)", (int(time.time()), text))
+    conn.commit()
+
+
+async def note_moderation_seq(frame):
+    seq = frame.get("seq")
+    if frame.get("type") in MODERATION_FRAMES and isinstance(seq, int):
+        await bot.store.run(_store_moderation_seq, seq)
+
+
+async def current_build():
+    """The server's identity from /version (release version plus capabilities, its only build signal); None when unreadable."""
+    try:
+        info = await bot.client.call("GET", "/version")
+    except ApiError:
+        return None
+    if not isinstance(info, dict) or "version" not in info:
+        return None
+    return f"{info['version']}+{','.join(sorted(info.get('capabilities') or []))}"
+
+
+async def confirm_moderation_gap(last_seq, head, after_restart):
+    """Logs a marker when, after the settle wait, the hello head is still ahead of every moderation event received."""
+    await asyncio.sleep(MODERATION_SETTLE_SECONDS)
+    received = await bot.store.run(_load_moderation_seq)
+    if received >= head:
+        return
+    if after_restart:
+        text = "server restarted, events may have been missed"
+    else:
+        text = (
+            "moderation events were missed on an unchanged server build: the moderation cursor is ahead of "
+            "the last event this bot recorded, and nothing can replay them"
+        )
+    await bot.store.run(_record_moderation_gap, received, head, text, after_restart)
+    await bot.store.run(_store_moderation_seq, head)
+    print(f"gap marker: {text} (last seen {last_seq}, server head {head})", flush=True)
+
+
+async def check_moderation_cursor():
+    """Compares the hello's moderation head with the persisted seq; the first connect only seeds seq and build."""
+    head = bot.moderation_head
+    if head is None:
+        return
+    state = await bot.store.run(_load_moderation_state)
+    build = await current_build()
+    if state is None:
+        await bot.store.run(_store_moderation_seq, head)
+    elif head > state[0]:
+        after_restart = build is not None and state[1] is not None and build != state[1]
+        bot.background(confirm_moderation_gap(state[0], head, after_restart), name="modlog-moderation-gap")
+    if build is not None:
+        await bot.store.run(_store_build, build)
 
 
 def gap_notice_text(count, downtime):
@@ -196,15 +295,27 @@ def _fetch_gaps(conn):
     ).fetchall()
 
 
+def _count_moderation_gaps(conn):
+    """(plain gaps, gaps after a server restart)."""
+    return conn.execute(
+        "SELECT COALESCE(SUM(1 - after_restart), 0), COALESCE(SUM(after_restart), 0) FROM moderation_gaps"
+    ).fetchone()
+
+
 async def show_gaps(ctx):
     rows = await bot.store.run(_fetch_gaps)
-    if not rows:
+    plain_gaps, restart_gaps = await bot.store.run(_count_moderation_gaps)
+    if not rows and not plain_gaps and not restart_gaps:
         await ctx.reply("no reconnect gaps recorded.")
         return
-    lines = [f"last {len(rows)} known gap(s), most recent first:"]
+    lines = [f"last {len(rows)} known gap(s), most recent first:"] if rows else []
     for reconnected_at, downtime in rows:
         when = datetime.fromtimestamp(reconnected_at, tz=timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         lines.append(f"- reconnected {when} after ~{format_duration(downtime)} offline")
+    if plain_gaps:
+        lines.append(f"the moderation cursor was ahead of this log {plain_gaps} time(s) on an unchanged server build, so events were missed then.")
+    if restart_gaps:
+        lines.append(f"{restart_gaps} more time(s) it was ahead after the server restarted, so events may have been missed.")
     lines.append("moderation events during any of these gaps are permanently missing from this log.")
     await ctx.reply("\n".join(lines))
 
@@ -236,6 +347,12 @@ async def modlog_cmd(ctx, sub: str):
 @bot.event
 async def on_frame(frame):
     note_alive()
+    await note_moderation_seq(frame)
+
+
+@bot.event
+async def on_ready():
+    await check_moderation_cursor()
 
 
 @bot.event
