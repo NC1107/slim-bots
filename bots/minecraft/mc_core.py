@@ -9,6 +9,7 @@ EVENT_KINDS = ("chat", "join", "leave", "death", "advancement")
 MAX_GAME_CHAT = 256
 MAX_SLIM_LINE = 400
 MAX_NAME = 16
+MAX_RCON_COMMAND = 1400
 RELAY_TAG = "[slim]"
 
 Event = namedtuple("Event", "kind player text")
@@ -25,8 +26,8 @@ MC_MAX_POSTS_PER_MINUTE = 10
 MC_QUEUE_MAX = 200
 MC_TO_GAME_PER_MINUTE = 30
 
-# A logger bracket after the level is how Forge and most modpacks differ from vanilla.
-_LOG_LINE = re.compile(r"^\[[^\]]*\] \[[^\]/]*/INFO\](?: \[[^\]]*\])?: (.*)$")
+# Vanilla and Fabric bracket the thread, Paper and Spigot do not, and Forge adds a logger after the level.
+_LOG_LINE = re.compile(r"^(?:\[[^\]]*\] \[[^\]/]*/INFO\]|\[[^\]]* INFO\])(?: \[[^\]]*\])?: (.*)$")
 _NAME = r"[A-Za-z0-9_.]{1,%d}" % MAX_NAME
 _CHAT = re.compile(rf"^(?:\[Not Secure\] )?<({_NAME})> (.+)$")
 _JOIN = re.compile(rf"^({_NAME}) joined the game$")
@@ -42,7 +43,7 @@ _DEATH = re.compile(
 )
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")
 _SECTION_CODE = re.compile(r"§.?")
-_INVISIBLE = re.compile(r"[​-‏‪-‮⁠-⁩﻿]")
+_INVISIBLE = re.compile(r"[\u200b-\u200f\u202a-\u202e\u2060-\u2069\ufeff\u00ad\u061c\u180e\ufe00-\ufe0f\U000e0000-\U000e007f]")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f-\x9f]")
 _LIST_PLAYERS = re.compile(r"players online:?\s*(.*)$", re.DOTALL)
 
@@ -124,10 +125,10 @@ def parse_log_line(line):
 
 
 def parse_player_list(response):
-    """Names out of a `list` reply, across the 1.7 and the modern wording; empty when it cannot be read."""
+    """Names out of a `list` reply, across the 1.7 and the modern wording; None when it is not a player list."""
     match = _LIST_PLAYERS.search(_SECTION_CODE.sub("", response or ""))
     if not match:
-        return []
+        return None
     names = [part.strip() for part in re.split(r"[,\n]", match.group(1))]
     return [name for name in names if re.fullmatch(_NAME, name)]
 
@@ -143,7 +144,7 @@ def format_for_slim(event):
         return f"**[mc]** {who} left the game"
     if event.kind == "advancement":
         return f"**[mc]** {who} earned the advancement `{slim_safe(event.text, 120)}`"
-    return f"**[mc]** {who} {slim_safe(event.text, 200)}"
+    return f"**[mc]** {who} `{slim_safe(event.text, 200)}`"
 
 
 def is_relay_echo(event):
@@ -152,10 +153,20 @@ def is_relay_echo(event):
 
 
 def game_command(author_name, text):
-    """The one-line `tellraw` for a slim-m message; the body is JSON, so it can carry no selector or command of its own."""
+    """The one-line `tellraw` for a slim-m message; JSON, so no selector or command, and small enough for one RCON packet."""
+    name = game_safe(author_name, 32)
+    body = game_safe(text)
+    while True:
+        command = _tellraw(name, body)
+        if len(command.encode()) <= MAX_RCON_COMMAND or len(body) <= 3:
+            return command
+        body = clip(body, len(body) - 8)
+
+
+def _tellraw(name, body):
     parts = [
         {"text": RELAY_TAG + " ", "color": "aqua"},
-        {"text": game_safe(author_name, 32) + ": ", "color": "yellow"},
-        {"text": game_safe(text), "color": "white"},
+        {"text": name + ": ", "color": "yellow"},
+        {"text": body, "color": "white"},
     ]
     return "tellraw @a " + json.dumps(parts, ensure_ascii=True)

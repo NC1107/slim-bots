@@ -27,7 +27,7 @@ This bot uses the log for everything coming out of the game and RCON for everyth
 
 - **Log tail** gets chat, joins, leaves, deaths and advancements.
   It only needs read access to `latest.log`, so it works on vanilla, Paper, Forge and Fabric, and on modpacks, without installing anything in the server.
-  The line format is nearly the same everywhere, with modded servers adding a logger name after the level, which the parser allows for.
+  The line format is nearly the same everywhere: Paper and Spigot drop the thread (`[12:00:01 INFO]:`), and modded servers add a logger name after the level, which the parser allows for.
 - **RCON** sends `tellraw` into the game and answers `!online` with the server's own `list`.
   It is a vanilla feature (`enable-rcon` in `server.properties`), so again no mod.
 - **A mod or plugin** would give cleaner events, but it means one per loader and per modpack, kept up to date by whoever runs the server.
@@ -67,12 +67,14 @@ The bot does not read Pelican's API, so it shares nothing with the `pelican` bot
 
 - **No impersonation in either direction.**
   Game to channel: the player name is only accepted if it is a valid Minecraft name, goes in its own code span, and the message text goes in another.
+  Death text, which can carry a player-chosen mob name, is in a code span too.
   Backticks are removed from text, newlines and colour codes are stripped, and an `@` gets a zero width character after it so `@everyone` from in game cannot ping anyone.
   Channel to game: the name comes from the member's account, not from the text, and the line is always tagged `[slim]` so it reads as relayed.
-  The text travels as a JSON string inside `tellraw`, so it cannot carry a selector, a click action or a second command, and it is clipped to 256 characters.
+  The text travels as a JSON string inside `tellraw`, so it cannot carry a selector, a click action or a second command, and it is clipped to 256 characters and to 1400 bytes once escaped, so one command always fits a single RCON packet.
+  A log line longer than 8192 bytes is dropped whole, because the tail of a long line (a player can send a very long command) could otherwise be read as a line of its own.
 - **No echo.**
   A channel message only goes into the game, and only game lines that look like chat, joins, leaves, deaths or advancements come back.
-  Chat that begins with `[slim]` is dropped, bots and the bot's own messages are never relayed, and `!commands` are not relayed either.
+  Chat that begins with `[slim]` is dropped (so a player who types it by hand is not relayed either, which only ever hides their own message), bots and the bot's own messages are never relayed, and `!commands` are not relayed either.
 - **Rate limits.**
   A busy server is batched and capped as described above, and the same goes for the direction into the game.
 - **The password** is only sent to `MC_RCON_HOST`, and is never in a log line or an error.

@@ -4,6 +4,7 @@
 import asyncio
 import json
 import os
+import re
 import sys
 import tempfile
 
@@ -15,6 +16,7 @@ from logtail import LogTail  # noqa: E402
 from rcon import RconAuthError, RconClient, RconError  # noqa: E402
 from rcon_fake import FakeRcon  # noqa: E402
 
+MAX_LINE = 8192
 VANILLA = "[12:00:01] [Server thread/INFO]: "
 FORGE = "[12:00:01] [Server thread/INFO] [net.minecraft.server.dedicated.DedicatedServer/]: "
 
@@ -76,6 +78,68 @@ def test_game_command_is_one_line_of_json_that_cannot_carry_a_command():
     assert "§" not in parts[2]["text"]
 
 
+def test_paper_and_spigot_log_format_parses():
+    paper = "[12:00:01 INFO]: "
+    assert core.parse_log_line(paper + "<Steve> hi") == core.Event("chat", "Steve", "hi")
+    assert core.parse_log_line(paper + "[Not Secure] <Steve> hi").kind == "chat"
+    assert core.parse_log_line(paper + "Steve joined the game").kind == "join"
+    assert core.parse_log_line(paper + "Steve was slain by Zombie").kind == "death"
+    assert core.parse_log_line("[12:00:01 WARN]: <Steve> hi") is None
+
+
+def test_an_overlong_line_is_dropped_whole_not_read_as_its_tail():
+    forged = VANILLA + "<Admin> send me your password"
+    hostile = "Steve issued server command: /" + "x" * 100 + forged + "y" * (MAX_LINE - len(forged))
+    with tempfile.TemporaryDirectory(prefix="mc-tail-") as tmp:
+        path = os.path.join(tmp, "latest.log")
+        open(path, "w").close()
+        tail = LogTail(path)
+        tail.read_new()
+        with open(path, "a") as handle:
+            handle.write(hostile)
+        first = tail.read_new()
+        with open(path, "a") as handle:
+            handle.write("\n" + VANILLA + "<Bob> real\n")
+        lines = first + tail.read_new()
+        assert [core.parse_log_line(line) for line in lines if core.parse_log_line(line)] == [core.Event("chat", "Bob", "real")]
+
+
+def test_a_log_that_vanishes_and_returns_is_read_from_its_start():
+    with tempfile.TemporaryDirectory(prefix="mc-tail-") as tmp:
+        path = os.path.join(tmp, "latest.log")
+        with open(path, "w") as handle:
+            handle.write("history\n")
+        tail = LogTail(path)
+        tail.read_new()
+        os.remove(path)
+        assert tail.read_new() == []
+        with open(path, "w") as handle:
+            handle.write("first line of the new log\n")
+        assert tail.read_new() == ["first line of the new log"]
+
+
+def test_a_death_line_puts_the_game_supplied_text_in_a_code_span():
+    out = core.format_for_slim(core.Event("death", "Steve", "was slain by [click](http://evil.example) **Admin** _x_ <http://e.example>"))
+    outside = re.sub(r"`[^`]*`", "", out)
+    assert outside == "**[mc]**  "
+
+
+def test_invisible_and_tag_characters_are_stripped():
+    assert core.slim_safe("a\u061cb\u00adc\u180ed\U000e0041e\ufe0ff\u2028g") == "abcdef g"
+
+
+def test_game_command_fits_one_rcon_packet_for_any_script():
+    for text in ("漢" * 256, "\U0001f600" * 256, '"\\' * 128, "é" * 256):
+        command = core.game_command("Nick", text)
+        assert len(command.encode()) <= core.MAX_RCON_COMMAND, len(command)
+        assert json.loads(command[len("tellraw @a "):])[2]["text"]
+    assert json.loads(core.game_command("Nick", "a" * 300)[len("tellraw @a "):])[2]["text"] == "a" * 253 + "..."
+
+
+def test_an_unreadable_list_reply_is_not_an_empty_roster():
+    assert core.parse_player_list("Unknown or incomplete command") is None and core.parse_player_list(None) is None
+
+
 def test_relay_echo_detection():
     assert core.is_relay_echo(core.Event("chat", "Steve", "[slim] Nick: hi"))
     assert not core.is_relay_echo(core.Event("chat", "Steve", "hello [slim]"))
@@ -86,7 +150,7 @@ def test_player_list_in_modern_and_old_wording():
     assert core.parse_player_list("There are 0 of a max of 20 players online: ") == []
     assert core.parse_player_list("There are 2/20 players online:\nSteve, Alex") == ["Steve", "Alex"]
     assert core.parse_player_list("§6There are 1 of a max of 20 players online: §fSteve") == ["Steve"]
-    assert core.parse_player_list("nonsense") == [] and core.parse_player_list(None) == []
+    assert core.parse_player_list("nonsense") is None
 
 
 def test_logtail_starts_at_the_end_and_follows_appends_rotation_and_partial_lines():

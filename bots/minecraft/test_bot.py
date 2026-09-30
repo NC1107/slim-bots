@@ -202,6 +202,16 @@ def test_a_roster_sync_replaces_the_log_derived_roster():
     run(scenario)
 
 
+def test_an_unreadable_list_reply_keeps_the_log_derived_roster():
+    async def scenario(clock, fake, client):
+        fake.list_reply = "Unknown or incomplete command"
+        mc.bridge.online = {"Ghost"}
+        await mc.sync_roster()
+        assert mc.bridge.online == {"Ghost"}
+
+    run(scenario)
+
+
 if __name__ == "__main__":
     tests = [v for k, v in list(globals().items()) if k.startswith("test_")]
     for test in tests:

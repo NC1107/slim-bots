@@ -79,7 +79,11 @@ async def sync_roster():
     except RconError as err:
         print(f"{err}, keeping the log-derived roster", file=sys.stderr)
         return
-    bridge.online = set(core.parse_player_list(reply))
+    names = core.parse_player_list(reply)
+    if names is None:
+        print("rcon `list` gave a reply that is not a player list, keeping the log-derived roster", file=sys.stderr)
+        return
+    bridge.online = set(names)
 
 
 async def roster_loop():
@@ -129,8 +133,11 @@ async def online_cmd(ctx):
     note = "from the log, so players who joined before the bot started may be missing"
     if rcon is not None:
         try:
-            names = sorted(core.parse_player_list(await rcon.command("list")))
-            note = ""
+            listed = core.parse_player_list(await rcon.command("list"))
+            if listed is None:
+                note = "the server's `list` reply was not readable, so this is from the log"
+            else:
+                names, note = sorted(listed), ""
         except RconError:
             note = "the server did not answer `list`, so this is from the log"
     body = ", ".join(f"`{name}`" for name in names) if names else "nobody"

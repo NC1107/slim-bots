@@ -14,19 +14,23 @@ class LogTail:
         self._offset = None
         self._identity = None
         self._partial = b""
+        self._skipping = False
+        self._seen = False
 
     def read_new(self):
         try:
             stat = os.stat(self._path)
         except OSError:
             self._offset = self._identity = None
+            self._partial, self._skipping = b"", False
             return []
         identity = (stat.st_dev, stat.st_ino)
         if self._offset is None:
-            self._offset, self._identity = stat.st_size, identity
-            return []
+            # A log that returns after being seen is a fresh one, so nothing in it is history.
+            self._offset, self._identity = (0 if self._seen else stat.st_size), identity
+            self._seen = True
         if identity != self._identity or stat.st_size < self._offset:
-            self._offset, self._identity, self._partial = 0, identity, b""
+            self._offset, self._identity, self._partial, self._skipping = 0, identity, b"", False
         if stat.st_size == self._offset:
             return []
         return self._read_from_offset()
@@ -39,6 +43,13 @@ class LogTail:
         except OSError:
             return []
         self._offset += len(chunk)
-        *complete, self._partial = (self._partial + chunk).split(b"\n")
-        self._partial = self._partial[-MAX_LINE_BYTES:]
-        return [line.decode("utf-8", errors="replace") for line in complete if len(line) <= MAX_LINE_BYTES]
+        *complete, rest = (self._partial + chunk).split(b"\n")
+        lines = []
+        for line in complete:
+            if self._skipping:
+                self._skipping = False
+            elif len(line) <= MAX_LINE_BYTES:
+                lines.append(line.decode("utf-8", errors="replace"))
+        self._skipping = self._skipping or len(rest) > MAX_LINE_BYTES
+        self._partial = b"" if self._skipping else rest
+        return lines
