@@ -28,6 +28,8 @@ def setup():
     modlog._last_roles.clear()
     modlog._role_names.clear()
     modlog._open_gap_notice = None
+    modlog.bot.moderation_head = None
+    modlog.MODERATION_SETTLE_SECONDS = 0
     client = FakeAsyncClient(me_id="bot-1")
     client.respond("GET", "/members", MEMBERS)
     modlog.bot.client = client
@@ -209,6 +211,169 @@ def test_a_short_gap_is_not_reported():
     client = modlog.bot.client
     asyncio.run(modlog.report_reconnect_gap())
     assert client.sent == []
+
+
+def stored_moderation_seq():
+    return modlog.bot.store.connection.execute("SELECT last_seq FROM moderation_state").fetchone()
+
+
+def stored_build():
+    return modlog.bot.store.connection.execute("SELECT build FROM moderation_state").fetchone()[0]
+
+
+def restart_gap_count():
+    return modlog.bot.store.connection.execute("SELECT COUNT(*) FROM moderation_gaps WHERE after_restart = 1").fetchone()[0]
+
+
+def moderation_gap_count():
+    return modlog.bot.store.connection.execute("SELECT COUNT(*) FROM moderation_gaps").fetchone()[0]
+
+
+def serve_version(version, capabilities=("push",)):
+    modlog.bot.client.respond("GET", "/version", {"version": version, "capabilities": list(capabilities)})
+
+
+def ready_with_head(head, version="0.76.0"):
+    serve_version(version)
+    modlog.bot.moderation_head = head
+
+    async def run():
+        await modlog.check_moderation_cursor()
+        while modlog.bot._background_tasks:
+            await list(modlog.bot._background_tasks)[0]
+
+    asyncio.run(run())
+
+
+def ready_in_one_loop(*connects):
+    async def run():
+        for head, version in connects:
+            serve_version(version)
+            modlog.bot.moderation_head = head
+            await modlog.check_moderation_cursor()
+            while modlog.bot._background_tasks:
+                await list(modlog.bot._background_tasks)[0]
+
+    asyncio.run(run())
+
+
+def test_the_highest_moderation_seq_is_persisted():
+    setup()
+    for seq in (30, 10, 20):
+        dispatch_frame({"type": "member.removed", "user_id": "u1", "seq": seq})
+    assert stored_moderation_seq() == (30,)
+
+
+def test_a_frame_without_a_moderation_seq_is_not_persisted():
+    setup()
+    dispatch_frame({"type": "message.created", "seq": 99, "message": {}})
+    assert stored_moderation_seq() is None
+
+
+def test_the_first_connect_seeds_the_cursor_without_a_marker():
+    setup()
+    ready_with_head(500)
+    assert stored_moderation_seq() == (500,)
+    assert moderation_gap_count() == 0
+    assert stored_build() == "0.76.0+push"
+
+
+def test_a_head_ahead_on_an_unchanged_build_logs_a_plain_gap_marker():
+    setup()
+    ready_with_head(50)
+    dispatch_frame({"type": "member.removed", "user_id": "u1", "seq": 100})
+    ready_with_head(200)
+    assert moderation_gap_count() == 1
+    assert restart_gap_count() == 0
+    assert stored_moderation_seq() == (200,)
+    kinds = modlog.bot.store.connection.execute("SELECT kind, text FROM events WHERE kind = 'gap'").fetchall()
+    assert len(kinds) == 1 and "unchanged server build" in kinds[0][1]
+
+
+def test_a_head_ahead_after_the_build_changed_is_a_restart_gap():
+    setup()
+    ready_with_head(50, version="0.76.0")
+    dispatch_frame({"type": "member.removed", "user_id": "u1", "seq": 100})
+    ready_with_head(200, version="0.77.0")
+    assert moderation_gap_count() == 1
+    assert restart_gap_count() == 1
+    text = modlog.bot.store.connection.execute("SELECT text FROM events WHERE kind = 'gap'").fetchone()[0]
+    assert text == "server restarted, events may have been missed"
+    assert stored_build() == "0.77.0+push"
+
+
+def test_a_changed_capability_list_counts_as_a_changed_build():
+    setup()
+    ready_with_head(50)
+    dispatch_frame({"type": "member.removed", "user_id": "u1", "seq": 100})
+    serve_version("0.76.0", capabilities=("push", "polls"))
+    modlog.bot.moderation_head = 200
+
+    async def run():
+        await modlog.check_moderation_cursor()
+        while modlog.bot._background_tasks:
+            await list(modlog.bot._background_tasks)[0]
+
+    asyncio.run(run())
+    assert restart_gap_count() == 1
+
+
+def test_an_unreadable_version_keeps_the_gap_plain():
+    setup()
+    ready_with_head(50)
+    dispatch_frame({"type": "member.removed", "user_id": "u1", "seq": 100})
+    modlog.bot.client.respond("GET", "/version", {})
+    modlog.bot.moderation_head = 200
+
+    async def run():
+        await modlog.check_moderation_cursor()
+        while modlog.bot._background_tasks:
+            await list(modlog.bot._background_tasks)[0]
+
+    asyncio.run(run())
+    assert moderation_gap_count() == 1
+    assert restart_gap_count() == 0
+    assert stored_build() == "0.76.0+push"
+
+
+def test_a_head_at_or_below_the_last_seq_is_not_a_gap():
+    setup()
+    dispatch_frame({"type": "member.removed", "user_id": "u1", "seq": 100})
+    ready_with_head(100)
+    assert moderation_gap_count() == 0
+
+
+def test_an_event_landing_after_the_hello_closes_the_gap():
+    setup()
+    serve_version("0.76.0")
+    modlog.MODERATION_SETTLE_SECONDS = 0.2
+    dispatch_frame({"type": "member.removed", "user_id": "u1", "seq": 100})
+    modlog.bot.moderation_head = 200
+
+    async def run():
+        await modlog.check_moderation_cursor()
+        await modlog.note_moderation_seq({"type": "role.changed", "seq": 200})
+        while modlog.bot._background_tasks:
+            await list(modlog.bot._background_tasks)[0]
+
+    asyncio.run(run())
+    assert moderation_gap_count() == 0
+
+
+def test_a_server_without_a_moderation_head_changes_nothing():
+    setup()
+    ready_with_head(None)
+    assert stored_moderation_seq() is None
+
+
+def test_modlog_gaps_mentions_a_cursor_gap_with_no_reconnect_gap():
+    client = setup()
+    dispatch_frame({"type": "member.removed", "user_id": "u1", "seq": 100})
+    ready_in_one_loop((200, "0.76.0"), (300, "0.77.0"))
+    process(client, message("u1", "!modlog gaps"))
+    reply = client.sent[-1]["content"]
+    assert "ahead of this log 1 time(s) on an unchanged server build" in reply
+    assert "1 more time(s) it was ahead after the server restarted" in reply
 
 
 def test_another_bot_is_ignored_by_default():

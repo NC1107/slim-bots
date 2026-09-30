@@ -3,6 +3,13 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## Unreleased
+
+- `Bot.moderation_head` is the `moderation_seq` the server's `hello` carried on the current connection, or `None` when the server sent none. It is set before `on_ready`.
+- `Gateway.hello` keeps the whole hello frame.
+- Bots that use it need `slim-m>=0.9.2`; `scripts/check_bot_pr.py` enforces it.
+- `bot-modlog` persists the largest moderation `seq` it has seen, compares it with the head on each reconnect, and logs a gap marker when the head is still ahead after a short wait, attributed to a server restart when `/version` changed since its last connect.
+
 ## 0.9.1
 
 - `Member.joined_at` is the server's account creation time in Unix milliseconds, or `None` when the payload has none. Since one deployment is one community, it is the join time.
