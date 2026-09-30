@@ -3,7 +3,7 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
-## Unreleased
+## 0.9.2
 
 - `Bot.moderation_head` is the `moderation_seq` the server's `hello` carried on the current connection, or `None` when the server sent none. It is set before `on_ready`.
 - `Gateway.hello` keeps the whole hello frame.
