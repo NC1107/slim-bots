@@ -1,0 +1,9 @@
+{
+  "ready_seconds": 8,
+  "env": {"MC_LOG_PATH": "/dev/null"},
+  "steps": [
+    {"say": "!help", "expect_contains": ["online"], "timeout": 15},
+    {"say": "!online", "expect_contains": ["online (0)"], "timeout": 15},
+    {"say": "!online extra words", "expect_contains": ["nobody"], "timeout": 15}
+  ]
+}

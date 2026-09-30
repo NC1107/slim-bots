@@ -1,0 +1,5 @@
+# RCON and the log tail are stdlib; the slim-m side uses slimbots' Bot.
+websockets>=12
+httpx>=0.27
+# Bot.setting list values and space.find_member arrived in 0.8.0.
+slim-m>=0.8.0
