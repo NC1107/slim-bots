@@ -3,6 +3,13 @@
 All notable changes to `slim-m` (the `slimbots` package) are recorded here.
 This project does not yet follow strict semantic versioning - it is pre-1.0, and a minor version can carry a breaking change, called out below.
 
+## 0.9.4
+
+- `AsyncClient.get_watch_session`, `set_watch_session`, `tick_watch_session` and `end_watch_session` talk to the server's durable watch session. The writes do not retry on their own: the server allows a burst of 4 then one write per 2 seconds, and a retried write only deepens a 429.
+- Call controls reach a channel-scoped bot whatever `SLIMM_CHANNELS` and `SLIMM_LISTEN_VOICE_CHATS` say; message menu uses and button presses are still held to the channel scope.
+- `UiEntry` refuses a label made of or containing invisible or direction-changing characters, using the same set as the server, and a 400 from `PUT /bots/ui` or `PUT /bots/commands` ends the run with the server's reason instead of retrying for ever.
+- `bot-jellyfin` posts the watch session and its ticks. Bots that use any of this need `slim-m>=0.9.4`; `scripts/check_bot_pr.py` enforces it.
+
 ## 0.9.3
 
 - `ctx.reply_ephemeral` and `interaction.reply_ephemeral` take `embed=` and `attachment_ids=`, and `AsyncClient.send_ephemeral` and `send_ephemeral_to_press` take `embeds=` and `attachment_ids=`.

@@ -281,13 +281,23 @@ A press is best effort like typing: a bot that was offline never sees it.
 `@bot.message_menu("translate", "Translate")` adds a row to every message's context menu, and `@bot.call_control("pause", "Pause", icon="pause")` adds a button to the call dock while the bot is on the call (slim-m decision 0045).
 Members see menu rows under the bot's name and a Bot badge, after the app's own rows, so an entry cannot pass for a built-in one.
 At most 5 menu entries and 8 call controls, a 32-character label and a 64-character id of letters, digits and `-_.`; the decorator refuses anything over.
+A label may not hold a control, a text-direction mark or a character that draws nothing (the set in `slimbots/hidden_chars.py`, the same one the server uses), and the decorator refuses those too.
+If the server still answers a registration (`PUT /bots/ui` or `PUT /bots/commands`) with a 400, the run logs the server's reason and exits with status 1 instead of reconnecting, because the same body would be refused every time.
 `permission=Permissions.X` hides the entry from members without that bit and the server refuses their use of it, so unlike a command's permission it is enforced.
 `icon` is for call controls and one of `play`, `pause`, `stop`, `skip_next`, `skip_previous`, `volume`, `volume_off`, `repeat`, `shuffle` or `list`.
 
 The handler is the same as a button's: it gets an `Interaction` with `kind` (`message_menu` or `call_control`), the member (`user_id`, `user_display_name`) and, for a menu entry, the `message_id` it was used on.
 A call control's `message_id` is `None` and `edit_components` raises on it.
+A call control is used on a call, so it reaches the bot whatever `SLIMM_CHANNELS` says; only a message menu use and a button press are held to the channel scope.
 Answer with `reply_ephemeral` or `ack`, within the same 15 minutes; a handler that returns quietly is acked for you.
 The set is registered with `PUT /bots/ui` on every connect, only when the bot declares any, so a bot that removes its last entry keeps the old ones until it registers a set again.
+
+## Sharing a watch position
+
+`client.set_watch_session(channel_id, item_id=..., title=..., playing=..., position_ms=..., duration_ms=None, seeked=False, controller_user_id=None)`, `client.tick_watch_session(channel_id, playing=..., position_ms=...)`, `client.end_watch_session(channel_id)` and `client.get_watch_session(channel_id)` are the routes of slim-m decision 0050.
+The writes need the bot on the call (join with `bot.voice.join` first), a tick about every 5 seconds is the session's heartbeat, and `seeked=True` moves the epoch so viewers re-read; the server's contract is in its `docs/bots/building-bots.md`.
+None of the three retries on its own, because a retried write only deepens a 429 (the server allows a burst of 4, then one per 2 seconds); a 409 means another bot holds the channel.
+`FakeAsyncClient` accepts all three writes and records them in `client.calls`.
 
 ## Embeds
 

@@ -283,6 +283,35 @@ class AsyncClient:
         """Who is currently connected to a channel's voice room."""
         return await self.call("GET", f"/channels/{channel_id}/voice/roster")
 
+    async def get_watch_session(self, channel_id: str) -> Any:
+        """What the call is watching and where it is; 404 when nothing is playing or the bot has gone quiet."""
+        return await self.call("GET", f"/channels/{channel_id}/watch-session")
+
+    async def set_watch_session(
+        self, channel_id: str, *, item_id: str, title: str, playing: bool, position_ms: int,
+        duration_ms: int | None = None, seeked: bool = False, controller_user_id: str | None = None,
+    ) -> None:
+        """States the call's watch session (decision 0050); a bot-only write that needs this bot on the call's heartbeat.
+        `seeked` moves the epoch so viewers re-read; 409 means another bot holds the channel, and is not retried."""
+        body: dict[str, Any] = {"item_id": item_id, "title": title, "playing": playing, "position_ms": position_ms}
+        if duration_ms is not None:
+            body["duration_ms"] = duration_ms
+        if seeked:
+            body["seeked"] = True
+        if controller_user_id is not None:
+            body["controller_user_id"] = controller_user_id
+        await self.call("PUT", f"/channels/{channel_id}/watch-session", body, retries=0)
+
+    async def tick_watch_session(self, channel_id: str, *, playing: bool, position_ms: int) -> None:
+        """Re-samples the session; send about every 5 seconds, paused or not, since it is the session's heartbeat."""
+        await self.call(
+            "POST", f"/channels/{channel_id}/watch-session/tick", {"playing": playing, "position_ms": position_ms}, retries=0,
+        )
+
+    async def end_watch_session(self, channel_id: str) -> None:
+        """Ends this bot's session; leaving the call with `forget_voice_heartbeat` ends it too."""
+        await self.call("DELETE", f"/channels/{channel_id}/watch-session", retries=0)
+
     async def list_dms(self) -> list[DmConversation]:
         return [DmConversation(d) for d in await self.call("GET", "/dms")]
 

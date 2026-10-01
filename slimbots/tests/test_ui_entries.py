@@ -5,7 +5,9 @@ import asyncio
 import pytest
 
 from slimbots import Permissions
+from slimbots.http import ApiError
 from slimbots.bot import Bot
+from slimbots.space import Space
 from slimbots.testing import FakeAsyncClient
 from slimbots.ui import UiEntry, register_ui
 
@@ -158,3 +160,66 @@ async def test_a_button_press_without_a_kind_still_reaches_button_handlers():
     del payload["kind"]
     await deliver(bot, payload)
     assert seen == ["button"]
+
+
+@pytest.mark.parametrize("hidden", ["​", "‮", "ㅤ", "⠀", "­", "﻿", "\x00", "⁠", "\U000e0041"])
+def test_a_label_holding_an_invisible_character_is_refused_before_it_is_sent(hidden):
+    with pytest.raises(ValueError, match="invisible"):
+        UiEntry("pause", f"Pa{hidden}use")
+
+
+def test_a_label_made_only_of_invisible_characters_is_refused():
+    with pytest.raises(ValueError):
+        UiEntry("pause", "ㅤ")
+
+
+def test_a_variation_selector_stays_legal_because_it_makes_a_heart_an_emoji():
+    label = "Like " + chr(0x2764) + chr(0xFE0F)
+    assert UiEntry("like", label).label == label
+
+
+async def test_a_400_from_registration_ends_the_run_instead_of_retrying_forever():
+    bot = make_bot()
+    bot.space = Space(bot.client)
+    bot.base_delay = bot.max_delay = 0.001
+    bot.client.respond("PUT", "/bots/ui", ApiError(400, {"error": "an entry label cannot hold control or invisible characters"}))
+    bot._ui.add("call_control", UiEntry("pause", "Pause"), lambda i: None)
+    attempts = 0
+    original = bot._connect_once
+
+    async def counted(reset_delay):
+        nonlocal attempts
+        attempts += 1
+        await original(reset_delay)
+
+    bot._connect_once = counted
+    assert await asyncio.wait_for(bot._run_forever(), 2) == 1
+    assert attempts == 1
+
+
+async def test_a_call_control_reaches_a_channel_scoped_bot_without_listening_to_voice_chats(monkeypatch):
+    monkeypatch.delenv("SLIMM_LISTEN_VOICE_CHATS", raising=False)
+    bot = make_bot()
+    bot.channels = {"text"}
+    heard = []
+
+    @bot.call_control("pause", "Pause")
+    async def pause(interaction):
+        heard.append(interaction.channel_id)
+
+    await deliver(bot, frame("call_control", "pause", channel_id="voice-1"))
+    assert heard == ["voice-1"]
+
+
+async def test_a_message_menu_use_in_an_unscoped_channel_is_still_dropped(monkeypatch):
+    monkeypatch.delenv("SLIMM_LISTEN_VOICE_CHATS", raising=False)
+    bot = make_bot()
+    bot.channels = {"text"}
+    heard = []
+
+    @bot.message_menu("translate", "Translate")
+    async def translate(interaction):
+        heard.append(interaction.channel_id)
+
+    await deliver(bot, frame("message_menu", "translate", channel_id="elsewhere"))
+    assert heard == []

@@ -99,6 +99,7 @@ asked to join the call they mean if several are.
   someone outside it gets a private "join #call to use these controls" and nothing changes. The text commands still work and
   redraw the panel too. The panel shows the position only while paused (a stopped clock in a message would be wrong within a second); `!np` has the live one.
 - Call dock: while the bot is in the call the dock shows Play or pause, Back 30s, Forward 30s and Stop (`@bot.call_control`, slimbots 0.7.0). They run the same code as the panel's buttons, for the party in the call the member used them in.
+- Watch position: while a party runs the bot states it to the server (`PUT /channels/{id}/watch-session`) on start, pause, resume, seek and a new title, and ticks it every 5 seconds, paused or not, so a member who joins mid-film sees where the room is. A seek sets `seeked`, stopping ends the session, and the bot needs `slim-m>=0.9.4` and a server that has the watch-session routes (0.77.0). A conflict (another bot holds the call) is logged and the party carries on unsynced. The panel is unaffected. Call controls reach the bot whatever `SLIMM_CHANNELS` says.
 - When an episode ends and there is a next one, the bot stays in the call and the panel says
   "finished - next up: ..." with only Next episode and Stop enabled; it leaves after
   `JELLYFIN_NEXT_WAIT_SECONDS` if nobody presses. A movie or a finale ends the party as before.

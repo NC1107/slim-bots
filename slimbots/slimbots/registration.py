@@ -10,6 +10,14 @@ if TYPE_CHECKING:
     from .commands import Command
     from .http import AsyncClient
 
+class RegistrationRejected(ApiError):
+    """The server answered a registration with 400: the same body is refused every time, so retrying only spins."""
+
+    def __init__(self, route: str, cause: ApiError) -> None:
+        super().__init__(cause.status, cause.body)
+        self.route = route
+
+
 MAX_REGISTERED_COMMANDS = 50
 MAX_DESCRIPTION_LEN = 100
 MAX_USAGE_LEN = 80
@@ -44,4 +52,6 @@ async def register_commands(client: AsyncClient, *, prefix: str, commands: list[
     except ApiError as err:
         if err.status in (404, 405):
             return False
+        if err.status == 400:
+            raise RegistrationRejected("/bots/commands", err) from err
         raise

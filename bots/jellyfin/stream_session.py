@@ -14,6 +14,7 @@ from slimbots import Embed
 import jellyfin_core
 import playback_progress
 from quality import Quality, configured_default
+from watch_sync import WatchSync
 
 AUDIO_SAMPLE_RATE = 48000
 AUDIO_CHANNELS = 2
@@ -92,6 +93,7 @@ class WatchSession:
         self.started_by_id = started_by_id
         self.voice_session = voice_session
         self.panel = None
+        self.sync = None
         self.waiting_next = None
         self.jellyfin_user_id = None
         self._next_timer = None
@@ -145,6 +147,12 @@ class WatchSession:
         await self._publish()
         await self._start_pipeline(start_seconds)
         self._monitor_task = self.bot.background(self._monitor_loop(), name=f"jellyfin-watch-monitor-{self.voice_channel_id}")
+        self.sync = WatchSync(self)
+        self.sync.start()
+
+    def _sync_changed(self, *, seeked=False):
+        if self.sync is not None:
+            self.sync.changed(seeked=seeked)
 
     async def _start_pipeline(self, start_seconds):
         self._tmpdir = tempfile.mkdtemp(prefix="slimm-jellyfin-")
@@ -247,6 +255,7 @@ class WatchSession:
             return False
         self._seek_base = self.position_seconds
         self.paused = True
+        self._sync_changed()
         return True
 
     def resume(self):
@@ -254,6 +263,7 @@ class WatchSession:
             return False
         self.paused = False
         self._segment_started_at = time.monotonic()
+        self._sync_changed()
         return True
 
     async def seek(self, seconds):
@@ -264,6 +274,7 @@ class WatchSession:
         await self._teardown_pipeline()
         await self._start_pipeline(seconds)
         self.paused = was_paused
+        self._sync_changed(seeked=True)
 
     async def set_quality(self, quality: Quality):
         """Republishes at the new size and ceilings, then resumes the transcode from the current position."""
@@ -286,6 +297,7 @@ class WatchSession:
         self.ended_naturally = False
         self.paused = False
         await self._start_pipeline(start_seconds)
+        self._sync_changed()
 
     async def refresh_panel(self):
         if self.panel is not None:
@@ -319,6 +331,7 @@ class WatchSession:
         self.waiting_next = upcoming
         self.paused = True
         self._seek_base = self.duration_seconds
+        self._sync_changed()
         self._next_timer = self.bot.background(self._leave_after_wait(), name=f"jellyfin-next-{self.voice_channel_id}")
         await self.refresh_panel()
         with contextlib.suppress(Exception):
@@ -363,6 +376,8 @@ class WatchSession:
         self._cancel_next_timer()
         await self._teardown_pipeline()
         await self._report_progress(final_position, finished=self.ended_naturally)
+        if self.sync is not None:
+            await self.sync.end()
         await self.voice_session.leave()
         if self.panel is not None:
             await self.panel.close(self, reason)

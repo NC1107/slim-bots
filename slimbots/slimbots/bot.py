@@ -26,7 +26,7 @@ from .interactions import ButtonHandler, ButtonRoutes, dispatch_press, dispatch_
 from .http import ApiError, AsyncClient, is_forbidden, is_token_revoked
 from .lifecycle import guard_dispatch, run_with_shutdown
 from .models import Member
-from .registration import register_commands
+from .registration import RegistrationRejected, register_commands
 from .ui import UiEntry, UiHandler, UiRoutes, register_ui
 from .space import Space
 from .store import Store
@@ -476,7 +476,8 @@ class Bot:
             self.background(guard_dispatch(self.process_message, message), name=f"message-{message.get('id', '?')}")
             return
         if kind == "interaction.created":
-            if await self._accepts_channel(frame.get("channel_id"), kind):
+            # A call control is used on a call, which a channel-scoped bot is not scoped to, so scope never gates it.
+            if frame.get("kind") == "call_control" or await self._accepts_channel(frame.get("channel_id"), kind):
                 is_button = frame.get("kind", "button") == "button"
                 dispatch = dispatch_press(self, self._buttons, frame) if is_button else dispatch_ui(self, self._ui, frame)
                 self.background(dispatch, name=f"press-{frame.get('interaction_id', '?')}")
@@ -581,6 +582,9 @@ class Bot:
         while True:
             try:
                 await self._connect_once(reset_delay)
+            except RegistrationRejected as err:
+                print(f"the server refused this bot's registration at {err.route}: {err.reason or err.body}", file=sys.stderr)
+                return 1
             except ApiError as err:
                 if is_token_revoked(err):
                     print("token rejected - revoked?", file=sys.stderr)
