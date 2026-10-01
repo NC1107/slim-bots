@@ -5,7 +5,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Awaitable, Callable
 
+from .hidden_chars import has_hidden_char
 from .http import ApiError
+from .registration import RegistrationRejected
 
 if TYPE_CHECKING:
     from .http import AsyncClient
@@ -35,6 +37,8 @@ class UiEntry:
             raise ValueError(f"an entry id is 1 to {MAX_ID} letters, digits, - _ or .")
         if not self.label.strip() or len(self.label.strip()) > MAX_LABEL:
             raise ValueError(f"an entry label is 1 to {MAX_LABEL} characters")
+        if has_hidden_char(self.label):
+            raise ValueError("an entry label cannot hold control or invisible characters")
         if self.icon is not None and self.icon not in ICONS:
             raise ValueError(f"icon must be one of {ICONS}, not {self.icon!r}")
 
@@ -87,4 +91,6 @@ async def register_ui(client: AsyncClient, routes: UiRoutes) -> bool:
     except ApiError as err:
         if err.status in (404, 405):
             return False
+        if err.status == 400:
+            raise RegistrationRejected("/bots/ui", err) from err
         raise

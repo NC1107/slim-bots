@@ -107,6 +107,8 @@ class FakeAsyncClient(AsyncClient):
                 return True, {"user_id": path.split("/")[2], "until": until}
         if method == "DELETE" and path.startswith("/channels/") and "/messages/" in path:
             return True, None
+        if path.startswith("/channels/") and "/watch-session" in path and method != "GET":
+            return True, None
         return False, None
 
     async def aclose(self) -> None:
