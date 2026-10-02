@@ -93,8 +93,8 @@ asked to join the call they mean if several are.
   jellyfin already has a saved position for it (past 30 seconds, not in the
   last minute) the bot asks first with Resume and Start over buttons. With no title, `!watch` offers the account's most
   recent unfinished item the same way (`/UserItems/Resume`).
-- The now-playing panel: `!watch` answers with one message that carries buttons and edits itself as the stream changes -
-  Pause/Play, -30s, +30s, Stop, a quality row (Low 480p, Medium 720p, High 1080p; the current one is greyed), Subtitles on/off
+- The now-playing panel: `!watch` answers with one message that carries buttons and edits itself as the stream changes - The status is one short line, and stopping edits it to "ended" rather than posting another.
+  Pause/Play, -30s, +30s, Stop, then a second row of 480p, 720p, 1080p (the current one is greyed), Subtitles (highlighted when on)
   and, for an episode, Next episode. Every button is disabled once the stream ends. Anyone who is in the call can press them;
   someone outside it gets a private "join #call to use these controls" and nothing changes. The text commands still work and
   redraw the panel too. The panel shows the position only while paused (a stopped clock in a message would be wrong within a second); `!np` has the live one.

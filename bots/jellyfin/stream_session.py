@@ -406,7 +406,7 @@ class WatchSession:
         await self.voice_session.leave()
         if self.panel is not None:
             await self.panel.close(self, reason)
-        if announce:
+        if announce and self.panel is None:
             with contextlib.suppress(Exception):
                 await self.bot.client.send(self.text_channel_id, f"stopped **{self.title}** ({reason}).")
 
