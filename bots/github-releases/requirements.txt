@@ -1,0 +1,4 @@
+# Link buttons arrived in 0.6.0 and bool/list settings in 0.8.0; the feed itself is plain urllib.
+websockets>=12
+httpx>=0.27
+slim-m>=0.8.0
