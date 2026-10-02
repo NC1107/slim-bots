@@ -14,18 +14,24 @@ ID_PREFIX = "jf:"
 
 
 def _state_text(session):
-    if session.finished:
-        return "ended"
     if session.waiting_next is not None:
-        return f"finished - next up: {session.waiting_next.get('Name')}"
-    return f"paused at {format_hms(session.position_seconds)}" if session.paused else "playing"
+        return f"next up: {session.waiting_next.get('Name')}"
+    if session.paused:
+        return f"paused {format_hms(session.position_seconds)}"
+    return None
 
 
 def panel_text(session, voice_name, *, ended_reason=None):
-    subtitles = session.subtitle_label or "off"
-    state = f"ended ({ended_reason})" if ended_reason else _state_text(session)
-    duration = f" - {format_hms(session.duration_seconds)}" if session.duration_seconds else ""
-    return f"**{session.title}** in {voice_name}\n{state}{duration} - {session.quality.height}p - subtitles {subtitles}"
+    """One short line; the position is only shown while paused, since the panel is not redrawn as it advances."""
+    if ended_reason or session.finished:
+        return f"{session.title} - ended"
+    parts = [session.title, _state_text(session)]
+    if session.duration_seconds:
+        parts.append(format_hms(session.duration_seconds))
+    parts.append(f"{session.quality.height}p")
+    if session.subtitle_label:
+        parts.append(f"subtitles {session.subtitle_label}")
+    return " - ".join(p for p in parts if p)
 
 
 def _preset_name(session):
@@ -42,7 +48,7 @@ def panel_rows(session, *, live=True):
     between = live and session.waiting_next is not None
     playing = _preset_name(session)
     quality_row = [
-        Button(f"{p.name.title()} {p.height}p", f"{ID_PREFIX}q:{p.name}", style="primary" if p.name == playing else "secondary",
+        Button(f"{p.height}p", f"{ID_PREFIX}q:{p.name}", style="primary" if p.name == playing else "secondary",
                disabled=off or between or p.name == playing)
         for p in quality.PRESETS.values()
     ]
@@ -52,10 +58,13 @@ def panel_rows(session, *, live=True):
         Button(f"+{SKIP_SECONDS}s", f"{ID_PREFIX}fwd", disabled=off or between),
         Button("Stop", f"{ID_PREFIX}stop", style="danger", disabled=off),
     ]
-    extras = [Button("Subtitles off" if session.subtitle_stream_index is not None else "Subtitles on", f"{ID_PREFIX}subs", disabled=off or between)]
+    subs_on = session.subtitle_stream_index is not None
+    options = quality_row + [
+        Button("Subtitles", f"{ID_PREFIX}subs", style="primary" if subs_on else "secondary", disabled=off or between),
+    ]
     if session.item.get("Type") == "Episode":
-        extras.append(Button("Next episode", f"{ID_PREFIX}next", style="primary" if between else "secondary", disabled=off))
-    return rows(transport, quality_row, extras)
+        options.append(Button("Next episode", f"{ID_PREFIX}next", style="primary" if between else "secondary", disabled=off))
+    return rows(transport, options)
 
 
 class Panel:

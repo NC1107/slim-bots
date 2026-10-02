@@ -87,9 +87,30 @@ def test_the_panel_carries_every_control_for_a_movie():
     started_session(client)
     posted = client.sent[-1]
     assert labels(posted["components"]) == [
-        "Pause", "-30s", "+30s", "Stop", "Low 480p", "Medium 720p", "High 1080p", "Subtitles on",
+        "Pause", "-30s", "+30s", "Stop", "480p", "720p", "1080p", "Subtitles",
     ]
-    assert by_label(posted["components"], "Medium 720p")["disabled"] is True
+    assert [len(row["buttons"]) for row in posted["components"]] == [4, 4]
+    assert by_label(posted["components"], "720p")["disabled"] is True
+    session_registry.clear()
+
+
+def test_the_panel_status_is_one_short_line():
+    client = client_in_call()
+    session = started_session(client)
+    text = client.sent[-1]["content"]
+    assert "\n" not in text
+    assert text.startswith(f"{session.title} - ")
+    assert text.endswith("720p")
+    assert "#voice-room" not in text and "subtitles" not in text
+
+
+def test_stopping_edits_the_one_panel_message_and_posts_nothing_else():
+    client = client_in_call()
+    session = started_session(client)
+    sent_before = len(client.sent)
+    use_control(client, session, "jf-stop")
+    assert client.edited[-1]["content"] == f"{session.title} - ended"
+    assert len(client.sent) == sent_before
     session_registry.clear()
 
 
@@ -105,7 +126,7 @@ def test_pause_button_pauses_and_redraws_the_panel_as_play():
     session = started_session(client)
     press(client, session, "jf:toggle")
     assert session.paused
-    assert "paused at" in client.edited[-1]["content"]
+    assert "paused 0:00" in client.edited[-1]["content"]
     assert "Play" in labels(client.component_edits[-1]["components"])
     assert client.acks
     session_registry.clear()
@@ -126,7 +147,7 @@ def test_quality_button_switches_the_preset():
     session = started_session(client)
     press(client, session, "jf:q:low")
     assert session.quality.name == "low"
-    assert by_label(client.component_edits[-1]["components"], "Low 480p")["disabled"] is True
+    assert by_label(client.component_edits[-1]["components"], "480p")["disabled"] is True
     assert session.voice_session.unpublish_count == 1
     session_registry.clear()
 
@@ -138,9 +159,10 @@ def test_subtitle_button_turns_a_track_on_then_off():
     session = started_session(client, item)
     press(client, session, "jf:subs")
     assert session.subtitle_stream_index == 3
-    assert "Subtitles off" in labels(client.component_edits[-1]["components"])
+    assert by_label(client.component_edits[-1]["components"], "Subtitles")["style"] == "primary"
     press(client, session, "jf:subs")
     assert session.subtitle_stream_index is None
+    assert by_label(client.component_edits[-1]["components"], "Subtitles")["style"] == "secondary"
     session_registry.clear()
 
 

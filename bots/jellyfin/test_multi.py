@@ -63,7 +63,7 @@ def test_two_calls_each_get_their_own_stream_from_the_one_bot():
     assert sorted(live) == ["v1", "v2"]
     assert live["v1"].started_by_id == "u1" and live["v2"].started_by_id == "u2"
     assert sorted(s.channel_id for s in jellyfin.bot.voice.sessions) == ["v1", "v2"]
-    assert client.sent[-1]["content"] == "**Inception** in #call-2\nplaying - 2:00:00 - 720p - subtitles off"
+    assert client.sent[-1]["content"] == "Inception - 2:00:00 - 720p"
     session_registry.clear()
 
 

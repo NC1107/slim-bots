@@ -447,7 +447,7 @@ def test_watch_streams_into_the_invokers_own_voice_channel_not_the_text_channel(
         jellyfin.jellyfin_core.watch_search = original_search
         jellyfin.jellyfin_core.fetch_item_for_playback = original_fetch
         stream_session.WatchSession.start = original_start
-    assert client.sent[-1]["content"] == "**Inception** in #voice-room\nplaying - 2:00:00 - 720p - subtitles off"
+    assert client.sent[-1]["content"] == "Inception - 2:00:00 - 720p"
     session = session_registry.session_for_channel("v1")
     assert session is not None and session.title == "Inception"
     assert session.text_channel_id == "c1"

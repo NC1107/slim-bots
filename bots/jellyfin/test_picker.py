@@ -224,7 +224,7 @@ def test_pressing_next_episode_after_the_finish_plays_the_waiting_episode():
         from test_panel import press
         press(client, session, "jf:next")
     assert session.item_id == "e2" and session.waiting_next is None and not session.paused
-    assert "playing" in client.edited[-1]["content"]
+    assert "next up" not in client.edited[-1]["content"] and client.edited[-1]["content"].endswith("720p")
     session_registry.clear()
 
 
