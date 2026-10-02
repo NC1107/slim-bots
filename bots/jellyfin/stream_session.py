@@ -8,6 +8,7 @@ import os
 import shutil
 import tempfile
 import time
+import uuid
 
 from slimbots import Embed
 
@@ -154,28 +155,42 @@ class WatchSession:
         if self.sync is not None:
             self.sync.changed(seeked=seeked)
 
+    async def _launch_pipeline(self, start_seconds):
+        """Starts both ffmpeg processes on a fresh transcode without touching the running pipeline; raises if it cannot."""
+        tmpdir = tempfile.mkdtemp(prefix="slimm-jellyfin-")
+        processes = []
+        try:
+            video_fifo = os.path.join(tmpdir, "video.raw")
+            audio_fifo = os.path.join(tmpdir, "audio.raw")
+            os.mkfifo(video_fifo)
+            os.mkfifo(audio_fifo)
+            url = jellyfin_core.build_stream_url(
+                self.item_id, start_seconds=start_seconds, audio_stream_index=self.audio_stream_index,
+                subtitle_stream_index=self.subtitle_stream_index, max_width=self.quality.width,
+                video_bitrate=self.quality.video_bitrate, play_session_id=uuid.uuid4().hex,
+            )
+            headers = f"Authorization: {jellyfin_core.jellyfin_auth_header()}\r\n"
+            video_args = build_video_args(
+                url, headers, video_fifo, width=self.quality.width, height=self.quality.height, fps=jellyfin_core.JELLYFIN_STREAM_FPS,
+            )
+            audio_args = build_audio_args(url, headers, audio_fifo)
+            for args in (video_args, audio_args):
+                processes.append(await asyncio.create_subprocess_exec(
+                    *args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
+                ))
+        except BaseException:
+            for process in processes:
+                process.kill()
+            shutil.rmtree(tmpdir, ignore_errors=True)
+            raise
+        return tmpdir, processes, video_fifo, audio_fifo
+
     async def _start_pipeline(self, start_seconds):
-        self._tmpdir = tempfile.mkdtemp(prefix="slimm-jellyfin-")
-        video_fifo = os.path.join(self._tmpdir, "video.raw")
-        audio_fifo = os.path.join(self._tmpdir, "audio.raw")
-        os.mkfifo(video_fifo)
-        os.mkfifo(audio_fifo)
-        url = jellyfin_core.build_stream_url(
-            self.item_id, start_seconds=start_seconds, audio_stream_index=self.audio_stream_index,
-            subtitle_stream_index=self.subtitle_stream_index, max_width=self.quality.width,
-            video_bitrate=self.quality.video_bitrate,
-        )
-        headers = f"Authorization: {jellyfin_core.jellyfin_auth_header()}\r\n"
-        video_args = build_video_args(
-            url, headers, video_fifo, width=self.quality.width, height=self.quality.height, fps=jellyfin_core.JELLYFIN_STREAM_FPS,
-        )
-        audio_args = build_audio_args(url, headers, audio_fifo)
-        self._video_process = await asyncio.create_subprocess_exec(
-            *video_args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
-        self._audio_process = await asyncio.create_subprocess_exec(
-            *audio_args, stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL,
-        )
+        """Replaces the running pipeline only once the new one has launched, so a failed launch leaves playback alone."""
+        tmpdir, processes, video_fifo, audio_fifo = await self._launch_pipeline(start_seconds)
+        await self._teardown_pipeline()
+        self._tmpdir = tmpdir
+        self._video_process, self._audio_process = processes
         self._seek_base = start_seconds
         self._segment_started_at = time.monotonic()
         self._video_task = asyncio.create_task(self._pump_video(video_fifo), name="jellyfin-video-pump")
@@ -267,25 +282,35 @@ class WatchSession:
         return True
 
     async def seek(self, seconds):
-        if self.duration_seconds:
-            seconds = min(seconds, self.duration_seconds)
+        """Restarts the transcode at `seconds` clamped into the title; landing on the end finishes it."""
         seconds = max(0.0, seconds)
-        was_paused = self.paused
-        await self._teardown_pipeline()
+        if self.duration_seconds and seconds >= self.duration_seconds:
+            await self._handle_finished()
+            return
         await self._start_pipeline(seconds)
-        self.paused = was_paused
         self._sync_changed(seeked=True)
 
     async def set_quality(self, quality: Quality):
         """Republishes at the new size and ceilings, then resumes the transcode from the current position."""
         position = self.position_seconds
-        was_paused = self.paused
+        previous = self.quality
         await self._teardown_pipeline()
-        await self.voice_session.unpublish_screen_share()
-        self.quality = quality
-        await self._publish()
-        await self._start_pipeline(position)
-        self.paused = was_paused
+        try:
+            await self.voice_session.unpublish_screen_share()
+            self.quality = quality
+            await self._publish()
+            await self._start_pipeline(position)
+        except BaseException:
+            await self._restore_quality(previous, position)
+            raise
+
+    async def _restore_quality(self, previous, position):
+        """Best effort: a failed switch goes back to the old size rather than leaving the party silent."""
+        self.quality = previous
+        with contextlib.suppress(Exception):
+            await self.voice_session.unpublish_screen_share()
+            await self._publish()
+            await self._start_pipeline(position)
 
     async def play_item(self, item, start_seconds=0.0):
         """Moves the party to another title on the same call, keeping the published share."""
